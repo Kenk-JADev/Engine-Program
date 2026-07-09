@@ -1,0 +1,12 @@
+{
+  "name": "Sample RPG",
+  "author": "Unknown",
+  "version": "0.1.0",
+  "startMapId": 1,
+  "startX": 0,
+  "startY": 0,
+  "resolutionWidth": 1280,
+  "resolutionHeight": 720,
+  "fullscreen": false,
+  "vsync": true
+}
