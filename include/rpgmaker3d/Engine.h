@@ -58,6 +58,19 @@ public:
     void SetEditorMode(bool enabled) { mEditorMode = enabled; }
     bool IsEditorMode() const { return mEditorMode; }
 
+    void SetSceneViewRect(const Vec2& pos, const Vec2& size) { mSceneViewPos = pos; mSceneViewSize = size; }
+    Vec2 GetSceneViewPos() const { return mSceneViewPos; }
+    Vec2 GetSceneViewSize() const { return mSceneViewSize; }
+
+    bool IsPlaying() const { return mPlayMode; }
+    void SetPlaying(bool playing) { mPlayMode = playing; }
+
+    void SaveScene(const std::string& path) const;
+    bool LoadScene(const std::string& path);
+
+    void SetActiveCamera(EntityID cameraEntity) { mActiveCameraEntity = cameraEntity; }
+    EntityID GetActiveCamera() const { return mActiveCameraEntity; }
+
 private:
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
@@ -75,6 +88,10 @@ private:
 
     bool mRunning = false;
     bool mEditorMode = true;
+    bool mPlayMode = false;
+    Vec2 mSceneViewPos{0.0f};
+    Vec2 mSceneViewSize{1280.0f, 720.0f};
+    EntityID mActiveCameraEntity = INVALID_ENTITY;
     float mDeltaTime = 0.0f;
     float mTime = 0.0f;
     int mFPS = 0;

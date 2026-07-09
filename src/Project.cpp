@@ -2,10 +2,62 @@
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <sstream>
 
 namespace rpg {
 
 Project::Project() = default;
+
+namespace {
+
+std::string EscapeJSON(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c; break;
+        }
+    }
+    return out;
+}
+
+std::string Trim(const std::string& s) {
+    size_t start = 0;
+    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
+    size_t end = s.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(s[end - 1]))) --end;
+    return s.substr(start, end - start);
+}
+
+std::string ParseJSONString(const std::string& line, size_t valueStart) {
+    std::string value = line.substr(valueStart);
+    value = Trim(value);
+    if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+        value = value.substr(1, value.size() - 2);
+    }
+    return value;
+}
+
+int ParseJSONInt(const std::string& line, size_t valueStart) {
+    std::string value = Trim(line.substr(valueStart));
+    // Remove trailing comma
+    if (!value.empty() && value.back() == ',') value.pop_back();
+    try { return std::stoi(value); } catch (...) { return 0; }
+}
+
+bool ParseJSONBool(const std::string& line, size_t valueStart) {
+    std::string value = Trim(line.substr(valueStart));
+    if (!value.empty() && value.back() == ',') value.pop_back();
+    return value == "true";
+}
+
+} // anonymous namespace
 
 bool Project::New(const std::string& path, const std::string& name) {
     mProjectPath = path;
@@ -18,6 +70,7 @@ bool Project::New(const std::string& path, const std::string& name) {
     std::filesystem::create_directories(path + "/assets/shaders");
     std::filesystem::create_directories(path + "/maps");
     std::filesystem::create_directories(path + "/scripts");
+    std::filesystem::create_directories(path + "/prefabs");
 
     Save();
     return true;
@@ -30,7 +83,33 @@ bool Project::Load(const std::string& path) {
         std::cerr << "Project not found: " << path << std::endl;
         return false;
     }
-    // Einfache JSON-Parsing würde hier erfolgen; Stub belässt Defaults.
+
+    std::string line;
+    while (std::getline(file, line)) {
+        line = Trim(line);
+        if (line.empty() || line.front() == '{' || line.front() == '}') continue;
+
+        size_t colon = line.find(':');
+        if (colon == std::string::npos) continue;
+
+        std::string key = Trim(line.substr(0, colon));
+        if (key.size() >= 2 && key.front() == '"' && key.back() == '"') {
+            key = key.substr(1, key.size() - 2);
+        }
+        size_t valueStart = colon + 1;
+
+        if (key == "name") mInfo.name = ParseJSONString(line, valueStart);
+        else if (key == "author") mInfo.author = ParseJSONString(line, valueStart);
+        else if (key == "version") mInfo.version = ParseJSONString(line, valueStart);
+        else if (key == "startMapId") mInfo.startMapId = ParseJSONInt(line, valueStart);
+        else if (key == "startX") mInfo.startX = ParseJSONInt(line, valueStart);
+        else if (key == "startY") mInfo.startY = ParseJSONInt(line, valueStart);
+        else if (key == "resolutionWidth") mInfo.resolutionWidth = ParseJSONInt(line, valueStart);
+        else if (key == "resolutionHeight") mInfo.resolutionHeight = ParseJSONInt(line, valueStart);
+        else if (key == "fullscreen") mInfo.fullscreen = ParseJSONBool(line, valueStart);
+        else if (key == "vsync") mInfo.vsync = ParseJSONBool(line, valueStart);
+    }
+
     return true;
 }
 
@@ -38,9 +117,9 @@ bool Project::Save() const {
     std::ofstream file(mProjectPath + "/project.json");
     if (!file.is_open()) return false;
     file << "{\n";
-    file << "  \"name\": \"" << mInfo.name << "\",\n";
-    file << "  \"author\": \"" << mInfo.author << "\",\n";
-    file << "  \"version\": \"" << mInfo.version << "\",\n";
+    file << "  \"name\": \"" << EscapeJSON(mInfo.name) << "\",\n";
+    file << "  \"author\": \"" << EscapeJSON(mInfo.author) << "\",\n";
+    file << "  \"version\": \"" << EscapeJSON(mInfo.version) << "\",\n";
     file << "  \"startMapId\": " << mInfo.startMapId << ",\n";
     file << "  \"startX\": " << mInfo.startX << ",\n";
     file << "  \"startY\": " << mInfo.startY << ",\n";

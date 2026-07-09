@@ -15,6 +15,9 @@
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/Prefab.h"
 #include "rpgmaker3d/RubyVM.h"
+#include "rpgmaker3d/Raycast.h"
+#include "rpgmaker3d/Lighting.h"
+#include "rpgmaker3d/ParticleSystem.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -117,6 +120,7 @@ void Editor::DrawUI() {
     DrawScriptEditor();
     if (mAudioPreview) mAudioPreview->DrawUI();
     DrawPrefabBrowser();
+    DrawLightingEditor();
     DrawConsole();
 
     if (mShowDemo) {
@@ -178,6 +182,14 @@ void Editor::DrawMenuBar() {
                 mEngine.GetProject().Save();
             }
             ImGui::Separator();
+            if (ImGui::MenuItem("Save Scene")) {
+                mEngine.SaveScene(mEngine.GetProject().GetProjectPath() + "/scene.json");
+            }
+            if (ImGui::MenuItem("Load Scene")) {
+                mEngine.LoadScene(mEngine.GetProject().GetProjectPath() + "/scene.json");
+                mSelectedEntity = -1;
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Exit")) {
                 mEngine.RequestQuit();
             }
@@ -217,8 +229,29 @@ void Editor::DrawMenuBar() {
         if (ImGui::BeginMenu("Play")) {
             if (ImGui::MenuItem(mPlayMode ? "Stop" : "Play", "F5")) {
                 mPlayMode = !mPlayMode;
+                mEngine.SetPlaying(mPlayMode);
             }
             ImGui::EndMenu();
+        }
+
+        // Global shortcuts
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+            if (mEngine.GetCommandHistory().CanUndo()) {
+                mEngine.GetCommandHistory().Undo(mEngine);
+            }
+        }
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+            if (mEngine.GetCommandHistory().CanRedo()) {
+                mEngine.GetCommandHistory().Redo(mEngine);
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+            DeleteSelectedEntity();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+            mPlayMode = !mPlayMode;
+            mEngine.SetPlaying(mPlayMode);
         }
 
         ImGui::Separator();
@@ -236,13 +269,85 @@ void Editor::DrawSceneView() {
     unsigned int texId = mEngine.GetSceneTextureID();
     if (texId != 0) {
         ImTextureID img = (ImTextureID)(intptr_t)texId;
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        mSceneViewPos = Vec2(pos.x, pos.y);
+        mEngine.SetSceneViewRect(mSceneViewPos, mSceneViewSize);
+
         ImGui::Image(img, size, ImVec2(0, 1), ImVec2(1, 0));
+        mSceneViewHovered = ImGui::IsItemHovered();
+        mSceneViewFocused = ImGui::IsItemFocused();
+
+        HandleSceneViewPicking();
     } else {
         ImGui::Text("Scene View (%.0f x %.0f)", size.x, size.y);
         ImGui::Text("WASD + Rechtsklick zum Navigieren");
     }
 
     ImGui::End();
+}
+
+void Editor::HandleSceneViewPicking() {
+    if (!mSceneViewHovered) return;
+
+    ImVec2 mousePos = ImGui::GetMousePos();
+    Vec2 localPos(mousePos.x - mSceneViewPos.x, mousePos.y - mSceneViewPos.y);
+    if (localPos.x < 0 || localPos.y < 0 || localPos.x >= mSceneViewSize.x || localPos.y >= mSceneViewSize.y) return;
+
+    // Left click picks tiles / entities
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        Camera& cam = mEngine.GetRenderer().GetCamera();
+        Ray ray = Raycast::ScreenPointToRay(cam, localPos, mSceneViewSize);
+
+        // First try entity bounding boxes
+        bool entityHit = false;
+        float bestDist = 1e9f;
+        int hitEntity = -1;
+        for (EntityID id : mEngine.GetScene().GetEntities()) {
+            auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(id);
+            if (!transform) continue;
+            Vec3 scale = transform->transform.scale;
+            if (glm::length(scale) < 0.001f) scale = Vec3(1.0f);
+            Mat4 matrix = transform->transform.GetMatrix();
+            Vec3 min = Vec3(matrix * Vec4(-0.5f, -0.5f, -0.5f, 1.0f));
+            Vec3 max = Vec3(matrix * Vec4(0.5f, 0.5f, 0.5f, 1.0f));
+            Vec3 bbMin = glm::min(min, max);
+            Vec3 bbMax = glm::max(min, max);
+            auto hit = Raycast::IntersectBoundingBox(ray, bbMin, bbMax);
+            if (hit.hit && hit.distance < bestDist) {
+                bestDist = hit.distance;
+                hitEntity = static_cast<int>(id);
+                entityHit = true;
+            }
+        }
+
+        if (entityHit) {
+            mSelectedEntity = hitEntity;
+            RPG_LOG_INFO("Selected entity " + std::to_string(hitEntity));
+        } else {
+            // Raycast against ground plane for tile painting
+            auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
+            if (hit.hit) {
+                Map& map = mEngine.GetMap();
+                float halfW = map.GetWidth() * 0.5f;
+                float halfH = map.GetHeight() * 0.5f;
+                int x = static_cast<int>(hit.point.x + halfW);
+                int z = static_cast<int>(map.GetHeight() - (hit.point.z + halfH));
+                if (x >= 0 && x < map.GetWidth() && z >= 0 && z < map.GetHeight()) {
+                    PaintTileAt(x, z);
+                }
+            }
+        }
+    }
+}
+
+void Editor::PaintTileAt(int x, int z) {
+    Map& map = mEngine.GetMap();
+    mPaintX = x;
+    mPaintZ = z;
+    int oldTile = map.GetTile(mSelectedLayer, x, z);
+    auto cmd = std::make_shared<SetTileCommand>(mSelectedLayer, x, z, oldTile, mSelectedTile);
+    mEngine.GetCommandHistory().Execute(mEngine, cmd);
+    RPG_LOG_INFO("Painted tile at (" + std::to_string(x) + ", " + std::to_string(z) + ")");
 }
 
 void Editor::DrawHierarchy() {
@@ -269,9 +374,59 @@ void Editor::DrawInspector() {
         auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(id);
         if (transform) {
             if (ImGui::TreeNode("Transform")) {
+                Vec3 oldPos = transform->transform.position;
                 ImGui::DragFloat3("Position", &transform->transform.position.x, 0.1f);
                 ImGui::DragFloat3("Rotation", &transform->transform.rotation.x, 0.5f);
                 ImGui::DragFloat3("Scale", &transform->transform.scale.x, 0.05f);
+                if (oldPos != transform->transform.position) {
+                    // Note: continuous drag would spam history; simplified
+                }
+                ImGui::TreePop();
+            }
+        }
+
+        auto* material = mEngine.GetScene().GetComponent<MaterialComponent>(id);
+        if (material) {
+            if (ImGui::TreeNode("Material")) {
+                ImGui::ColorEdit4("Diffuse", &material->material.diffuse.x);
+                ImGui::ColorEdit3("Emissive", &material->material.emissive.x);
+                ImGui::SliderFloat("Metallic", &material->material.metallic, 0.0f, 1.0f);
+                ImGui::SliderFloat("Roughness", &material->material.roughness, 0.0f, 1.0f);
+                ImGui::SliderFloat("Alpha", &material->material.alpha, 0.0f, 1.0f);
+                ImGui::Checkbox("Transparent", &material->material.transparent);
+                ImGui::Checkbox("Wireframe", &material->material.wireframe);
+                ImGui::TreePop();
+            }
+        }
+
+        auto* light = mEngine.GetScene().GetComponent<LightComponent>(id);
+        if (light) {
+            if (ImGui::TreeNode("Light")) {
+                ImGui::ColorEdit4("Color", &light->color.x);
+                ImGui::DragFloat("Intensity", &light->intensity, 0.05f, 0.0f, 10.0f);
+                ImGui::DragFloat("Range", &light->range, 0.1f, 0.0f, 100.0f);
+                ImGui::TreePop();
+            }
+        }
+
+        auto* emitter = mEngine.GetScene().GetComponent<ParticleEmitterComponent>(id);
+        if (emitter) {
+            if (ImGui::TreeNode("Particle Emitter")) {
+                if (!emitter->emitter) emitter->emitter = std::make_unique<ParticleEmitter>();
+                ImGui::Checkbox("Auto Emit", &emitter->autoEmit);
+                ImGui::SliderInt("Emit Count", &emitter->emitCount, 1, 50);
+                ImGui::SliderFloat("Emit Rate", &emitter->emitRate, 0.01f, 2.0f);
+                ImGui::DragFloat3("Direction", &emitter->emitDirection.x, 0.05f);
+                ImGui::SliderFloat("Spread", &emitter->emitSpread, 0.0f, 2.0f);
+                ImGui::SliderFloat("Speed", &emitter->emitSpeed, 0.0f, 10.0f);
+                ImGui::SliderFloat("Life", &emitter->emitLife, 0.1f, 5.0f);
+                ImGui::ColorEdit4("Color", &emitter->emitColor.x);
+                if (ImGui::Button("Burst")) {
+                    auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(id);
+                    Vec3 origin = transform ? transform->transform.position : Vec3(0.0f);
+                    emitter->emitter->Emit(emitter->emitCount, origin, emitter->emitDirection,
+                        emitter->emitSpread, emitter->emitSpeed, emitter->emitLife, emitter->emitColor);
+                }
                 ImGui::TreePop();
             }
         }
@@ -283,6 +438,27 @@ void Editor::DrawInspector() {
 
         static char prefabName[128] = "";
         ImGui::InputText("Prefab Name", prefabName, sizeof(prefabName));
+        ImGui::Separator();
+        ImGui::Text("Add Component");
+        if (ImGui::Button("Add Material")) {
+            if (!mEngine.GetScene().GetComponent<MaterialComponent>(id)) {
+                mEngine.GetScene().AddComponent<MaterialComponent>(id);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Light")) {
+            if (!mEngine.GetScene().GetComponent<LightComponent>(id)) {
+                mEngine.GetScene().AddComponent<LightComponent>(id);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Particles")) {
+            if (!mEngine.GetScene().GetComponent<ParticleEmitterComponent>(id)) {
+                auto* pe = mEngine.GetScene().AddComponent<ParticleEmitterComponent>(id);
+                pe->emitter = std::make_unique<ParticleEmitter>();
+            }
+        }
+
         if (ImGui::Button("Save as Prefab", ImVec2(-1, 0))) {
             Scene& scene = mEngine.GetScene();
             auto* transform = scene.GetComponent<TransformComponent>(id);
@@ -295,7 +471,9 @@ void Editor::DrawInspector() {
                 data.scale = transform->transform.scale;
                 if (model) {
                     data.hasModel = true;
-                    data.color = model->color;
+                    auto* material = scene.GetComponent<MaterialComponent>(id);
+                    if (material) data.color = material->material.diffuse;
+                    else data.color = Color(1.0f);
                 }
                 std::string path = Prefab::GetPrefabDirectory() + "/" + data.name + ".prefab";
                 Prefab prefab;
@@ -320,6 +498,40 @@ void Editor::DrawProjectPanel() {
     std::string basePath = mEngine.GetProject().GetProjectPath();
     if (basePath.empty()) basePath = ".";
 
+    auto drawAsset = [&](const std::filesystem::path& path) {
+        std::string name = path.filename().string();
+        std::string ext = path.extension().string();
+        bool isAudio = (ext == ".wav" || ext == ".ogg" || ext == ".mp3");
+        bool isModel = (ext == ".obj");
+        bool isImage = (ext == ".png" || ext == ".jpg");
+
+        ImGui::BulletText("%s", name.c_str());
+        if (ImGui::BeginPopupContextItem(name.c_str())) {
+            if (isModel && ImGui::MenuItem("Import as Entity")) {
+                auto cmd = std::make_shared<CreateEntityCommand>(name);
+                mEngine.GetCommandHistory().Execute(mEngine, cmd);
+                EntityID id = cmd->GetEntityID();
+                if (id != INVALID_ENTITY) {
+                    auto* transform = mEngine.GetScene().AddComponent<TransformComponent>(id);
+                    transform->transform.position = Vec3(0, 0.5f, 0);
+                    auto* model = mEngine.GetScene().AddComponent<ModelRendererComponent>(id);
+                    model->model = std::make_shared<Model>();
+                    model->model->LoadFromOBJ(path.string());
+                    mSelectedEntity = static_cast<int>(id);
+                }
+            }
+            if (isImage && ImGui::MenuItem("Set as Tileset")) {
+                auto tileset = std::make_shared<Tileset>();
+                tileset->Load(path.string(), 32, 32);
+                mEngine.GetMap().SetTileset(tileset);
+            }
+            if (isAudio && ImGui::MenuItem("Preview Audio")) {
+                if (mAudioPreview) mAudioPreview->LoadAndPlay(path.string());
+            }
+            ImGui::EndPopup();
+        }
+    };
+
     try {
         if (std::filesystem::exists(basePath + "/assets")) {
             for (const auto& entry : std::filesystem::directory_iterator(basePath + "/assets")) {
@@ -327,12 +539,12 @@ void Editor::DrawProjectPanel() {
                 if (entry.is_directory()) {
                     if (ImGui::TreeNode(name.c_str())) {
                         for (const auto& sub : std::filesystem::directory_iterator(entry.path())) {
-                            ImGui::BulletText("%s", sub.path().filename().string().c_str());
+                            drawAsset(sub.path());
                         }
                         ImGui::TreePop();
                     }
                 } else {
-                    ImGui::BulletText("%s", name.c_str());
+                    drawAsset(entry.path());
                 }
             }
         } else {
@@ -566,47 +778,57 @@ void Editor::DrawConsole() {
 }
 
 void Editor::CreateCube() {
-    Scene& scene = mEngine.GetScene();
-    EntityID id = scene.CreateEntity("Cube");
-    auto* transform = scene.AddComponent<TransformComponent>(id);
-    transform->transform.position = Vec3(0, 0.5f, 0);
-    auto* model = scene.AddComponent<ModelRendererComponent>(id);
-    model->model = std::make_shared<Model>();
-    model->model->AddMesh(MeshFactory::CreateCube(1.0f));
-    model->color = Color(1.0f);
-    mSelectedEntity = static_cast<int>(id);
-    RPG_LOG_INFO("Created Cube entity");
+    auto cmd = std::make_shared<CreateEntityCommand>("Cube");
+    mEngine.GetCommandHistory().Execute(mEngine, cmd);
+    EntityID id = cmd->GetEntityID();
+    if (id != INVALID_ENTITY) {
+        auto* transform = mEngine.GetScene().AddComponent<TransformComponent>(id);
+        transform->transform.position = Vec3(0, 0.5f, 0);
+        auto* model = mEngine.GetScene().AddComponent<ModelRendererComponent>(id);
+        model->model = std::make_shared<Model>();
+        model->model->AddMesh(MeshFactory::CreateCube(1.0f));
+        mSelectedEntity = static_cast<int>(id);
+        RPG_LOG_INFO("Created Cube entity");
+    }
 }
 
 void Editor::CreatePlane() {
-    Scene& scene = mEngine.GetScene();
-    EntityID id = scene.CreateEntity("Plane");
-    auto* transform = scene.AddComponent<TransformComponent>(id);
-    transform->transform.position = Vec3(0, 0.1f, 0);
-    auto* model = scene.AddComponent<ModelRendererComponent>(id);
-    model->model = std::make_shared<Model>();
-    model->model->AddMesh(MeshFactory::CreatePlane(2.0f));
-    model->color = Color(1.0f);
-    mSelectedEntity = static_cast<int>(id);
-    RPG_LOG_INFO("Created Plane entity");
+    auto cmd = std::make_shared<CreateEntityCommand>("Plane");
+    mEngine.GetCommandHistory().Execute(mEngine, cmd);
+    EntityID id = cmd->GetEntityID();
+    if (id != INVALID_ENTITY) {
+        auto* transform = mEngine.GetScene().AddComponent<TransformComponent>(id);
+        transform->transform.position = Vec3(0, 0.1f, 0);
+        auto* model = mEngine.GetScene().AddComponent<ModelRendererComponent>(id);
+        model->model = std::make_shared<Model>();
+        model->model->AddMesh(MeshFactory::CreatePlane(2.0f));
+        mSelectedEntity = static_cast<int>(id);
+        RPG_LOG_INFO("Created Plane entity");
+    }
 }
 
 void Editor::CreateLight() {
-    Scene& scene = mEngine.GetScene();
-    EntityID id = scene.CreateEntity("Light");
-    auto* transform = scene.AddComponent<TransformComponent>(id);
-    transform->transform.position = Vec3(0, 3.0f, 0);
-    auto* model = scene.AddComponent<ModelRendererComponent>(id);
-    model->model = std::make_shared<Model>();
-    model->model->AddMesh(MeshFactory::CreateCube(0.3f));
-    model->color = Color(1.0f, 1.0f, 0.0f, 1.0f);
-    mSelectedEntity = static_cast<int>(id);
-    RPG_LOG_INFO("Created Light entity");
+    auto cmd = std::make_shared<CreateEntityCommand>("Light");
+    mEngine.GetCommandHistory().Execute(mEngine, cmd);
+    EntityID id = cmd->GetEntityID();
+    if (id != INVALID_ENTITY) {
+        auto* transform = mEngine.GetScene().AddComponent<TransformComponent>(id);
+        transform->transform.position = Vec3(0, 3.0f, 0);
+        auto* light = mEngine.GetScene().AddComponent<LightComponent>(id);
+        light->color = Color(1.0f, 1.0f, 0.0f, 1.0f);
+        light->intensity = 1.0f;
+        mSelectedEntity = static_cast<int>(id);
+        RPG_LOG_INFO("Created Light entity");
+    }
 }
 
 void Editor::DeleteSelectedEntity() {
     if (mSelectedEntity >= 0) {
-        mEngine.GetScene().DestroyEntity(static_cast<EntityID>(mSelectedEntity));
+        EntityID id = static_cast<EntityID>(mSelectedEntity);
+        auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(id);
+        Transform t = transform ? transform->transform : Transform();
+        auto cmd = std::make_shared<DeleteEntityCommand>(id, mEngine.GetScene().GetEntityName(id), t);
+        mEngine.GetCommandHistory().Execute(mEngine, cmd);
         mSelectedEntity = -1;
         RPG_LOG_INFO("Deleted selected entity");
     }
@@ -625,6 +847,24 @@ void Editor::LoadMap() {
     } else {
         RPG_LOG_ERROR("Failed to load map: " + path);
     }
+}
+
+void Editor::DrawLightingEditor() {
+    ImGui::Begin("Lighting");
+    auto& dir = Lighting::Get().GetDirectionalLight();
+    auto& amb = Lighting::Get().GetAmbient();
+
+    ImGui::Text("Directional Light");
+    ImGui::DragFloat3("Direction", &dir.direction.x, 0.01f);
+    ImGui::ColorEdit3("Color", &dir.color.x);
+    ImGui::SliderFloat("Intensity", &dir.intensity, 0.0f, 5.0f);
+
+    ImGui::Separator();
+    ImGui::Text("Ambient");
+    ImGui::ColorEdit3("Ambient Color", &amb.color.x);
+    ImGui::SliderFloat("Ambient Intensity", &amb.intensity, 0.0f, 1.0f);
+
+    ImGui::End();
 }
 
 void Editor::DrawPrefabBrowser() {
@@ -656,7 +896,8 @@ void Editor::DrawPrefabBrowser() {
                         } else {
                             model->model->AddMesh(MeshFactory::CreateCube(1.0f));
                         }
-                        model->color = data.color;
+                        auto* material = scene.AddComponent<MaterialComponent>(id);
+                        material->material.diffuse = data.color;
                     }
 
                     mSelectedEntity = static_cast<int>(id);

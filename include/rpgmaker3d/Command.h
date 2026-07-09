@@ -45,4 +45,32 @@ private:
     int mNewTile;
 };
 
+class CreateEntityCommand : public ICommand {
+public:
+    CreateEntityCommand(const std::string& name);
+
+    void Execute(Engine& engine) override;
+    void Undo(Engine& engine) override;
+    std::string GetName() const override { return "Create Entity"; }
+    EntityID GetEntityID() const { return mID; }
+
+private:
+    EntityID mID = INVALID_ENTITY;
+    std::string mName;
+};
+
+class DeleteEntityCommand : public ICommand {
+public:
+    DeleteEntityCommand(EntityID id, const std::string& name, const Transform& transform);
+
+    void Execute(Engine& engine) override;
+    void Undo(Engine& engine) override;
+    std::string GetName() const override { return "Delete Entity"; }
+
+private:
+    EntityID mID;
+    std::string mName;
+    Transform mTransform;
+};
+
 } // namespace rpg

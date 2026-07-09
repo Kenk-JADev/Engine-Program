@@ -37,6 +37,8 @@ bool RubyVM::Initialize(Engine* engine) {
     BindAudio();
     BindMap();
     BindActor();
+    BindCamera();
+    BindGame();
     RPG_LOG_INFO("Ruby VM initialized");
     return true;
 }
@@ -68,6 +70,23 @@ bool RubyVM::ExecuteFile(const std::string& path) {
     }
     mrb_load_file(mMrb, f);
     fclose(f);
+    if (mMrb->exc) {
+        mrb_print_error(mMrb);
+        mMrb->exc = nullptr;
+        return false;
+    }
+    return true;
+}
+
+bool RubyVM::Update(float deltaTime) {
+    if (!mMrb) return false;
+    mrb_sym sym = mrb_intern_lit(mMrb, "$game");
+    mrb_value game = mrb_gv_get(mMrb, sym);
+    if (mrb_nil_p(game)) return true;
+
+    mrb_sym updateSym = mrb_intern_lit(mMrb, "update");
+    mrb_value dt = mrb_float_value(mMrb, deltaTime);
+    mrb_funcall_argv(mMrb, game, updateSym, 1, &dt);
     if (mMrb->exc) {
         mrb_print_error(mMrb);
         mMrb->exc = nullptr;
@@ -206,15 +225,231 @@ static mrb_value rb_actor_move(mrb_state* mrb, mrb_value self) {
     return self;
 }
 
+static mrb_value rb_actor_position(mrb_state* mrb, mrb_value self) {
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) {
+            mrb_value arr = mrb_ary_new(mrb);
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.position.x));
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.position.y));
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.position.z));
+            return arr;
+        }
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_actor_rotation(mrb_state* mrb, mrb_value self) {
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) {
+            mrb_value arr = mrb_ary_new(mrb);
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.rotation.x));
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.rotation.y));
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.rotation.z));
+            return arr;
+        }
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_actor_scale(mrb_state* mrb, mrb_value self) {
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) {
+            mrb_value arr = mrb_ary_new(mrb);
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.scale.x));
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.scale.y));
+            mrb_ary_push(mrb, arr, mrb_float_value(mrb, transform->transform.scale.z));
+            return arr;
+        }
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_actor_set_rotation(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) transform->transform.rotation = Vec3(x, y, z);
+    }
+    return self;
+}
+
+static mrb_value rb_actor_set_scale(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) transform->transform.scale = Vec3(x, y, z);
+    }
+    return self;
+}
+
+static mrb_value rb_actor_name(mrb_state* mrb, mrb_value self) {
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        return mrb_str_new_cstr(mrb, engine->GetScene().GetEntityName(*id).c_str());
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_actor_set_model(mrb_state* mrb, mrb_value self) {
+    char* type;
+    mrb_get_args(mrb, "z", &type);
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* model = engine->GetScene().GetComponent<ModelRendererComponent>(*id);
+        if (!model) {
+            model = engine->GetScene().AddComponent<ModelRendererComponent>(*id);
+        }
+        model->model = std::make_shared<Model>();
+        std::string t(type);
+        if (t == "plane") model->model->AddMesh(MeshFactory::CreatePlane(2.0f));
+        else model->model->AddMesh(MeshFactory::CreateCube(1.0f));
+    }
+    return self;
+}
+
+static mrb_value rb_actor_set_color(mrb_state* mrb, mrb_value self) {
+    mrb_float r, g, b;
+    mrb_get_args(mrb, "fff", &r, &g, &b);
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* model = engine->GetScene().GetComponent<ModelRendererComponent>(*id);
+        if (model) {
+            model->texture.reset();
+            auto* material = engine->GetScene().GetComponent<MaterialComponent>(*id);
+            if (!material) material = engine->GetScene().AddComponent<MaterialComponent>(*id);
+            material->material.diffuse = Color(r, g, b, 1.0f);
+        }
+    }
+    return self;
+}
+
 void RubyVM::BindActor() {
     struct RClass* actor = mrb_define_class(mMrb, "Actor", mMrb->object_class);
     mrb_define_class_method(mMrb, actor, "new", rb_actor_new, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, actor, "move_to", rb_actor_move_to, MRB_ARGS_REQ(3));
     mrb_define_method(mMrb, actor, "move", rb_actor_move, MRB_ARGS_REQ(3));
+    mrb_define_method(mMrb, actor, "position", rb_actor_position, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, actor, "rotation", rb_actor_rotation, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, actor, "scale", rb_actor_scale, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, actor, "set_rotation", rb_actor_set_rotation, MRB_ARGS_REQ(3));
+    mrb_define_method(mMrb, actor, "set_scale", rb_actor_set_scale, MRB_ARGS_REQ(3));
+    mrb_define_method(mMrb, actor, "name", rb_actor_name, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, actor, "set_model", rb_actor_set_model, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, actor, "set_color", rb_actor_set_color, MRB_ARGS_REQ(3));
+}
+
+static mrb_value rb_engine_time(mrb_state* mrb, mrb_value self) {
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_float_value(mrb, 0.0f);
+    return mrb_float_value(mrb, engine->GetTime());
+}
+
+static mrb_value rb_engine_delta_time(mrb_state* mrb, mrb_value self) {
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_float_value(mrb, 0.0f);
+    return mrb_float_value(mrb, engine->GetDeltaTime());
+}
+
+static mrb_value rb_engine_log(mrb_state* mrb, mrb_value self) {
+    char* msg;
+    mrb_get_args(mrb, "z", &msg);
+    RPG_LOG_INFO(std::string(msg));
+    return mrb_nil_value();
+}
+
+static mrb_value rb_camera_position(mrb_state* mrb, mrb_value self) {
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_nil_value();
+    auto pos = engine->GetRenderer().GetCamera().GetPosition();
+    mrb_value arr = mrb_ary_new(mrb);
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, pos.x));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, pos.y));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, pos.z));
+    return arr;
+}
+
+static mrb_value rb_camera_set_position(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine) engine->GetRenderer().GetCamera().SetPosition(Vec3(x, y, z));
+    return mrb_nil_value();
+}
+
+static mrb_value rb_camera_rotation(mrb_state* mrb, mrb_value self) {
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_nil_value();
+    auto rot = engine->GetRenderer().GetCamera().GetRotation();
+    mrb_value arr = mrb_ary_new(mrb);
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, rot.x));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, rot.y));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, rot.z));
+    return arr;
+}
+
+static mrb_value rb_camera_set_rotation(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine) engine->GetRenderer().GetCamera().SetRotation(Vec3(x, y, z));
+    return mrb_nil_value();
+}
+
+static mrb_value rb_map_width(mrb_state* mrb, mrb_value self) {
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_int_value(mrb, 0);
+    return mrb_int_value(mrb, engine->GetMap().GetWidth());
+}
+
+static mrb_value rb_map_height(mrb_state* mrb, mrb_value self) {
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_int_value(mrb, 0);
+    return mrb_int_value(mrb, engine->GetMap().GetHeight());
 }
 
 void RubyVM::BindEngine() {
     mMrb->ud = mEngine;
+}
+
+void RubyVM::BindGame() {
+    struct RClass* engine = mrb_define_module(mMrb, "Engine");
+    mrb_define_module_function(mMrb, engine, "time", rb_engine_time, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, engine, "delta_time", rb_engine_delta_time, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, engine, "log", rb_engine_log, MRB_ARGS_REQ(1));
+}
+
+void RubyVM::BindCamera() {
+    struct RClass* camera = mrb_define_module(mMrb, "Camera");
+    mrb_define_module_function(mMrb, camera, "position", rb_camera_position, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, camera, "position=", rb_camera_set_position, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, camera, "rotation", rb_camera_rotation, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, camera, "rotation=", rb_camera_set_rotation, MRB_ARGS_REQ(1));
+}
+
+void RubyVM::BindMap() {
+    struct RClass* map = mrb_define_module(mMrb, "Map");
+    mrb_define_module_function(mMrb, map, "set_tile", rb_map_set_tile, MRB_ARGS_REQ(4));
+    mrb_define_module_function(mMrb, map, "get_tile", rb_map_get_tile, MRB_ARGS_REQ(3));
+    mrb_define_module_function(mMrb, map, "width", rb_map_width, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, map, "height", rb_map_height, MRB_ARGS_NONE());
 }
 
 } // namespace rpg
@@ -235,11 +470,14 @@ bool RubyVM::Initialize(Engine* engine) {
 void RubyVM::Shutdown() {}
 bool RubyVM::ExecuteString(const std::string& code) { (void)code; return false; }
 bool RubyVM::ExecuteFile(const std::string& path) { (void)path; return false; }
+bool RubyVM::Update(float deltaTime) { (void)deltaTime; return false; }
 void RubyVM::BindEngine() {}
 void RubyVM::BindInput() {}
 void RubyVM::BindAudio() {}
 void RubyVM::BindMap() {}
 void RubyVM::BindActor() {}
+void RubyVM::BindCamera() {}
+void RubyVM::BindGame() {}
 
 } // namespace rpg
 

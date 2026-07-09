@@ -35,6 +35,10 @@ set(SOURCES
     src/Command.cpp
     src/CommandHistory.cpp
     src/Prefab.cpp
+    src/Raycast.cpp
+    src/Lighting.cpp
+    src/Material.cpp
+    src/ParticleSystem.cpp
     ${GLAD_ROOT}/src/gl.c
     third_party/stb/stb_image_impl.c
     third_party/miniaudio/miniaudio_impl.c

@@ -31,6 +31,11 @@ public:
     bool IsPlaying() const { return mPlayMode; }
     void SetPlayMode(bool play) { mPlayMode = play; }
     Vec2 GetSceneViewSize() const { return mSceneViewSize; }
+    Vec2 GetSceneViewPos() const { return mSceneViewPos; }
+    int GetSelectedEntity() const { return mSelectedEntity; }
+
+    void HandleSceneViewPicking();
+    void PaintTileAt(int x, int z);
 
 private:
     void DrawMenuBar();
@@ -42,6 +47,7 @@ private:
     void DrawScriptEditor();
     void DrawConsole();
     void DrawPrefabBrowser();
+    void DrawLightingEditor();
 
     void InitializeDefaultLayout(unsigned int dockspaceId, float width, float height);
 
@@ -63,8 +69,11 @@ private:
     int mSelectedTile = 0;
     int mPaintX = 0;
     int mPaintZ = 0;
-    Vec2 mSceneViewSize{0.0f};
+    Vec2 mSceneViewPos{0.0f};
+    Vec2 mSceneViewSize{1280.0f, 720.0f};
     float mTileScale = 2.0f;
+    bool mSceneViewHovered = false;
+    bool mSceneViewFocused = false;
 };
 
 } // namespace rpg

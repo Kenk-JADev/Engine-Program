@@ -36,4 +36,34 @@ void SetTileCommand::Undo(Engine& engine) {
     engine.GetMap().SetTile(mLayer, mX, mZ, mOldTile);
 }
 
+CreateEntityCommand::CreateEntityCommand(const std::string& name)
+    : mName(name) {
+}
+
+void CreateEntityCommand::Execute(Engine& engine) {
+    mID = engine.GetScene().CreateEntity(mName);
+}
+
+void CreateEntityCommand::Undo(Engine& engine) {
+    if (mID != INVALID_ENTITY) {
+        engine.GetScene().DestroyEntity(mID);
+    }
+}
+
+DeleteEntityCommand::DeleteEntityCommand(EntityID id, const std::string& name, const Transform& transform)
+    : mID(id), mName(name), mTransform(transform) {
+}
+
+void DeleteEntityCommand::Execute(Engine& engine) {
+    engine.GetScene().DestroyEntity(mID);
+}
+
+void DeleteEntityCommand::Undo(Engine& engine) {
+    EntityID id = engine.GetScene().CreateEntity(mName);
+    auto* t = engine.GetScene().AddComponent<TransformComponent>(id);
+    t->transform = mTransform;
+    // Note: model/components not restored; simplified undo for now
+    (void)mID;
+}
+
 } // namespace rpg

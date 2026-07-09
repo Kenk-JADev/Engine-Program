@@ -5,19 +5,24 @@
 #include <memory>
 #include <unordered_map>
 #include "Types.h"
+#include "Material.h"
 
 namespace rpg {
 
 class Model;
 class Texture;
+class ParticleEmitter;
 
 enum class ComponentType {
     Transform,
     Sprite,
     ModelRenderer,
+    Material,
     Script,
     Camera,
     AudioSource,
+    ParticleEmitter,
+    Light,
     Count
 };
 
@@ -48,7 +53,45 @@ public:
     ComponentType GetType() const override { return ComponentType::ModelRenderer; }
     std::shared_ptr<Model> model;
     std::shared_ptr<Texture> texture;
+};
+
+class MaterialComponent : public Component {
+public:
+    ComponentType GetType() const override { return ComponentType::Material; }
+    Material material;
+};
+
+class LightComponent : public Component {
+public:
+    ComponentType GetType() const override { return ComponentType::Light; }
     Color color{1.0f};
+    float intensity = 1.0f;
+    float range = 10.0f;
+};
+
+class ParticleEmitterComponent : public Component {
+public:
+    ComponentType GetType() const override { return ComponentType::ParticleEmitter; }
+    std::unique_ptr<ParticleEmitter> emitter;
+    bool autoEmit = false;
+    int emitCount = 5;
+    float emitRate = 0.1f;
+    float emitTimer = 0.0f;
+    Vec3 emitDirection{0, 1, 0};
+    float emitSpread = 0.5f;
+    float emitSpeed = 2.0f;
+    float emitLife = 1.0f;
+    Color emitColor{1.0f, 0.5f, 0.0f, 1.0f};
+};
+
+class CameraComponent : public Component {
+public:
+    ComponentType GetType() const override { return ComponentType::Camera; }
+    float fov = 60.0f;
+    float aspect = 16.0f / 9.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 1000.0f;
+    bool isMain = true;
 };
 
 class ScriptComponent : public Component {

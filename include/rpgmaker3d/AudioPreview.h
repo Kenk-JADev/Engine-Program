@@ -11,6 +11,7 @@ public:
     AudioPreview(AudioManager& audio);
 
     void DrawUI();
+    void LoadAndPlay(const std::string& path, bool loop = false);
 
 private:
     void DrawFileBrowser(const std::string& path);

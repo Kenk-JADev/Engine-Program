@@ -37,6 +37,10 @@ SRC = src/main.cpp \
       src/CommandHistory.cpp \
       src/Prefab.cpp \
       src/RubyVM.cpp \
+      src/Raycast.cpp \
+      src/Lighting.cpp \
+      src/Material.cpp \
+      src/ParticleSystem.cpp \
       src/Editor.cpp \
       third_party/imgui/imgui.cpp \
       third_party/imgui/imgui_demo.cpp \

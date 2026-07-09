@@ -23,6 +23,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Setup Ruby (required by mruby build)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
@@ -46,10 +51,14 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path third_party/mruby)) {
-            git clone https://github.com/mruby/mruby.git third_party/mruby
+            git clone --depth 1 https://github.com/mruby/mruby.git third_party/mruby
           }
           cd third_party/mruby
-          make
+          ruby minirake
+          if (-not (Test-Path include/mruby/presym/id.h)) {
+            Write-Error "mruby presym headers were not generated. Build failed."
+            exit 1
+          }
 
       - name: Generate OpenGL loader (glad)
         shell: pwsh

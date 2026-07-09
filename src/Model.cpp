@@ -181,6 +181,21 @@ Mesh MeshFactory::CreatePlane(float size) {
     return mesh;
 }
 
+Mesh MeshFactory::CreateQuad(float width, float height) {
+    Mesh mesh;
+    float hw = width * 0.5f;
+    float hh = height * 0.5f;
+    mesh.vertices = {
+        {{-hw, -hh, 0}, {0, 0, 1}, {0, 0}},
+        {{ hw, -hh, 0}, {0, 0, 1}, {1, 0}},
+        {{ hw,  hh, 0}, {0, 0, 1}, {1, 1}},
+        {{-hw,  hh, 0}, {0, 0, 1}, {0, 1}}
+    };
+    mesh.indices = {0, 1, 2, 2, 3, 0};
+    mesh.BuildGPU();
+    return mesh;
+}
+
 Mesh MeshFactory::CreateGrid(int lines, float spacing) {
     Mesh mesh;
     float half = lines * spacing * 0.5f;

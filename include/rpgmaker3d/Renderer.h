@@ -3,8 +3,11 @@
 #include <memory>
 #include "Types.h"
 #include "Camera.h"
+#include "Material.h"
 
 namespace rpg {
+
+struct Particle;
 
 class Shader;
 class Texture;
@@ -34,6 +37,9 @@ public:
 
     void DrawMesh(const Mesh& mesh, const Mat4& transform, Texture* texture = nullptr, const Color& color = Color(1.0f));
     void DrawModel(const Model& model, const Mat4& transform, Texture* texture = nullptr);
+    void DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, const Material& material);
+    void DrawParticles(const std::vector<Particle>& particles);
+    void DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& transform, const Color& color);
 
     void Submit(const RenderCommand& cmd);
     void Flush();
@@ -43,11 +49,18 @@ public:
     void EnableWireframe(bool enable);
 
     Camera& GetCamera() { return mCamera; }
+    Shader& GetShader() { return *mDefaultShader; }
+
+    void UpdateLighting();
+    void SetLightDir(const Vec3& dir);
+    void SetAmbient(float ambient);
 
 private:
     Camera mCamera;
     std::unique_ptr<Shader> mDefaultShader;
     std::unique_ptr<Texture> mDefaultTexture;
+    std::unique_ptr<Mesh> mParticleMesh;
+    std::unique_ptr<Mesh> mBoundingBoxMesh;
     std::vector<RenderCommand> mCommandQueue;
     Color mClearColor{0.1f, 0.1f, 0.15f, 1.0f};
 };

@@ -2,6 +2,8 @@
 #include "rpgmaker3d/Shader.h"
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Model.h"
+#include "rpgmaker3d/Lighting.h"
+#include "rpgmaker3d/ParticleSystem.h"
 #include <glad/gl.h>
 #include <iostream>
 
@@ -73,6 +75,9 @@ bool Renderer::Initialize() {
     mDefaultTexture = std::make_unique<Texture>();
     mDefaultTexture->CreateCheckerboard();
 
+    mParticleMesh = std::make_unique<Mesh>(MeshFactory::CreateCube(0.1f));
+    mBoundingBoxMesh = std::make_unique<Mesh>();
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -82,6 +87,8 @@ bool Renderer::Initialize() {
 void Renderer::Shutdown() {
     mDefaultShader.reset();
     mDefaultTexture.reset();
+    mParticleMesh.reset();
+    mBoundingBoxMesh.reset();
 }
 
 void Renderer::BeginFrame(const Camera& camera) {
@@ -91,8 +98,7 @@ void Renderer::BeginFrame(const Camera& camera) {
     mDefaultShader->Bind();
     mDefaultShader->SetMat4("uView", camera.GetViewMatrix());
     mDefaultShader->SetMat4("uProjection", camera.GetProjectionMatrix());
-    mDefaultShader->SetVec3("uLightDir", Vec3(0.3f, -1.0f, 0.5f));
-    mDefaultShader->SetFloat("uAmbient", 0.35f);
+    UpdateLighting();
     mDefaultTexture->Bind(0);
 }
 
@@ -160,6 +166,88 @@ void Renderer::EnableDepthTest(bool enable) {
 
 void Renderer::EnableWireframe(bool enable) {
     glPolygonMode(GL_FRONT_AND_BACK, enable ? GL_LINE : GL_FILL);
+}
+
+void Renderer::UpdateLighting() {
+    Lighting& light = Lighting::Get();
+    mDefaultShader->SetVec3("uLightDir", light.GetEffectiveLightDir());
+    mDefaultShader->SetFloat("uAmbient", light.GetEffectiveAmbient());
+}
+
+void Renderer::SetLightDir(const Vec3& dir) {
+    Lighting::Get().GetDirectionalLight().direction = dir;
+}
+
+void Renderer::SetAmbient(float ambient) {
+    Lighting::Get().GetAmbient().intensity = ambient;
+}
+
+void Renderer::DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, const Material& material) {
+    bool wasWireframe = false;
+    if (material.wireframe) {
+        GLint polygonMode[2];
+        glGetIntegerv(GL_POLYGON_MODE, polygonMode);
+        wasWireframe = (polygonMode[0] == GL_LINE);
+        EnableWireframe(true);
+    }
+
+    if (material.transparent) {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    mDefaultShader->Bind();
+    mDefaultShader->SetMat4("uModel", transform);
+    mDefaultShader->SetVec4("uColor", material.diffuse);
+    if (material.texture) {
+        material.texture->Bind(0);
+        mDefaultShader->SetInt("uTexture", 0);
+    } else {
+        mDefaultTexture->Bind(0);
+        mDefaultShader->SetInt("uTexture", 0);
+    }
+    mesh.Draw();
+
+    if (material.wireframe && !wasWireframe) {
+        EnableWireframe(false);
+    }
+    if (material.transparent) {
+        glDisable(GL_BLEND);
+    }
+}
+
+void Renderer::DrawParticles(const std::vector<Particle>& particles) {
+    if (!mParticleMesh) return;
+    for (const auto& p : particles) {
+        Mat4 transform = glm::translate(Mat4(1.0f), p.position) * glm::scale(Mat4(1.0f), Vec3(p.size));
+        DrawMesh(*mParticleMesh, transform, nullptr, p.color);
+    }
+}
+
+void Renderer::DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& transform, const Color& color) {
+    if (!mBoundingBoxMesh) return;
+    mBoundingBoxMesh->vertices = {
+        {{min.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, min.y, min.z}, {0,0,0}, {0,0}},
+        {{max.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, min.y, max.z}, {0,0,0}, {0,0}},
+        {{max.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, min.y, max.z}, {0,0,0}, {0,0}},
+        {{min.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, min.y, min.z}, {0,0,0}, {0,0}},
+        {{min.x, max.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, min.z}, {0,0,0}, {0,0}},
+        {{max.x, max.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, max.z}, {0,0,0}, {0,0}},
+        {{max.x, max.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, max.z}, {0,0,0}, {0,0}},
+        {{min.x, max.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, min.z}, {0,0,0}, {0,0}},
+        {{min.x, min.y, min.z}, {0,0,0}, {0,0}}, {{min.x, max.y, min.z}, {0,0,0}, {0,0}},
+        {{max.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, min.z}, {0,0,0}, {0,0}},
+        {{max.x, min.y, max.z}, {0,0,0}, {0,0}}, {{max.x, max.y, max.z}, {0,0,0}, {0,0}},
+        {{min.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, max.z}, {0,0,0}, {0,0}},
+    };
+    mBoundingBoxMesh->indices.clear();
+    for (size_t i = 0; i < mBoundingBoxMesh->vertices.size(); ++i) {
+        mBoundingBoxMesh->indices.push_back(static_cast<unsigned int>(i));
+    }
+    mBoundingBoxMesh->BuildGPU();
+    EnableWireframe(true);
+    DrawMesh(*mBoundingBoxMesh, transform, nullptr, color);
+    EnableWireframe(false);
 }
 
 } // namespace rpg

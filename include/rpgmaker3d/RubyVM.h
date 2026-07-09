@@ -20,6 +20,7 @@ public:
 
     bool ExecuteString(const std::string& code);
     bool ExecuteFile(const std::string& path);
+    bool Update(float deltaTime);
 
     mrb_state* GetState() { return mMrb; }
 
@@ -29,6 +30,8 @@ private:
     void BindAudio();
     void BindMap();
     void BindActor();
+    void BindCamera();
+    void BindGame();
 
     mrb_state* mMrb = nullptr;
     Engine* mEngine = nullptr;

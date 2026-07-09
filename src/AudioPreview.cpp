@@ -9,6 +9,14 @@ namespace rpg {
 AudioPreview::AudioPreview(AudioManager& audio) : mAudio(audio) {
 }
 
+void AudioPreview::LoadAndPlay(const std::string& path, bool loop) {
+    mSelectedAudio = path;
+    mAudio.SetMasterVolume(mVolume);
+    mAudio.LoadSound("preview", path);
+    mAudio.PlaySound("preview", loop);
+    RPG_LOG_INFO("Playing sound: " + path);
+}
+
 void AudioPreview::DrawUI() {
     ImGui::Begin("Audio Preview");
 

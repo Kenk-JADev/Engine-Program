@@ -15,6 +15,9 @@
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/CommandHistory.h"
 #include "rpgmaker3d/RubyVM.h"
+#include "rpgmaker3d/Raycast.h"
+#include "rpgmaker3d/Lighting.h"
+#include "rpgmaker3d/ParticleSystem.h"
 
 #if defined(_WIN32)
 #include <SDL.h>
@@ -25,6 +28,8 @@
 #include <glad/gl.h>
 #include <iostream>
 #include <chrono>
+#include <fstream>
+#include <sstream>
 
 namespace rpg {
 
@@ -288,6 +293,27 @@ void Engine::Update(float dt) {
         }
     }
 
+    // Partikel aktualisieren
+    for (EntityID id : mScene->GetEntities()) {
+        auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id);
+        if (emitter && emitter->emitter) {
+            emitter->emitTimer += dt;
+            if (emitter->autoEmit && emitter->emitTimer >= emitter->emitRate) {
+                auto* transform = mScene->GetComponent<TransformComponent>(id);
+                Vec3 origin = transform ? transform->transform.position : Vec3(0.0f);
+                emitter->emitter->Emit(emitter->emitCount, origin, emitter->emitDirection,
+                    emitter->emitSpread, emitter->emitSpeed, emitter->emitLife, emitter->emitColor);
+                emitter->emitTimer = 0.0f;
+            }
+            emitter->emitter->Update(dt);
+        }
+    }
+
+    // Ruby-Update im Play Mode
+    if (mPlayMode) {
+        mRubyVM->Update(dt);
+    }
+
     mScene->Update(dt);
 }
 
@@ -323,7 +349,20 @@ void Engine::Render() {
 }
 
 void Engine::RenderScene() {
-    mRenderer->BeginFrame(mRenderer->GetCamera());
+    Camera* camera = &mRenderer->GetCamera();
+    if (mActiveCameraEntity != INVALID_ENTITY) {
+        auto* camComp = mScene->GetComponent<CameraComponent>(mActiveCameraEntity);
+        auto* transform = mScene->GetComponent<TransformComponent>(mActiveCameraEntity);
+        if (camComp && transform) {
+            Camera tempCam;
+            tempCam.SetPosition(transform->transform.position);
+            tempCam.SetRotation(transform->transform.rotation);
+            tempCam.SetPerspective(camComp->fov, camComp->aspect, camComp->nearPlane, camComp->farPlane);
+            camera = &tempCam;
+        }
+    }
+
+    mRenderer->BeginFrame(*camera);
 
     // Grid zeichnen (wiederverwendet)
     mRenderer->DrawMesh(mGridMesh, Mat4(1.0f), nullptr, Color(0.4f, 0.4f, 0.4f, 1.0f));
@@ -335,12 +374,295 @@ void Engine::RenderScene() {
     for (EntityID id : mScene->GetEntities()) {
         auto* transform = mScene->GetComponent<TransformComponent>(id);
         auto* model = mScene->GetComponent<ModelRendererComponent>(id);
+        auto* material = mScene->GetComponent<MaterialComponent>(id);
         if (transform && model) {
-            mRenderer->DrawModel(*model->model, transform->transform.GetMatrix(), model->texture.get());
+            Mat4 matrix = transform->transform.GetMatrix();
+            if (material) {
+                mRenderer->DrawMeshWithMaterial(model->model->GetMesh(0), matrix, material->material);
+            } else {
+                mRenderer->DrawModel(*model->model, matrix, model->texture.get());
+            }
+        }
+
+        auto* light = mScene->GetComponent<LightComponent>(id);
+        if (transform && light) {
+            Mesh lightMesh = MeshFactory::CreateCube(0.2f);
+            Mat4 matrix = glm::translate(Mat4(1.0f), transform->transform.position);
+            mRenderer->DrawMesh(lightMesh, matrix, nullptr, light->color);
+        }
+
+        auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id);
+        if (emitter && emitter->emitter) {
+            mRenderer->DrawParticles(emitter->emitter->GetParticles());
+        }
+
+        auto* sprite = mScene->GetComponent<SpriteComponent>(id);
+        if (transform && sprite) {
+            Mat4 matrix;
+            if (sprite->billboard) {
+                // Face camera
+                Vec3 pos = transform->transform.position;
+                Vec3 camPos = camera->GetPosition();
+                Vec3 forward = glm::normalize(camPos - pos);
+                Vec3 right = glm::normalize(glm::cross(Vec3(0, 1, 0), forward));
+                Vec3 up = glm::cross(forward, right);
+                Mat4 rot(right.x, right.y, right.z, 0,
+                         up.x, up.y, up.z, 0,
+                         forward.x, forward.y, forward.z, 0,
+                         0, 0, 0, 1);
+                matrix = glm::translate(Mat4(1.0f), pos) * rot;
+                matrix = glm::scale(matrix, Vec3(sprite->size.x * transform->transform.scale.x,
+                                                 sprite->size.y * transform->transform.scale.y, 1.0f));
+            } else {
+                matrix = transform->transform.GetMatrix();
+                matrix = glm::scale(matrix, Vec3(sprite->size.x, sprite->size.y, 1.0f));
+            }
+            Mesh quad = MeshFactory::CreateQuad(1.0f, 1.0f);
+            mRenderer->DrawMesh(quad, matrix, sprite->texture.get(), sprite->color);
+        }
+    }
+
+    // Auswahl-Gizmo
+    if (mEditor && mEditorMode) {
+        int selected = mEditor->GetSelectedEntity();
+        if (selected >= 0) {
+            auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(selected));
+            if (transform) {
+                Vec3 scale = transform->transform.scale;
+                if (glm::length(scale) < 0.001f) scale = Vec3(1.0f);
+                Mat4 matrix = transform->transform.GetMatrix();
+                mRenderer->DrawBoundingBox(Vec3(-0.5f), Vec3(0.5f), matrix, Color(1.0f, 0.8f, 0.0f, 1.0f));
+            }
         }
     }
 
     mRenderer->EndFrame();
+}
+
+namespace {
+
+std::string EscapeJSON(const std::string& s) {
+    std::string out;
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c; break;
+        }
+    }
+    return out;
+}
+
+std::string Vec3ToJSON(const Vec3& v) {
+    return "[" + std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z) + "]";
+}
+
+std::string Vec4ToJSON(const Vec4& v) {
+    return "[" + std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z) + "," + std::to_string(v.w) + "]";
+}
+
+} // anonymous namespace
+
+void Engine::SaveScene(const std::string& path) const {
+    std::ofstream file(path);
+    if (!file.is_open()) {
+        RPG_LOG_ERROR("Failed to save scene: " + path);
+        return;
+    }
+
+    file << "{\n";
+    file << "  \"entities\": [\n";
+    const auto& entities = mScene->GetEntities();
+    for (size_t i = 0; i < entities.size(); ++i) {
+        EntityID id = entities[i];
+        file << "    {\n";
+        file << "      \"id\": " << id << ",\n";
+        file << "      \"name\": \"" << EscapeJSON(mScene->GetEntityName(id)) << "\"";
+
+        auto* transform = mScene->GetComponent<TransformComponent>(id);
+        if (transform) {
+            file << ",\n      \"transform\": {\n";
+            file << "        \"position\": " << Vec3ToJSON(transform->transform.position) << ",\n";
+            file << "        \"rotation\": " << Vec3ToJSON(transform->transform.rotation) << ",\n";
+            file << "        \"scale\": " << Vec3ToJSON(transform->transform.scale) << "\n";
+            file << "      }";
+        }
+
+        auto* model = mScene->GetComponent<ModelRendererComponent>(id);
+        if (model) {
+            file << ",\n      \"model\": {\n";
+            file << "        \"mesh\": \"primitive\"\n";
+            file << "      }";
+        }
+
+        auto* material = mScene->GetComponent<MaterialComponent>(id);
+        if (material) {
+            file << ",\n      \"material\": {\n";
+            file << "        \"diffuse\": " << Vec4ToJSON(material->material.diffuse) << "\n";
+            file << "      }";
+        }
+
+        auto* light = mScene->GetComponent<LightComponent>(id);
+        if (light) {
+            file << ",\n      \"light\": {\n";
+            file << "        \"color\": " << Vec4ToJSON(light->color) << ",\n";
+            file << "        \"intensity\": " << light->intensity << "\n";
+            file << "      }";
+        }
+
+        auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id);
+        if (emitter) {
+            file << ",\n      \"particleEmitter\": {\n";
+            file << "        \"autoEmit\": " << (emitter->autoEmit ? "true" : "false") << ",\n";
+            file << "        \"color\": " << Vec4ToJSON(emitter->emitColor) << "\n";
+            file << "      }";
+        }
+
+        file << "\n    }";
+        if (i + 1 < entities.size()) file << ",";
+        file << "\n";
+    }
+    file << "  ]\n";
+    file << "}\n";
+
+    RPG_LOG_INFO("Scene saved to: " + path);
+}
+
+bool Engine::LoadScene(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        RPG_LOG_ERROR("Failed to load scene: " + path);
+        return false;
+    }
+
+    mScene->Clear();
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    std::string content = buffer.str();
+
+    auto findSection = [&](const std::string& text, const std::string& key, size_t start) -> size_t {
+        std::string pattern = "\"" + key + "\"";
+        return text.find(pattern, start);
+    };
+
+    auto parseVec3 = [&](const std::string& text, size_t start, size_t end, Vec3& out) {
+        size_t bracket = text.find('[', start);
+        if (bracket == std::string::npos || bracket >= end) return;
+        size_t close = text.find(']', bracket);
+        if (close == std::string::npos || close > end) return;
+        std::string inner = text.substr(bracket + 1, close - bracket - 1);
+        std::stringstream ss(inner);
+        char sep;
+        ss >> out.x >> sep >> out.y >> sep >> out.z;
+    };
+
+    auto parseVec4 = [&](const std::string& text, size_t start, size_t end, Vec4& out) {
+        size_t bracket = text.find('[', start);
+        if (bracket == std::string::npos || bracket >= end) return;
+        size_t close = text.find(']', bracket);
+        if (close == std::string::npos || close > end) return;
+        std::string inner = text.substr(bracket + 1, close - bracket - 1);
+        std::stringstream ss(inner);
+        char sep;
+        ss >> out.x >> sep >> out.y >> sep >> out.z >> sep >> out.w;
+    };
+
+    size_t entityStart = content.find("\"entities\"");
+    if (entityStart == std::string::npos) return false;
+
+    size_t arrayStart = content.find('[', entityStart);
+    if (arrayStart == std::string::npos) return false;
+
+    size_t pos = arrayStart + 1;
+    while (pos < content.size()) {
+        size_t objStart = content.find('{', pos);
+        if (objStart == std::string::npos) break;
+
+        size_t objEnd = content.find('}', objStart);
+        if (objEnd == std::string::npos) break;
+
+        std::string obj = content.substr(objStart, objEnd - objStart + 1);
+
+        size_t namePos = findSection(obj, "name", 0);
+        std::string name = "Entity";
+        if (namePos != std::string::npos) {
+            size_t quote = obj.find('"', namePos + 7);
+            size_t quoteEnd = obj.find('"', quote + 1);
+            if (quote != std::string::npos && quoteEnd != std::string::npos) {
+                name = obj.substr(quote + 1, quoteEnd - quote - 1);
+            }
+        }
+
+        EntityID id = mScene->CreateEntity(name);
+
+        size_t transformPos = findSection(obj, "transform", 0);
+        if (transformPos != std::string::npos) {
+            auto* t = mScene->AddComponent<TransformComponent>(id);
+            size_t pPos = findSection(obj, "position", transformPos);
+            parseVec3(obj, pPos, obj.size(), t->transform.position);
+            size_t rPos = findSection(obj, "rotation", transformPos);
+            parseVec3(obj, rPos, obj.size(), t->transform.rotation);
+            size_t sPos = findSection(obj, "scale", transformPos);
+            parseVec3(obj, sPos, obj.size(), t->transform.scale);
+        }
+
+        size_t modelPos = findSection(obj, "model", 0);
+        if (modelPos != std::string::npos) {
+            auto* m = mScene->AddComponent<ModelRendererComponent>(id);
+            m->model = std::make_shared<Model>();
+            m->model->AddMesh(MeshFactory::CreateCube(1.0f));
+        }
+
+        size_t matPos = findSection(obj, "material", 0);
+        if (matPos != std::string::npos) {
+            auto* m = mScene->AddComponent<MaterialComponent>(id);
+            size_t dPos = findSection(obj, "diffuse", matPos);
+            parseVec4(obj, dPos, obj.size(), m->material.diffuse);
+        }
+
+        size_t lightPos = findSection(obj, "light", 0);
+        if (lightPos != std::string::npos) {
+            auto* l = mScene->AddComponent<LightComponent>(id);
+            size_t cPos = findSection(obj, "color", lightPos);
+            parseVec4(obj, cPos, obj.size(), l->color);
+            size_t iPos = findSection(obj, "intensity", lightPos);
+            if (iPos != std::string::npos) {
+                size_t colon = obj.find(':', iPos);
+                if (colon != std::string::npos) {
+                    std::string val = obj.substr(colon + 1);
+                    try { l->intensity = std::stof(val); } catch (...) {}
+                }
+            }
+        }
+
+        size_t pePos = findSection(obj, "particleEmitter", 0);
+        if (pePos != std::string::npos) {
+            auto* pe = mScene->AddComponent<ParticleEmitterComponent>(id);
+            pe->emitter = std::make_unique<ParticleEmitter>();
+            size_t aePos = findSection(obj, "autoEmit", pePos);
+            if (aePos != std::string::npos) {
+                size_t colon = obj.find(':', aePos);
+                if (colon != std::string::npos) {
+                    std::string val = obj.substr(colon + 1);
+                    pe->autoEmit = (val.find("true") != std::string::npos);
+                }
+            }
+            size_t cPos = findSection(obj, "color", pePos);
+            parseVec4(obj, cPos, obj.size(), pe->emitColor);
+        }
+
+        pos = objEnd + 1;
+        while (pos < content.size() && (content[pos] == ',' || std::isspace(static_cast<unsigned char>(content[pos])))) ++pos;
+    }
+
+    RPG_LOG_INFO("Scene loaded from: " + path);
+    return true;
 }
 
 } // namespace rpg
