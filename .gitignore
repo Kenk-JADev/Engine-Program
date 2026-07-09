@@ -1,0 +1,22 @@
+# Build artifacts
+build/
+bin/
+out/
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Editor / OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local config
+*.log
+imgui.ini
