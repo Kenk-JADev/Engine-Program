@@ -19,7 +19,24 @@ make -j$(nproc)
 
 Falls die X11/OpenGL-Bibliotheken nicht unter den Standardpfaden liegen, passe `Makefile` -> `LDLIBS` an.
 
-## Schnellstart Windows (Visual Studio 2022)
+## Schnellstart Windows (automatisiert)
+
+Am einfachsten ist das PowerShell-Skript:
+
+```powershell
+cd rpgmaker3d
+.\scripts\build-windows.ps1
+```
+
+Das Skript installiert automatisch vcpkg, SDL2, glm, generiert glad und baut die `.exe`.
+
+Danach findest du die ausführbare Datei unter:
+
+```
+build\Release\RPGMaker3D.exe
+```
+
+## Schnellstart Windows (manuell mit Visual Studio 2022)
 
 1. Installiere die Dependencies über vcpkg:
 
@@ -43,6 +60,18 @@ Falls die X11/OpenGL-Bibliotheken nicht unter den Standardpfaden liegen, passe `
    cmake --build build --config Release
    build\Release\RPGMaker3D.exe
    ```
+
+## Automatischer Build über GitHub Actions
+
+Wenn du das Projekt auf GitHub hochlädst, wird bei jedem Push automatisch eine Windows-EXE erstellt und als Download bereitgestellt.
+
+Workflow-Datei: `.github/workflows/build-windows.yml`
+
+1. Erstelle ein Repository auf GitHub.
+2. Lade den `rpgmaker3d`-Ordner hoch.
+3. Gehe im Repository auf **Actions > Build Windows EXE > Run workflow**.
+4. Nach ca. 5–10 Minuten findest du unter **Actions > Build Windows EXE > Artifacts** die ZIP-Datei `RPGMaker3D-Windows-x64`.
+5. Entpacke die ZIP und starte `RPGMaker3D.exe`.
 
 ## Ruby-Scripting aktivieren
 

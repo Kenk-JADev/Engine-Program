@@ -30,6 +30,13 @@ SRC = src/main.cpp \
       src/Project.cpp \
       src/ResourceManager.cpp \
       src/Camera.cpp \
+      src/Framebuffer.cpp \
+      src/Logger.cpp \
+      src/AudioPreview.cpp \
+      src/Command.cpp \
+      src/CommandHistory.cpp \
+      src/Prefab.cpp \
+      src/RubyVM.cpp \
       src/Editor.cpp \
       third_party/imgui/imgui.cpp \
       third_party/imgui/imgui_demo.cpp \

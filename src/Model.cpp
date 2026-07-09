@@ -118,6 +118,10 @@ bool Model::LoadFromOBJ(const std::string& path) {
     return true;
 }
 
+void Model::AddMesh(Mesh&& mesh) {
+    mMeshes.push_back(std::move(mesh));
+}
+
 void Model::Draw() const {
     for (const auto& mesh : mMeshes) {
         mesh.Draw();

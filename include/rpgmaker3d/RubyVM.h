@@ -4,6 +4,8 @@
 
 struct mrb_state;
 
+typedef unsigned int GLuint;
+
 namespace rpg {
 
 class Engine;
@@ -19,12 +21,15 @@ public:
     bool ExecuteString(const std::string& code);
     bool ExecuteFile(const std::string& path);
 
-    void BindEngine();
-    void RegisterClass(const std::string& name);
-
     mrb_state* GetState() { return mMrb; }
 
 private:
+    void BindEngine();
+    void BindInput();
+    void BindAudio();
+    void BindMap();
+    void BindActor();
+
     mrb_state* mMrb = nullptr;
     Engine* mEngine = nullptr;
 };

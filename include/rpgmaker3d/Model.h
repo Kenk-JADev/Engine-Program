@@ -10,6 +10,33 @@ namespace rpg {
 
 class Mesh {
 public:
+    Mesh() = default;
+    ~Mesh() { Delete(); }
+
+    // Kein Kopieren, nur Verschieben (OpenGL-Handles sind einzigartig)
+    Mesh(const Mesh&) = delete;
+    Mesh& operator=(const Mesh&) = delete;
+
+    Mesh(Mesh&& other) noexcept
+        : vertices(std::move(other.vertices)),
+          indices(std::move(other.indices)),
+          textureName(std::move(other.textureName)),
+          mVAO(other.mVAO), mVBO(other.mVBO), mEBO(other.mEBO) {
+        other.mVAO = other.mVBO = other.mEBO = 0;
+    }
+
+    Mesh& operator=(Mesh&& other) noexcept {
+        if (this != &other) {
+            Delete();
+            vertices = std::move(other.vertices);
+            indices = std::move(other.indices);
+            textureName = std::move(other.textureName);
+            mVAO = other.mVAO; mVBO = other.mVBO; mEBO = other.mEBO;
+            other.mVAO = other.mVBO = other.mEBO = 0;
+        }
+        return *this;
+    }
+
     std::vector<Vertex> vertices;
     std::vector<unsigned int> indices;
     std::string textureName;
@@ -30,6 +57,7 @@ public:
     ~Model();
 
     bool LoadFromOBJ(const std::string& path);
+    void AddMesh(Mesh&& mesh);
     void Draw() const;
     void Delete();
 

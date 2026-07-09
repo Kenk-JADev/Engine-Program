@@ -12,6 +12,9 @@ class Scene;
 class Project;
 class Map;
 
+class AudioManager;
+class AudioPreview;
+
 class Editor {
 public:
     Editor(Engine& engine);
@@ -27,6 +30,7 @@ public:
     bool WantCaptureInput() const;
     bool IsPlaying() const { return mPlayMode; }
     void SetPlayMode(bool play) { mPlayMode = play; }
+    Vec2 GetSceneViewSize() const { return mSceneViewSize; }
 
 private:
     void DrawMenuBar();
@@ -37,15 +41,30 @@ private:
     void DrawMapEditor();
     void DrawScriptEditor();
     void DrawConsole();
+    void DrawPrefabBrowser();
+
+    void InitializeDefaultLayout(unsigned int dockspaceId, float width, float height);
+
+    void CreateCube();
+    void CreatePlane();
+    void CreateLight();
+    void DeleteSelectedEntity();
+    void SaveMap();
+    void LoadMap();
 
     Engine& mEngine;
+    std::unique_ptr<AudioPreview> mAudioPreview;
     bool mInitialized = false;
     bool mShowDemo = false;
     bool mPlayMode = false;
+    bool mLayoutInitialized = false;
     int mSelectedEntity = -1;
     int mSelectedLayer = 0;
     int mSelectedTile = 0;
+    int mPaintX = 0;
+    int mPaintZ = 0;
     Vec2 mSceneViewSize{0.0f};
+    float mTileScale = 2.0f;
 };
 
 } // namespace rpg

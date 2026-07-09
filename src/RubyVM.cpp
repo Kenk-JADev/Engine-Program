@@ -1,15 +1,23 @@
 #include "rpgmaker3d/RubyVM.h"
+#include "rpgmaker3d/Engine.h"
+#include "rpgmaker3d/Scene.h"
+#include "rpgmaker3d/Map.h"
+#include "rpgmaker3d/AudioManager.h"
+#include "rpgmaker3d/Input.h"
+#include "rpgmaker3d/Logger.h"
 
 #ifdef RPGMAKER3D_ENABLE_RUBY
 #include <mruby.h>
 #include <mruby/compile.h>
 #include <mruby/string.h>
+#include <mruby/array.h>
+#include <mruby/data.h>
+#include <mruby/class.h>
 #include <iostream>
-#else
-#include <iostream>
-#endif
 
 namespace rpg {
+
+static void DeleteEngine(mrb_state* mrb) { (void)mrb; }
 
 RubyVM::RubyVM() = default;
 
@@ -19,72 +27,220 @@ RubyVM::~RubyVM() {
 
 bool RubyVM::Initialize(Engine* engine) {
     mEngine = engine;
-#ifdef RPGMAKER3D_ENABLE_RUBY
     mMrb = mrb_open();
     if (!mMrb) {
-        std::cerr << "Failed to open mruby VM" << std::endl;
+        RPG_LOG_ERROR("Failed to open mruby VM");
         return false;
     }
     BindEngine();
+    BindInput();
+    BindAudio();
+    BindMap();
+    BindActor();
+    RPG_LOG_INFO("Ruby VM initialized");
     return true;
-#else
-    std::cerr << "Ruby support not compiled in" << std::endl;
-    return false;
-#endif
 }
 
 void RubyVM::Shutdown() {
-#ifdef RPGMAKER3D_ENABLE_RUBY
     if (mMrb) {
         mrb_close(mMrb);
         mMrb = nullptr;
     }
-#endif
 }
 
 bool RubyVM::ExecuteString(const std::string& code) {
-#ifdef RPGMAKER3D_ENABLE_RUBY
     if (!mMrb) return false;
     mrb_load_string(mMrb, code.c_str());
     if (mMrb->exc) {
         mrb_print_error(mMrb);
+        mMrb->exc = nullptr;
         return false;
     }
     return true;
-#else
-    (void)code;
-    return false;
-#endif
 }
 
 bool RubyVM::ExecuteFile(const std::string& path) {
-#ifdef RPGMAKER3D_ENABLE_RUBY
     if (!mMrb) return false;
     FILE* f = fopen(path.c_str(), "r");
-    if (!f) return false;
+    if (!f) {
+        RPG_LOG_ERROR("Failed to open script: " + path);
+        return false;
+    }
     mrb_load_file(mMrb, f);
     fclose(f);
-    return mMrb->exc == nullptr;
-#else
-    (void)path;
-    return false;
-#endif
+    if (mMrb->exc) {
+        mrb_print_error(mMrb);
+        mMrb->exc = nullptr;
+        return false;
+    }
+    return true;
+}
+
+// ========== Input Bindings ==========
+static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
+    mrb_sym keySym;
+    mrb_get_args(mrb, "n", &keySym);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_bool_value(false);
+
+    std::string keyName(mrb_sym2name(mrb, keySym));
+    Key key = Key::Unknown;
+    if (keyName == "w" || keyName == "W") key = Key::W;
+    else if (keyName == "a" || keyName == "A") key = Key::A;
+    else if (keyName == "s" || keyName == "S") key = Key::S;
+    else if (keyName == "d" || keyName == "D") key = Key::D;
+    else if (keyName == "space") key = Key::Space;
+    else if (keyName == "return" || keyName == "enter") key = Key::Enter;
+    else if (keyName == "escape") key = Key::Escape;
+
+    return mrb_bool_value(engine->GetInput().IsKeyDown(key));
+}
+
+void RubyVM::BindInput() {
+    struct RClass* input = mrb_define_module(mMrb, "Input");
+    mrb_define_module_function(mMrb, input, "key_down?", rb_input_key_down, MRB_ARGS_REQ(1));
+}
+
+// ========== Audio Bindings ==========
+static mrb_value rb_audio_play_music(mrb_state* mrb, mrb_value self) {
+    char* path;
+    mrb_bool loop = true;
+    mrb_get_args(mrb, "z|b", &path, &loop);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine) engine->GetAudio().PlayMusic(path, loop);
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_play_sound(mrb_state* mrb, mrb_value self) {
+    char* path;
+    mrb_bool loop = false;
+    mrb_get_args(mrb, "z|b", &path, &loop);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine) {
+        engine->GetAudio().LoadSound("ruby_sound", path);
+        engine->GetAudio().PlaySound("ruby_sound", loop);
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_stop_music(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine) engine->GetAudio().StopMusic();
+    return mrb_nil_value();
+}
+
+void RubyVM::BindAudio() {
+    struct RClass* audio = mrb_define_module(mMrb, "Audio");
+    mrb_define_module_function(mMrb, audio, "bgm_play", rb_audio_play_music, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, audio, "se_play", rb_audio_play_sound, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, audio, "bgm_stop", rb_audio_stop_music, MRB_ARGS_NONE());
+}
+
+// ========== Map Bindings ==========
+static mrb_value rb_map_set_tile(mrb_state* mrb, mrb_value self) {
+    mrb_int layer, x, z, tile;
+    mrb_get_args(mrb, "iiii", &layer, &x, &z, &tile);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine) engine->GetMap().SetTile(static_cast<int>(layer), static_cast<int>(x), static_cast<int>(z), static_cast<int>(tile));
+    return mrb_nil_value();
+}
+
+static mrb_value rb_map_get_tile(mrb_state* mrb, mrb_value self) {
+    mrb_int layer, x, z;
+    mrb_get_args(mrb, "iii", &layer, &x, &z);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_int_value(mrb, -1);
+    return mrb_int_value(mrb, engine->GetMap().GetTile(static_cast<int>(layer), static_cast<int>(x), static_cast<int>(z)));
+}
+
+void RubyVM::BindMap() {
+    struct RClass* map = mrb_define_module(mMrb, "Map");
+    mrb_define_module_function(mMrb, map, "set_tile", rb_map_set_tile, MRB_ARGS_REQ(4));
+    mrb_define_module_function(mMrb, map, "get_tile", rb_map_get_tile, MRB_ARGS_REQ(3));
+}
+
+// ========== Actor Bindings ==========
+static void actor_free(mrb_state* mrb, void* p) {
+    (void)mrb;
+    delete static_cast<EntityID*>(p);
+}
+
+static const mrb_data_type actor_type = { "Actor", actor_free };
+
+static mrb_value rb_actor_new(mrb_state* mrb, mrb_value self) {
+    char* name;
+    mrb_get_args(mrb, "z", &name);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) return mrb_nil_value();
+
+    EntityID id = engine->GetScene().CreateEntity(name);
+    auto* transform = engine->GetScene().AddComponent<TransformComponent>(id);
+    transform->transform.position = Vec3(0, 0, 0);
+
+    EntityID* ptr = new EntityID(id);
+    return mrb_obj_value(mrb_data_object_alloc(mrb, mrb_class_ptr(self), ptr, &actor_type));
+}
+
+static mrb_value rb_actor_move_to(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) transform->transform.position = Vec3(x, y, z);
+    }
+    return self;
+}
+
+static mrb_value rb_actor_move(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (id && engine) {
+        auto* transform = engine->GetScene().GetComponent<TransformComponent>(*id);
+        if (transform) transform->transform.position += Vec3(x, y, z);
+    }
+    return self;
+}
+
+void RubyVM::BindActor() {
+    struct RClass* actor = mrb_define_class(mMrb, "Actor", mMrb->object_class);
+    mrb_define_class_method(mMrb, actor, "new", rb_actor_new, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, actor, "move_to", rb_actor_move_to, MRB_ARGS_REQ(3));
+    mrb_define_method(mMrb, actor, "move", rb_actor_move, MRB_ARGS_REQ(3));
 }
 
 void RubyVM::BindEngine() {
-#ifdef RPGMAKER3D_ENABLE_RUBY
-    // Hier würden C++-Bindings für Actor, Map, Audio etc. definiert werden.
-#endif
-}
-
-void RubyVM::RegisterClass(const std::string& name) {
-#ifdef RPGMAKER3D_ENABLE_RUBY
-    if (!mMrb) return;
-    struct RClass* c = mrb_define_class(mMrb, name.c_str(), mMrb->object_class);
-    (void)c;
-#else
-    (void)name;
-#endif
+    mMrb->ud = mEngine;
 }
 
 } // namespace rpg
+
+#else // !RPGMAKER3D_ENABLE_RUBY
+
+namespace rpg {
+
+RubyVM::RubyVM() = default;
+RubyVM::~RubyVM() = default;
+
+bool RubyVM::Initialize(Engine* engine) {
+    (void)engine;
+    RPG_LOG_WARN("Ruby support not compiled in. Set RPGMAKER3D_ENABLE_RUBY=ON");
+    return false;
+}
+
+void RubyVM::Shutdown() {}
+bool RubyVM::ExecuteString(const std::string& code) { (void)code; return false; }
+bool RubyVM::ExecuteFile(const std::string& path) { (void)path; return false; }
+void RubyVM::BindEngine() {}
+void RubyVM::BindInput() {}
+void RubyVM::BindAudio() {}
+void RubyVM::BindMap() {}
+void RubyVM::BindActor() {}
+
+} // namespace rpg
+
+#endif

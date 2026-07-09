@@ -29,6 +29,12 @@ set(SOURCES
     src/Project.cpp
     src/ResourceManager.cpp
     src/Camera.cpp
+    src/Framebuffer.cpp
+    src/Logger.cpp
+    src/AudioPreview.cpp
+    src/Command.cpp
+    src/CommandHistory.cpp
+    src/Prefab.cpp
     ${GLAD_ROOT}/src/gl.c
     third_party/stb/stb_image_impl.c
     third_party/miniaudio/miniaudio_impl.c
@@ -47,9 +53,7 @@ if(RPGMAKER3D_BUILD_EDITOR)
     )
 endif()
 
-if(RPGMAKER3D_ENABLE_RUBY)
-    list(APPEND SOURCES src/RubyVM.cpp)
-endif()
+list(APPEND SOURCES src/RubyVM.cpp)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
@@ -129,10 +133,18 @@ endif()
 if(RPGMAKER3D_ENABLE_RUBY)
     set(MRUBY_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mruby" CACHE PATH "mruby root")
     target_include_directories(${PROJECT_NAME} PRIVATE ${MRUBY_ROOT}/include)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        ${MRUBY_ROOT}/build/host/lib/libmruby.a
-        ${MRUBY_ROOT}/build/host/lib/libmruby_core.a
-    )
+
+    if(WIN32)
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${MRUBY_ROOT}/build/host/lib/libmruby.lib
+            ${MRUBY_ROOT}/build/host/lib/libmruby_core.lib
+        )
+    else()
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${MRUBY_ROOT}/build/host/lib/libmruby.a
+            ${MRUBY_ROOT}/build/host/lib/libmruby_core.a
+        )
+    endif()
     target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_ENABLE_RUBY)
 endif()
 
