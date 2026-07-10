@@ -52,8 +52,7 @@ jobs:
       - name: Build mruby with MSVC
         shell: pwsh
         run: |
-          # Do not set CC/CXX to cl here. mruby would then select GCC.
-          # The ci/msvc configuration explicitly selects Visual C++.
+          # Kein CC/CXX=cl setzen: Das würde mruby fälschlich auf GCC schalten.
           $mrubyTag = "4.0.0"
 
           if (Test-Path third_party/mruby) {
@@ -76,10 +75,14 @@ jobs:
             }
 
             # Git for Windows kann seinen GNU-Linker vor MSVC im PATH haben.
-            # Deshalb wird der tatsächliche MSVC-Binärordner vorangestellt.
             $env:PATH = "$msvcBin;$env:PATH"
             $env:LD = "link.exe"
             $env:AR = "lib.exe"
+
+            # Die Engine und x64-windows-static verwenden /MT.
+            # mruby muss dieselbe C-Runtime nutzen, sonst entstehen __imp_* Fehler.
+            $env:CFLAGS = "/nologo /W3 /MT /O2 /D_CRT_SECURE_NO_WARNINGS /we4013"
+            $env:CXXFLAGS = "/nologo /W3 /MT /O2 /D_CRT_SECURE_NO_WARNINGS /EHs"
 
             Write-Host "MSVC Compiler: $(where.exe cl)"
             Write-Host "MSVC Linker: $((Get-Command link.exe -CommandType Application -ErrorAction Stop).Source)"
@@ -110,7 +113,6 @@ jobs:
               throw "mruby Build unvollständig. Fehlend: $($missingFiles -join ', ')"
             }
 
-            # Kompatibel mit der bisherigen CMake-Konfiguration.
             New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
             Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force
             Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force
