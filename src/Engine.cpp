@@ -204,10 +204,12 @@ unsigned int Engine::GetSceneTextureID() const {
 
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
+#ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditor) {
         mEditor->Shutdown();
         mEditor.reset();
     }
+#endif
     mGridMesh.Delete();
     if (mResources) mResources.reset();
     if (mMap) mMap.reset();
@@ -437,6 +439,7 @@ void Engine::Render() {
 #endif
 
     // Scene in Framebuffer rendern wenn Editor aktiv
+#ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditorMode && mSceneFramebuffer && mEditor) {
         Vec2 viewSize = mEditor->GetSceneViewSize();
         if (viewSize.x > 1 && viewSize.y > 1) {
@@ -455,6 +458,13 @@ void Engine::Render() {
         }
         RenderScene();
     }
+#else
+    if (mWindow) {
+        Camera& cam = mRenderer->GetCamera();
+        cam.SetPerspective(60.0f, (float)mWindow->GetWidth() / (float)mWindow->GetHeight(), 0.1f, 1000.0f);
+    }
+    RenderScene();
+#endif
 
 #ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditor) {
@@ -558,6 +568,7 @@ void Engine::RenderScene() {
     }
 
     // Auswahl-BoundingBox im Editor
+#ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditorMode && mEditor) {
         int selected = mEditor->GetSelectedEntity();
         if (selected >= 0) {
@@ -568,6 +579,7 @@ void Engine::RenderScene() {
             }
         }
     }
+#endif
 
     mRenderer->EndFrame();
 }
