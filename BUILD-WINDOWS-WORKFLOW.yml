@@ -124,7 +124,7 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows-static" `
-            -DRPGMAKER3D_ENABLE_RUBY=ON `
+            -DRPGMAKER3D_ENABLE_RUBY=OFF `
             -DRPGMAKER3D_BUILD_PLAYER=ON `
             -DRPGMAKER3D_ENABLE_CONSOLE=ON `
             -DMRUBY_ROOT="${{ github.workspace }}/third_party/mruby" `

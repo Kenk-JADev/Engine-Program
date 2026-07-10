@@ -358,11 +358,10 @@ if(RPGMAKER3D_BUILD_PLAYER)
     target_compile_definitions(${PROJECT_NAME}_Player PRIVATE
         GLM_ENABLE_EXPERIMENTAL
         _CRT_SECURE_NO_WARNINGS
-        RPGMAKER3D_BUILD_EDITOR
     )
     if(WIN32)
         target_compile_definitions(${PROJECT_NAME}_Player PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE winmm imm32 version setupapi shlwapi shell32)
+        target_link_libraries(${PROJECT_NAME}_Player PRIVATE winmm imm32 version setupapi shlwapi shell32 ws2_32 iphlpapi)
         if(NOT RPGMAKER3D_ENABLE_CONSOLE)
             set_target_properties(${PROJECT_NAME}_Player PROPERTIES WIN32_EXECUTABLE TRUE)
         endif()
