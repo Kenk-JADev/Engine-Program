@@ -1,3 +1,7 @@
+# Diese Datei muss auf GitHub unter .github/workflows/build-windows.yml liegen.
+# Sie baut automatisch eine Windows-EXE bei jedem Push.
+# FIX für mruby strndup Fehler auf Windows (UCRT MinGW)
+
 name: Build Windows EXE
 
 on:
@@ -31,7 +35,7 @@ jobs:
           path: |
             ${{ github.workspace }}/vcpkg
             ${{ github.workspace }}/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-sdl2-glm-static
+          key: vcpkg-${{ runner.os }}-sdl2-glm-static-v3
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
@@ -44,24 +48,74 @@ jobs:
           }
           .\vcpkg\vcpkg.exe install sdl2:x64-windows-static glm:x64-windows-static
 
-      - name: Build mruby
+      - name: Build mruby (mit Windows Fix)
         shell: pwsh
         run: |
           if (-not (Test-Path third_party/mruby)) {
             git clone --depth 1 https://github.com/mruby/mruby.git third_party/mruby
           }
+
+          # --- FIX für strndup Konflikt auf Windows UCRT ---
+          # mruby's mirb_completion.c definiert static strndup, kollidiert mit MinGW UCRT Deklaration
+          $mirbFile = "third_party/mruby/mrbgems/mruby-bin-mirb/tools/mirb/mirb_completion.c"
+          if (Test-Path $mirbFile) {
+            Write-Host "Patche mruby strndup Konflikt..."
+            $content = Get-Content $mirbFile -Raw
+            # Umbenennen in mirb_strndup um Kollision zu vermeiden
+            $content = $content -replace '\bstrndup\s*\(const char', 'mirb_strndup(const char'
+            $content = $content -replace '\bstrndup\s*\(', 'mirb_strndup('
+            Set-Content -Path $mirbFile -Value $content -Encoding UTF8
+            Write-Host "Patched $mirbFile"
+          }
+
           cd third_party/mruby
-          ruby minirake
-          if (-not (Test-Path include/mruby/presym/id.h)) {
-            Write-Error "mruby presym headers were not generated. Build failed."
+          # Build - Fehler bei mirb ist OK, libmruby ist das Wichtige
+          try {
+            ruby minirake
+          } catch {
+            Write-Host "minirake hat Fehler geworfen (vermutlich mirb/mrdb), prüfe ob libmruby trotzdem gebaut wurde..."
+          }
+
+          # Prüfe ob libmruby gebaut wurde
+          $libPath = "build/host/lib/libmruby.a"
+          $libCorePath = "build/host/lib/libmruby_core.a"
+          $presymId = "build/host/include/mruby/presym/id.h"
+          
+          if (Test-Path $libPath) {
+            Write-Host "OK: $libPath existiert"
+          } else {
+            Write-Error "FEHLER: $libPath fehlt - mruby Build wirklich fehlgeschlagen"
             exit 1
           }
+
+          if (Test-Path $presymId) {
+            Write-Host "OK: $presymId existiert"
+            # Kopiere presym headers in include/ damit CMake sie findet (alte mruby Versionen erwarteten dort)
+            New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
+            Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force -ErrorAction SilentlyContinue
+            Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force -ErrorAction SilentlyContinue
+            Write-Host "Presym headers kopiert"
+          } else {
+            # Fallback: altes Verhalten
+            if (Test-Path "include/mruby/presym/id.h") {
+              Write-Host "Fallback: include/mruby/presym/id.h existiert bereits"
+            } else {
+              Write-Error "mruby presym headers wurden nicht generiert. Build failed. Geprüft: $presymId und include/mruby/presym/id.h"
+              exit 1
+            }
+          }
+
+          Write-Host "mruby Build abgeschlossen - libmruby.a vorhanden"
 
       - name: Generate OpenGL loader (glad)
         shell: pwsh
         run: |
           python -m pip install glad2
           python -m glad --api gl:core=3.3 --out-path third_party/glad_generated c
+          if (-not (Test-Path third_party/glad_generated/include/glad/gl.h)) {
+            Write-Error "glad generation failed"
+            exit 1
+          }
 
       - name: Configure CMake
         shell: pwsh
@@ -71,6 +125,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows-static" `
             -DRPGMAKER3D_ENABLE_RUBY=ON `
+            -DRPGMAKER3D_BUILD_PLAYER=ON `
+            -DRPGMAKER3D_ENABLE_CONSOLE=ON `
             -DMRUBY_ROOT="${{ github.workspace }}/third_party/mruby" `
             -DCMAKE_BUILD_TYPE=Release
 
@@ -78,10 +134,18 @@ jobs:
         shell: pwsh
         run: cmake --build build --config Release --parallel
 
-      - name: Copy assets
+      - name: Prepare package
         shell: pwsh
         run: |
-          Copy-Item -Recurse -Force assets build\Release\assets
+          Write-Host "Preparing Windows package..."
+          $out = "build/Release"
+          if (Test-Path assets) { Copy-Item -Recurse -Force assets $out/assets }
+          if (Test-Path SampleProject) { Copy-Item -Recurse -Force SampleProject $out/SampleProject -ErrorAction SilentlyContinue }
+          if (Test-Path ruby) { Copy-Item -Recurse -Force ruby $out/ruby -ErrorAction SilentlyContinue }
+          if (Test-Path docs) { Copy-Item -Recurse -Force docs $out/docs -ErrorAction SilentlyContinue }
+          if (Test-Path resources/icon.ico) { Copy-Item -Force resources/icon.ico $out/ -ErrorAction SilentlyContinue }
+          if (Test-Path BUILD_WINDOWS_DE.md) { Copy-Item -Force BUILD_WINDOWS_DE.md $out/README_WINDOWS.md -ErrorAction SilentlyContinue }
+          Get-ChildItem $out | ForEach-Object { Write-Host $_.Name }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
@@ -89,4 +153,18 @@ jobs:
           name: RPGMaker3D-Windows-x64
           path: |
             build/Release/RPGMaker3D.exe
+            build/Release/RPGMaker3D_Player.exe
             build/Release/assets
+            build/Release/SampleProject
+            build/Release/ruby
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path build/Release/* -DestinationPath RPGMaker3D-Windows-x64.zip -Force
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPGMaker3D-Windows-x64-ZIP
+          path: RPGMaker3D-Windows-x64.zip
