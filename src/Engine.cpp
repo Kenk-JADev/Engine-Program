@@ -470,27 +470,29 @@ void Engine::Render() {
 }
 
 void Engine::RenderScene() {
+    // Bestimme aktive Kamera - vermeide goto und dangling pointer (MSVC mag goto nicht)
+    Camera activeCam;
+    bool hasActiveCam = false;
     Camera* camera = &mRenderer->GetCamera();
-    // Falls aktive Kamera Entität gesetzt, nutze diese
+
     if (mActiveCameraEntity != INVALID_ENTITY) {
         auto* camComp = mScene->GetComponent<CameraComponent>(mActiveCameraEntity);
         auto* transform = mScene->GetComponent<TransformComponent>(mActiveCameraEntity);
         if (camComp && transform) {
-            Camera tempCam;
-            tempCam.SetPosition(transform->transform.position);
-            tempCam.SetRotation(transform->transform.rotation);
-            tempCam.SetPerspective(camComp->fov, camComp->aspect, camComp->nearPlane, camComp->farPlane);
-            camera = &tempCam;
-            // Achtung: tempCam lebt nur kurz, aber Renderer nutzt nur Matrix sofort
-            mRenderer->BeginFrame(tempCam);
-            // Render trotzdem mit tempCam - wir müssen danach nicht mehr darauf zugreifen
-            goto render_body;
+            activeCam.SetPosition(transform->transform.position);
+            activeCam.SetRotation(transform->transform.rotation);
+            activeCam.SetPerspective(camComp->fov, camComp->aspect, camComp->nearPlane, camComp->farPlane);
+            camera = &activeCam;
+            hasActiveCam = true;
         }
     }
 
-    mRenderer->BeginFrame(*camera);
+    if (hasActiveCam) {
+        mRenderer->BeginFrame(activeCam);
+    } else {
+        mRenderer->BeginFrame(*camera);
+    }
 
-render_body:
     // Grid (nur im Editor)
     if (mEditorMode) {
         mRenderer->DrawMesh(mGridMesh, Mat4(1.0f), nullptr, Color(0.4f, 0.4f, 0.4f, 0.6f));
