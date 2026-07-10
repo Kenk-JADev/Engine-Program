@@ -58,11 +58,21 @@ python -m glad --api gl:core=3.3 --out-path third_party\glad_generated c
 
 ### 3. mruby (optional, für Ruby-Scripting)
 
+Öffne für diesen Schritt die **x64 Native Tools Command Prompt for Visual Studio 2022**. Die Engine verwendet den offiziellen mruby-MSVC-Build (nicht den GCC-Toolchain-Default):
+
 ```cmd
-git clone https://github.com/mruby/mruby.git third_party\mruby
+git clone --branch 4.0.0 --depth 1 https://github.com/mruby/mruby.git third_party\mruby
 cd third_party\mruby
+set MRUBY_CONFIG=ci/msvc
 ruby minirake
 cd ..\..
+```
+
+Danach müssen diese Dateien vorhanden sein:
+
+```text
+third_party\mruby\build\host\lib\libmruby.lib
+third_party\mruby\build\host\lib\libmruby_core.lib
 ```
 
 ### 4. CMake Build
@@ -155,6 +165,10 @@ Erzeugt `RPGMaker3D-Setup.exe`.
 
 **Fehler: glad/gl.h not found**
 - Führe `python -m glad --api gl:core=3.3 --out-path third_party/glad_generated c` aus
+
+**Fehler: „Keine mruby lib gefunden“**
+- Baue in der *x64 Native Tools Command Prompt for Visual Studio 2022* und setze vor `ruby minirake` zwingend `MRUBY_CONFIG=ci/msvc`.
+- Setze dabei **nicht** `CC=cl` oder `CXX=cl`: Das würde bei mruby fälschlich den GCC-Toolchain auswählen. Ein erfolgreicher MSVC-Build erzeugt `libmruby.lib` und `libmruby_core.lib` unter `third_party\\mruby\\build\\host\\lib`.
 
 **Schwarzes Fenster / OpenGL Fehler**
 - Grafikkartentreiber aktualisieren
