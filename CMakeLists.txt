@@ -274,9 +274,25 @@ endif()
 # ==================== mruby ====================
 if(RPGMAKER3D_ENABLE_RUBY)
     set(MRUBY_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/mruby" CACHE PATH "mruby root")
-    if(EXISTS "${MRUBY_ROOT}/include")
-        target_include_directories(${PROJECT_NAME} PRIVATE ${MRUBY_ROOT}/include)
+    set(MRUBY_GENERATED_INCLUDE_DIR "${MRUBY_ROOT}/build/host/include")
+
+    if(NOT EXISTS "${MRUBY_ROOT}/include/mruby.h")
+        message(FATAL_ERROR
+            "mruby headers not found: ${MRUBY_ROOT}/include/mruby.h. "
+            "Clone and build mruby first, or set MRUBY_ROOT.")
     endif()
+    if(NOT EXISTS "${MRUBY_GENERATED_INCLUDE_DIR}/mruby/presym/id.h")
+        message(FATAL_ERROR
+            "mruby generated headers not found: ${MRUBY_GENERATED_INCLUDE_DIR}/mruby/presym/id.h. "
+            "Run ruby minirake in ${MRUBY_ROOT} first.")
+    endif()
+
+    # mruby creates presym headers in build/host/include.  Include them directly
+    # instead of copying generated files back into the third-party source tree.
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        "${MRUBY_GENERATED_INCLUDE_DIR}"
+        "${MRUBY_ROOT}/include"
+    )
     if(WIN32)
         # MSVC produziert mruby.lib, MinGW libmruby.lib – beide Varianten prüfen
         set(MRUBY_CANDIDATES
@@ -398,7 +414,10 @@ if(RPGMAKER3D_BUILD_PLAYER)
         target_link_libraries(${PROJECT_NAME}_Player PRIVATE ${CMAKE_DL_LIBS} Threads::Threads m X11 Xext)
     endif()
     if(RPGMAKER3D_ENABLE_RUBY AND EXISTS "${MRUBY_ROOT}/include")
-        target_include_directories(${PROJECT_NAME}_Player PRIVATE ${MRUBY_ROOT}/include)
+        target_include_directories(${PROJECT_NAME}_Player PRIVATE
+            "${MRUBY_GENERATED_INCLUDE_DIR}"
+            "${MRUBY_ROOT}/include"
+        )
         set(PLAYER_MRUBY_CANDIDATES
             "${MRUBY_ROOT}/build/host/lib/libmruby.lib"
             "${MRUBY_ROOT}/build/host/lib/mruby.lib"
