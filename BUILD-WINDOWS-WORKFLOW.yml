@@ -34,7 +34,7 @@ jobs:
           path: |
             ${{ github.workspace }}/vcpkg
             ${{ github.workspace }}/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-sdl2-glm-static
+          key: vcpkg-${{ runner.os }}-sdl2-glm-static-v2
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
@@ -74,17 +74,19 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static `
             -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows-static" `
             -DRPGMAKER3D_ENABLE_RUBY=ON `
-            -DMRUBY_ROOT="${{ github.workspace }}/third_party/mruby" `
+            -DRPGMAKER3D_BUILD_PLAYER=ON `
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         shell: pwsh
         run: cmake --build build --config Release --parallel
 
-      - name: Copy assets
+      - name: Prepare package
         shell: pwsh
         run: |
-          Copy-Item -Recurse -Force assets build\Release\assets
+          Copy-Item -Recurse -Force assets build/Release/assets
+          Copy-Item -Recurse -Force SampleProject build/Release/SampleProject -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force ruby build/Release/ruby -ErrorAction SilentlyContinue
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
@@ -92,4 +94,6 @@ jobs:
           name: RPGMaker3D-Windows-x64
           path: |
             build/Release/RPGMaker3D.exe
+            build/Release/RPGMaker3D_Player.exe
             build/Release/assets
+            build/Release/SampleProject
