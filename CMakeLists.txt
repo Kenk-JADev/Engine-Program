@@ -224,6 +224,10 @@ if(WIN32)
         setupapi
         shlwapi
         shell32
+        ole32
+        oleaut32
+        uuid
+        advapi32
         ws2_32
         iphlpapi
     )
