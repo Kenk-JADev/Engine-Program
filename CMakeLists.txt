@@ -19,9 +19,10 @@ set(SDL2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL2/install" CACHE PATH 
 set(GLAD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glad_generated" CACHE PATH "glad generated root")
 set(GLM_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glm" CACHE PATH "glm root")
 
-# Falls glad nicht generiert wurde, alternativen Pfad versuchen
+# Fallback für glad
 if(NOT EXISTS "${GLAD_ROOT}/include/glad/gl.h")
     message(WARNING "glad not found at ${GLAD_ROOT}, trying third_party/glad2 fallback")
+
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glad/include/glad/glad.h")
         set(GLAD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/glad" CACHE PATH "glad fallback" FORCE)
     endif()
@@ -87,7 +88,10 @@ if(RPGMAKER3D_BUILD_EDITOR)
     )
 endif()
 
-set(ALL_SOURCES ${CORE_SOURCES} ${THIRDPARTY_SOURCES})
+set(ALL_SOURCES
+    ${CORE_SOURCES}
+    ${THIRDPARTY_SOURCES}
+)
 
 # ==================== Editor Executable ====================
 
@@ -122,7 +126,9 @@ if(WIN32)
 endif()
 
 if(RPGMAKER3D_BUILD_EDITOR)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_BUILD_EDITOR)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        RPGMAKER3D_BUILD_EDITOR
+    )
 endif()
 
 # ==================== SDL2 ====================
@@ -203,7 +209,9 @@ if(NOT SDL2_FOUND)
 endif()
 
 if(SDL2_INCLUDE_DIRS)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${SDL2_INCLUDE_DIRS}
+    )
 endif()
 
 # ==================== OpenGL ====================
@@ -245,7 +253,9 @@ if(WIN32)
     )
 
     if(NOT RPGMAKER3D_ENABLE_CONSOLE)
-        set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            WIN32_EXECUTABLE TRUE
+        )
     endif()
 
     set_property(
@@ -265,7 +275,9 @@ if(WIN32)
     endif()
 
     if(MSVC)
-        target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")
+        target_link_options(${PROJECT_NAME} PRIVATE
+            "/MANIFEST:NO"
+        )
     endif()
 else()
     find_package(Threads REQUIRED)
@@ -279,7 +291,9 @@ else()
     find_package(X11 QUIET)
 
     if(X11_FOUND)
-        target_link_libraries(${PROJECT_NAME} PRIVATE ${X11_LIBRARIES})
+        target_link_libraries(${PROJECT_NAME} PRIVATE
+            ${X11_LIBRARIES}
+        )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
             X11
@@ -304,7 +318,9 @@ if(RPGMAKER3D_ENABLE_RUBY)
         "mruby root"
     )
 
-    set(MRUBY_GENERATED_INCLUDE_DIR "${MRUBY_ROOT}/build/host/include")
+    set(MRUBY_GENERATED_INCLUDE_DIR
+        "${MRUBY_ROOT}/build/host/include"
+    )
 
     if(NOT EXISTS "${MRUBY_ROOT}/include/mruby.h")
         message(FATAL_ERROR
@@ -336,7 +352,10 @@ if(RPGMAKER3D_ENABLE_RUBY)
 
         foreach(lib_path IN LISTS MRUBY_CANDIDATES)
             if(EXISTS "${lib_path}")
-                target_link_libraries(${PROJECT_NAME} PRIVATE "${lib_path}")
+                target_link_libraries(${PROJECT_NAME} PRIVATE
+                    "${lib_path}"
+                )
+
                 message(STATUS "Linking mruby: ${lib_path}")
             endif()
         endforeach()
@@ -352,23 +371,21 @@ if(RPGMAKER3D_ENABLE_RUBY)
         endif()
     else()
         if(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby.a")
-            target_link_libraries(
-                ${PROJECT_NAME}
-                PRIVATE
+            target_link_libraries(${PROJECT_NAME} PRIVATE
                 "${MRUBY_ROOT}/build/host/lib/libmruby.a"
             )
         endif()
 
         if(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby_core.a")
-            target_link_libraries(
-                ${PROJECT_NAME}
-                PRIVATE
+            target_link_libraries(${PROJECT_NAME} PRIVATE
                 "${MRUBY_ROOT}/build/host/lib/libmruby_core.a"
             )
         endif()
     endif()
 
-    target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_ENABLE_RUBY)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        RPGMAKER3D_ENABLE_RUBY
+    )
 endif()
 
 # ==================== Post Build: Editor Assets ====================
@@ -405,11 +422,12 @@ if(RPGMAKER3D_BUILD_PLAYER)
     )
 
     if(RPGMAKER3D_BUILD_EDITOR)
-        # Engine.cpp benötigt den Editor-Destruktor beim Linken.
-        # Der Player startet trotzdem immer mit editorMode=false.
+        # Der Player benötigt Editor.cpp, da Engine.cpp dessen
+        # Destruktor referenzieren kann. Runtime bleibt editorMode=false.
         list(APPEND PLAYER_SOURCES
             src/Editor.cpp
             third_party/imgui/imgui.cpp
+            third_party/imgui/imgui_demo.cpp
             third_party/imgui/imgui_draw.cpp
             third_party/imgui/imgui_tables.cpp
             third_party/imgui/imgui_widgets.cpp
@@ -418,12 +436,18 @@ if(RPGMAKER3D_BUILD_PLAYER)
         )
     endif()
 
-    list(APPEND PLAYER_SOURCES ${THIRDPARTY_SOURCES})
+    list(APPEND PLAYER_SOURCES
+        ${THIRDPARTY_SOURCES}
+    )
 
-    add_executable(${PROJECT_NAME}_Player ${PLAYER_SOURCES})
+    add_executable(${PROJECT_NAME}_Player
+        ${PLAYER_SOURCES}
+    )
 
     if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/resource.rc")
-        target_sources(${PROJECT_NAME}_Player PRIVATE resources/resource.rc)
+        target_sources(${PROJECT_NAME}_Player PRIVATE
+            resources/resource.rc
+        )
     endif()
 
     target_include_directories(${PROJECT_NAME}_Player PRIVATE
@@ -460,9 +484,7 @@ if(RPGMAKER3D_BUILD_PLAYER)
         )
 
         if(NOT RPGMAKER3D_ENABLE_CONSOLE)
-            set_target_properties(
-                ${PROJECT_NAME}_Player
-                PROPERTIES
+            set_target_properties(${PROJECT_NAME}_Player PROPERTIES
                 WIN32_EXECUTABLE TRUE
             )
         endif()
@@ -484,23 +506,35 @@ if(RPGMAKER3D_BUILD_PLAYER)
         endif()
 
         if(MSVC)
-            target_link_options(${PROJECT_NAME}_Player PRIVATE "/MANIFEST:NO")
+            target_link_options(${PROJECT_NAME}_Player PRIVATE
+                "/MANIFEST:NO"
+            )
         endif()
     endif()
 
     if(TARGET SDL2::SDL2)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE SDL2::SDL2)
+        target_link_libraries(${PROJECT_NAME}_Player PRIVATE
+            SDL2::SDL2
+        )
     elseif(TARGET SDL2-static)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE SDL2-static)
+        target_link_libraries(${PROJECT_NAME}_Player PRIVATE
+            SDL2-static
+        )
     endif()
 
     if(TARGET SDL2::SDL2main)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE SDL2::SDL2main)
+        target_link_libraries(${PROJECT_NAME}_Player PRIVATE
+            SDL2::SDL2main
+        )
     elseif(TARGET SDL2main)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE SDL2main)
+        target_link_libraries(${PROJECT_NAME}_Player PRIVATE
+            SDL2main
+        )
     endif()
 
-    target_link_libraries(${PROJECT_NAME}_Player PRIVATE OpenGL::GL)
+    target_link_libraries(${PROJECT_NAME}_Player PRIVATE
+        OpenGL::GL
+    )
 
     if(NOT WIN32)
         find_package(Threads REQUIRED)
@@ -530,17 +564,13 @@ if(RPGMAKER3D_BUILD_PLAYER)
 
         foreach(lib_path IN LISTS PLAYER_MRUBY_CANDIDATES)
             if(EXISTS "${lib_path}")
-                target_link_libraries(
-                    ${PROJECT_NAME}_Player
-                    PRIVATE
+                target_link_libraries(${PROJECT_NAME}_Player PRIVATE
                     "${lib_path}"
                 )
             endif()
         endforeach()
 
-        target_compile_definitions(
-            ${PROJECT_NAME}_Player
-            PRIVATE
+        target_compile_definitions(${PROJECT_NAME}_Player PRIVATE
             RPGMAKER3D_ENABLE_RUBY
         )
     endif()
