@@ -41,6 +41,12 @@ SRC = src/main.cpp \
       src/Lighting.cpp \
       src/Material.cpp \
       src/ParticleSystem.cpp \
+      src/Platform.cpp \
+      src/Database.cpp \
+      src/EventSystem.cpp \
+      src/Game.cpp \
+      src/BattleSystem.cpp \
+      src/UI.cpp \
       src/Editor.cpp \
       third_party/imgui/imgui.cpp \
       third_party/imgui/imgui_demo.cpp \
@@ -65,6 +71,7 @@ all: $(TARGET)
 $(TARGET): $(OBJ)
 	$(CXX) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 	@echo "Build complete: $@"
+	@echo "Run with: ./$(TARGET) --editor"
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -77,3 +84,14 @@ clean:
 
 run: $(TARGET)
 	./$(TARGET)
+
+# Windows cross-build via mingw (optional)
+win:
+	@echo "Use scripts/build-windows.ps1 on Windows or GitHub Actions for Windows build"
+
+help:
+	@echo "RPG Maker 3D Engine Build"
+	@echo "  make          - build linux executable"
+	@echo "  make run      - build and run"
+	@echo "  make clean    - clean build artifacts"
+	@echo "Windows: use scripts/build-windows.ps1 or cmake"

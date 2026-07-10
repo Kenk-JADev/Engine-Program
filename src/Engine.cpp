@@ -1,6 +1,5 @@
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Window.h"
-#include <imgui_impl_sdl2.h>
 #include "rpgmaker3d/Renderer.h"
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/AudioManager.h"
@@ -18,62 +17,78 @@
 #include "rpgmaker3d/Raycast.h"
 #include "rpgmaker3d/Lighting.h"
 #include "rpgmaker3d/ParticleSystem.h"
+#include "rpgmaker3d/Config.h"
+#include "rpgmaker3d/Platform.h"
+#include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/EventSystem.h"
+#include "rpgmaker3d/BattleSystem.h"
+#include "rpgmaker3d/UI.h"
 
-#if defined(_WIN32)
-#include <SDL.h>
-#else
-#include <SDL.h>
+#ifdef RPGMAKER3D_BUILD_EDITOR
+#include <imgui_impl_sdl2.h>
 #endif
+
+#include <SDL.h>
 
 #include <glad/gl.h>
 #include <iostream>
 #include <chrono>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 
 namespace rpg {
 
 Engine::Engine() = default;
-
-Engine::~Engine() {
-    Shutdown();
-}
+Engine::~Engine() { Shutdown(); }
 
 bool Engine::Initialize(const std::string& title, int width, int height, bool editorMode) {
     mEditorMode = editorMode;
 
+    // Logger
     Logger::Get().SetLogFile("engine.log");
     Logger::Get().SetConsoleOutput(true);
-    RPG_LOG_INFO("Engine initialization started");
+    RPG_LOG_INFO(std::string(EngineConfig::NAME) + " v" + EngineConfig::VERSION + " - Init started [" + RPG_PLATFORM_NAME + "]");
 
+    // Plattform
+    Platform::SetDPIAware();
+    RPG_LOG_INFO("Working Dir: " + Platform::GetWorkingDirectory());
+    RPG_LOG_INFO("Exe Path: " + Platform::GetExecutablePath());
+#ifdef _WIN32
+    RPG_LOG_INFO("Windows Version: " + Platform::GetWindowsVersion());
+#endif
+
+    // Fenster
     mWindow = std::make_unique<Window>();
     if (!mWindow->Create(title, width, height, editorMode)) {
         RPG_LOG_ERROR("Failed to create window");
         return false;
     }
-    RPG_LOG_INFO("Window created: " + std::to_string(width) + "x" + std::to_string(height));
 
+    // Renderer
     mRenderer = std::make_unique<Renderer>();
     if (!mRenderer->Initialize()) {
         RPG_LOG_ERROR("Failed to initialize renderer");
         return false;
     }
-    RPG_LOG_INFO("Renderer initialized");
 
+    // Framebuffer für Editor Scene View
     mSceneFramebuffer = std::make_unique<Framebuffer>();
     if (!mSceneFramebuffer->Create(1280, 720)) {
         RPG_LOG_ERROR("Failed to create scene framebuffer");
         return false;
     }
-    RPG_LOG_INFO("Scene framebuffer created");
 
+    // Core Systeme
     mInput = std::make_unique<Input>();
     mCommandHistory = std::make_unique<CommandHistory>();
     mRubyVM = std::make_unique<RubyVM>();
     mRubyVM->Initialize(this);
+
     mAudio = std::make_unique<AudioManager>();
     if (!mAudio->Initialize()) {
-        std::cerr << "Warning: Audio initialization failed" << std::endl;
+        RPG_LOG_WARN("Audio initialization failed - continuing without audio");
     }
 
     mScene = std::make_unique<Scene>();
@@ -81,14 +96,48 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     mMap = std::make_unique<Map>();
     mResources = std::make_unique<ResourceManager>();
 
-    // Standard-Projekt anlegen
-    mProject->New("./SampleProject", "Sample RPG");
+    // Datenbank laden / Defaults
+    try {
+        Database::Get().CreateDefaults();
+        RPG_LOG_INFO("Database initialized with defaults");
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Database init failed: ") + e.what());
+    }
+
+    // Projekt anlegen / laden
+    if (std::filesystem::exists("./SampleProject/project.json")) {
+        mProject->Load("./SampleProject");
+        RPG_LOG_INFO("Loaded SampleProject");
+    } else {
+        mProject->New("./SampleProject", "Sample RPG 3D");
+        RPG_LOG_INFO("Created new SampleProject");
+    }
+
+    // Tileset + Map Setup
     mMap->AddLayer("Ground");
     auto tileset = std::make_shared<Tileset>();
-    tileset->Load(mProject->GetAssetPath("textures/tileset_demo.png"), 32, 32);
+    // Versuche mehrere Pfade
+    bool tilesetLoaded = false;
+    std::vector<std::string> tryPaths = {
+        mProject->GetAssetPath("textures/tileset_demo.png"),
+        "./SampleProject/assets/textures/tileset_demo.png",
+        "assets/textures/tileset_demo.png",
+        "./assets/textures/tileset_demo.png"
+    };
+    for (auto& p : tryPaths) {
+        if (Platform::FileExists(p)) {
+            tileset->Load(p, 32, 32);
+            tilesetLoaded = true;
+            RPG_LOG_INFO("Tileset loaded: " + p);
+            break;
+        }
+    }
+    if (!tilesetLoaded) {
+        tileset->Load("assets/textures/tileset_demo.png", 32, 32); // wird checker fallback
+    }
     mMap->SetTileset(tileset);
 
-    // Demo-Map befüllen
+    // Demo-Map
     for (int z = 0; z < mMap->GetHeight(); ++z) {
         for (int x = 0; x < mMap->GetWidth(); ++x) {
             int tile = ((x + z) % 8);
@@ -96,25 +145,55 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
         }
     }
 
+    // Game System
+    Game::Get().NewGame();
+    EventSystem::Get().Clear();
+
+    // Editor
     if (editorMode) {
+#ifdef RPGMAKER3D_BUILD_EDITOR
         mEditor = std::make_unique<Editor>(*this);
         if (!mEditor->Initialize(*mWindow)) {
-            std::cerr << "Failed to initialize editor" << std::endl;
+            RPG_LOG_ERROR("Failed to initialize editor");
             return false;
         }
+        RPG_LOG_INFO("Editor initialized");
+#else
+        RPG_LOG_WARN("Editor mode requested but not compiled in");
+#endif
     }
 
-    // Demo-Entität
+    // Demo Entitäten
     EntityID cube = mScene->CreateEntity("Demo Cube");
-    mScene->AddComponent<TransformComponent>(cube);
-    auto* sc = mScene->AddComponent<SpriteComponent>(cube);
-    sc->size = Vec2(1.0f, 1.0f);
-    (void)sc;
+    auto* tc = mScene->AddComponent<TransformComponent>(cube);
+    tc->transform.position = Vec3(0, 0.5f, 0);
+    auto* sc = mScene->AddComponent<ModelRendererComponent>(cube);
+    sc->model = std::make_shared<Model>();
+    sc->model->AddMesh(MeshFactory::CreateCube(1.0f));
+    auto* mat = mScene->AddComponent<MaterialComponent>(cube);
+    mat->material.diffuse = Color(0.2f, 0.6f, 1.0f, 1.0f);
 
-    // Grid einmalig erstellen
+    EntityID floor = mScene->CreateEntity("Floor");
+    auto* tf = mScene->AddComponent<TransformComponent>(floor);
+    tf->transform.position = Vec3(0, 0, 0);
+    auto* mf = mScene->AddComponent<ModelRendererComponent>(floor);
+    mf->model = std::make_shared<Model>();
+    mf->model->AddMesh(MeshFactory::CreatePlane(20.0f));
+
+    // Grid
     mGridMesh = MeshFactory::CreateGrid(40, 1.0f);
 
+    // UI
+    GameUI::Get().Title().onNewGame = []() {
+        Game::Get().NewGame();
+        RPG_LOG_INFO("New Game via Title Screen");
+    };
+    GameUI::Get().Title().onExit = [this]() {
+        this->RequestQuit();
+    };
+
     mRunning = true;
+    RPG_LOG_INFO("Engine initialized successfully");
     return true;
 }
 
@@ -124,22 +203,25 @@ unsigned int Engine::GetSceneTextureID() const {
 }
 
 void Engine::Shutdown() {
+    RPG_LOG_INFO("Engine shutdown started");
     if (mEditor) {
         mEditor->Shutdown();
         mEditor.reset();
     }
     mGridMesh.Delete();
-    mResources.reset();
-    mMap.reset();
-    mProject.reset();
-    mScene.reset();
-    mCommandHistory.reset();
-    mRubyVM.reset();
-    mAudio.reset();
-    mInput.reset();
-    mRenderer.reset();
-    mWindow.reset();
+    if (mResources) mResources.reset();
+    if (mMap) mMap.reset();
+    if (mProject) mProject.reset();
+    if (mScene) mScene.reset();
+    if (mCommandHistory) mCommandHistory.reset();
+    if (mRubyVM) mRubyVM.reset();
+    if (mAudio) mAudio.reset();
+    if (mInput) mInput.reset();
+    if (mRenderer) mRenderer.reset();
+    if (mSceneFramebuffer) mSceneFramebuffer.reset();
+    if (mWindow) mWindow.reset();
     mRunning = false;
+    RPG_LOG_INFO("Engine shutdown complete");
 }
 
 void Engine::Run() {
@@ -150,6 +232,8 @@ void Engine::Run() {
         auto now = Clock::now();
         float dt = std::chrono::duration<float>(now - lastTime).count();
         lastTime = now;
+        // Clamp dt für Stabilität (z.B. bei Debugger Pause)
+        if (dt > 0.1f) dt = 0.1f;
         mDeltaTime = dt;
         mTime += dt;
 
@@ -239,11 +323,11 @@ static Key MapSDLKey(SDL_Scancode code) {
 void Engine::Update(float dt) {
     mInput->Update();
 
-    // SDL-Events an Input weiterleiten
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
+#ifdef RPGMAKER3D_BUILD_EDITOR
         if (mEditor) ImGui_ImplSDL2_ProcessEvent(&e);
-
+#endif
         switch (e.type) {
             case SDL_QUIT:
                 mRunning = false;
@@ -261,23 +345,44 @@ void Engine::Update(float dt) {
                     mInput->OnMouseChanged(MouseButton::Left, e.type == SDL_MOUSEBUTTONDOWN);
                 if (e.button.button == SDL_BUTTON_RIGHT)
                     mInput->OnMouseChanged(MouseButton::Right, e.type == SDL_MOUSEBUTTONDOWN);
+                if (e.button.button == SDL_BUTTON_MIDDLE)
+                    mInput->OnMouseChanged(MouseButton::Middle, e.type == SDL_MOUSEBUTTONDOWN);
                 break;
             case SDL_MOUSEWHEEL:
                 mInput->OnMouseWheel(static_cast<float>(e.wheel.y));
                 break;
+            case SDL_WINDOWEVENT:
+                if (e.window.event == SDL_WINDOWEVENT_CLOSE) {
+                    mRunning = false;
+                    return;
+                }
+                break;
         }
     }
 
-    // Editor-Kamera-Navigation
-    if (mEditor && !mEditor->WantCaptureInput()) {
+    // Global Shortcuts auch außerhalb Editor
+    if (mInput->IsKeyPressed(Key::Escape) && !mEditorMode) {
+        // Im Spiel: Pause Menü
+        if (GameUI::Get().Pause().IsVisible()) GameUI::Get().Pause().Hide();
+        else GameUI::Get().Pause().Show();
+    }
+
+    // Kamera Navigation (Editor oder Play)
+    bool allowCamera = true;
+#ifdef RPGMAKER3D_BUILD_EDITOR
+    if (mEditor && mEditor->WantCaptureInput()) allowCamera = false;
+#endif
+
+    if (allowCamera) {
         Camera& cam = mRenderer->GetCamera();
-        float speed = 5.0f * dt;
+        float speed = (mInput->IsKeyDown(Key::LShift) ? 10.0f : 5.0f) * dt;
         if (mInput->IsKeyDown(Key::W)) cam.SetPosition(cam.GetPosition() + cam.GetForward() * speed);
         if (mInput->IsKeyDown(Key::S)) cam.SetPosition(cam.GetPosition() - cam.GetForward() * speed);
         if (mInput->IsKeyDown(Key::A)) cam.SetPosition(cam.GetPosition() - cam.GetRight() * speed);
         if (mInput->IsKeyDown(Key::D)) cam.SetPosition(cam.GetPosition() + cam.GetRight() * speed);
+        if (mInput->IsKeyDown(Key::Q)) cam.SetPosition(cam.GetPosition() + Vec3(0,1,0) * speed);
+        if (mInput->IsKeyDown(Key::E)) cam.SetPosition(cam.GetPosition() - Vec3(0,1,0) * speed);
 
-        // Maus-Look mit Rechtsklick
         if (mInput->IsMouseDown(MouseButton::Right)) {
             Vec2 delta = mInput->GetMouseDelta();
             Vec3 rot = cam.GetRotation();
@@ -287,13 +392,12 @@ void Engine::Update(float dt) {
             cam.SetRotation(rot);
         }
 
-        // Zoom mit Mausrad
         if (mInput->GetMouseWheel() != 0.0f) {
             cam.SetPosition(cam.GetPosition() + cam.GetForward() * mInput->GetMouseWheel() * 2.0f);
         }
     }
 
-    // Partikel aktualisieren
+    // Partikel & Scene
     for (EntityID id : mScene->GetEntities()) {
         auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id);
         if (emitter && emitter->emitter) {
@@ -309,47 +413,65 @@ void Engine::Update(float dt) {
         }
     }
 
-    // Ruby-Update im Play Mode
+    // Game Logic
     if (mPlayMode) {
-        mRubyVM->Update(dt);
+        Game::Get().Update(dt);
+        Game::Get().Player().Update(dt, *mInput);
+        EventSystem::Get().Update(dt, Game::Get().Player().GetPosition());
+        BattleSystem::Get().Update(dt);
+        if (mRubyVM) mRubyVM->Update(dt);
     }
+
+    // UI
+    GameUI::Get().Update(dt);
 
     mScene->Update(dt);
 }
 
 void Engine::Render() {
-    // Editor UI vorbereiten (Berechnet SceneViewSize)
+#ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditor) {
         mEditor->BeginFrame();
         mEditor->DrawUI();
     }
+#endif
 
-    // Im Editor in den Scene-Framebuffer rendern
+    // Scene in Framebuffer rendern wenn Editor aktiv
     if (mEditorMode && mSceneFramebuffer && mEditor) {
         Vec2 viewSize = mEditor->GetSceneViewSize();
-        if (viewSize.x > 0 && viewSize.y > 0) {
+        if (viewSize.x > 1 && viewSize.y > 1) {
             mSceneFramebuffer->Resize(static_cast<int>(viewSize.x), static_cast<int>(viewSize.y));
             mSceneFramebuffer->Bind();
-
             Camera& cam = mRenderer->GetCamera();
             cam.SetPerspective(60.0f, viewSize.x / viewSize.y, 0.1f, 1000.0f);
-
             RenderScene();
-
             mSceneFramebuffer->Unbind();
         }
     } else {
+        // Player Modus: direkt rendern, evtl. feste Auflösung aber jetzt Fenstergröße
+        if (mWindow) {
+            Camera& cam = mRenderer->GetCamera();
+            cam.SetPerspective(60.0f, (float)mWindow->GetWidth() / (float)mWindow->GetHeight(), 0.1f, 1000.0f);
+        }
         RenderScene();
     }
 
-    // Editor UI auf den Bildschirm rendern
+#ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditor) {
+        // GameUI auch im Editor sichtbar? Nur wenn PlayMode
+        if (mPlayMode) GameUI::Get().Draw();
         mEditor->EndFrame();
+    } else {
+        GameUI::Get().Draw();
     }
+#else
+    GameUI::Get().Draw();
+#endif
 }
 
 void Engine::RenderScene() {
     Camera* camera = &mRenderer->GetCamera();
+    // Falls aktive Kamera Entität gesetzt, nutze diese
     if (mActiveCameraEntity != INVALID_ENTITY) {
         auto* camComp = mScene->GetComponent<CameraComponent>(mActiveCameraEntity);
         auto* transform = mScene->GetComponent<TransformComponent>(mActiveCameraEntity);
@@ -359,33 +481,44 @@ void Engine::RenderScene() {
             tempCam.SetRotation(transform->transform.rotation);
             tempCam.SetPerspective(camComp->fov, camComp->aspect, camComp->nearPlane, camComp->farPlane);
             camera = &tempCam;
+            // Achtung: tempCam lebt nur kurz, aber Renderer nutzt nur Matrix sofort
+            mRenderer->BeginFrame(tempCam);
+            // Render trotzdem mit tempCam - wir müssen danach nicht mehr darauf zugreifen
+            goto render_body;
         }
     }
 
     mRenderer->BeginFrame(*camera);
 
-    // Grid zeichnen (wiederverwendet)
-    mRenderer->DrawMesh(mGridMesh, Mat4(1.0f), nullptr, Color(0.4f, 0.4f, 0.4f, 1.0f));
+render_body:
+    // Grid (nur im Editor)
+    if (mEditorMode) {
+        mRenderer->DrawMesh(mGridMesh, Mat4(1.0f), nullptr, Color(0.4f, 0.4f, 0.4f, 0.6f));
+    }
 
-    // Map zeichnen
+    // Map
     mMap->Render(*mRenderer);
 
-    // Entitäten zeichnen
+    // Entitäten
     for (EntityID id : mScene->GetEntities()) {
         auto* transform = mScene->GetComponent<TransformComponent>(id);
+        if (!transform) continue;
+
         auto* model = mScene->GetComponent<ModelRendererComponent>(id);
         auto* material = mScene->GetComponent<MaterialComponent>(id);
-        if (transform && model) {
+
+        if (model && model->model) {
             Mat4 matrix = transform->transform.GetMatrix();
             if (material) {
-                mRenderer->DrawMeshWithMaterial(model->model->GetMesh(0), matrix, material->material);
+                if (model->model->GetMeshCount() > 0)
+                    mRenderer->DrawMeshWithMaterial(model->model->GetMesh(0), matrix, material->material);
             } else {
                 mRenderer->DrawModel(*model->model, matrix, model->texture.get());
             }
         }
 
         auto* light = mScene->GetComponent<LightComponent>(id);
-        if (transform && light) {
+        if (light) {
             Mesh lightMesh = MeshFactory::CreateCube(0.2f);
             Mat4 matrix = glm::translate(Mat4(1.0f), transform->transform.position);
             mRenderer->DrawMesh(lightMesh, matrix, nullptr, light->color);
@@ -396,20 +529,20 @@ void Engine::RenderScene() {
             mRenderer->DrawParticles(emitter->emitter->GetParticles());
         }
 
+        // Sprite als Billboard
         auto* sprite = mScene->GetComponent<SpriteComponent>(id);
-        if (transform && sprite) {
+        if (sprite) {
             Mat4 matrix;
             if (sprite->billboard) {
-                // Face camera
                 Vec3 pos = transform->transform.position;
                 Vec3 camPos = camera->GetPosition();
                 Vec3 forward = glm::normalize(camPos - pos);
-                Vec3 right = glm::normalize(glm::cross(Vec3(0, 1, 0), forward));
+                Vec3 right = glm::normalize(glm::cross(Vec3(0,1,0), forward));
                 Vec3 up = glm::cross(forward, right);
                 Mat4 rot(right.x, right.y, right.z, 0,
                          up.x, up.y, up.z, 0,
                          forward.x, forward.y, forward.z, 0,
-                         0, 0, 0, 1);
+                         0,0,0,1);
                 matrix = glm::translate(Mat4(1.0f), pos) * rot;
                 matrix = glm::scale(matrix, Vec3(sprite->size.x * transform->transform.scale.x,
                                                  sprite->size.y * transform->transform.scale.y, 1.0f));
@@ -422,14 +555,12 @@ void Engine::RenderScene() {
         }
     }
 
-    // Auswahl-Gizmo
-    if (mEditor && mEditorMode) {
+    // Auswahl-BoundingBox im Editor
+    if (mEditorMode && mEditor) {
         int selected = mEditor->GetSelectedEntity();
         if (selected >= 0) {
             auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(selected));
             if (transform) {
-                Vec3 scale = transform->transform.scale;
-                if (glm::length(scale) < 0.001f) scale = Vec3(1.0f);
                 Mat4 matrix = transform->transform.GetMatrix();
                 mRenderer->DrawBoundingBox(Vec3(-0.5f), Vec3(0.5f), matrix, Color(1.0f, 0.8f, 0.0f, 1.0f));
             }
@@ -439,13 +570,13 @@ void Engine::RenderScene() {
     mRenderer->EndFrame();
 }
 
+// Helpers für JSON Escaping
 namespace {
-
 std::string EscapeJSON(const std::string& s) {
     std::string out;
     for (char c : s) {
         switch (c) {
-            case '"': out += "\\\""; break;
+            case '\"': out += "\\\""; break;
             case '\\': out += "\\\\"; break;
             case '\b': out += "\\b"; break;
             case '\f': out += "\\f"; break;
@@ -457,16 +588,13 @@ std::string EscapeJSON(const std::string& s) {
     }
     return out;
 }
-
 std::string Vec3ToJSON(const Vec3& v) {
     return "[" + std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z) + "]";
 }
-
 std::string Vec4ToJSON(const Vec4& v) {
     return "[" + std::to_string(v.x) + "," + std::to_string(v.y) + "," + std::to_string(v.z) + "," + std::to_string(v.w) + "]";
 }
-
-} // anonymous namespace
+}
 
 void Engine::SaveScene(const std::string& path) const {
     std::ofstream file(path);
@@ -474,9 +602,7 @@ void Engine::SaveScene(const std::string& path) const {
         RPG_LOG_ERROR("Failed to save scene: " + path);
         return;
     }
-
-    file << "{\n";
-    file << "  \"entities\": [\n";
+    file << "{\n  \"entities\": [\n";
     const auto& entities = mScene->GetEntities();
     for (size_t i = 0; i < entities.size(); ++i) {
         EntityID id = entities[i];
@@ -495,41 +621,26 @@ void Engine::SaveScene(const std::string& path) const {
 
         auto* model = mScene->GetComponent<ModelRendererComponent>(id);
         if (model) {
-            file << ",\n      \"model\": {\n";
-            file << "        \"mesh\": \"primitive\"\n";
-            file << "      }";
+            file << ",\n      \"model\": {\"mesh\": \"primitive\"}";
         }
-
         auto* material = mScene->GetComponent<MaterialComponent>(id);
         if (material) {
-            file << ",\n      \"material\": {\n";
-            file << "        \"diffuse\": " << Vec4ToJSON(material->material.diffuse) << "\n";
-            file << "      }";
+            file << ",\n      \"material\": {\"diffuse\": " << Vec4ToJSON(material->material.diffuse) << "}";
         }
-
         auto* light = mScene->GetComponent<LightComponent>(id);
         if (light) {
-            file << ",\n      \"light\": {\n";
-            file << "        \"color\": " << Vec4ToJSON(light->color) << ",\n";
-            file << "        \"intensity\": " << light->intensity << "\n";
-            file << "      }";
+            file << ",\n      \"light\": {\"color\": " << Vec4ToJSON(light->color) << ", \"intensity\": " << light->intensity << "}";
         }
-
         auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id);
         if (emitter) {
-            file << ",\n      \"particleEmitter\": {\n";
-            file << "        \"autoEmit\": " << (emitter->autoEmit ? "true" : "false") << ",\n";
-            file << "        \"color\": " << Vec4ToJSON(emitter->emitColor) << "\n";
-            file << "      }";
+            file << ",\n      \"particleEmitter\": {\"autoEmit\": " << (emitter->autoEmit ? "true" : "false") << "}";
         }
 
         file << "\n    }";
         if (i + 1 < entities.size()) file << ",";
         file << "\n";
     }
-    file << "  ]\n";
-    file << "}\n";
-
+    file << "  ]\n}\n";
     RPG_LOG_INFO("Scene saved to: " + path);
 }
 
@@ -539,18 +650,14 @@ bool Engine::LoadScene(const std::string& path) {
         RPG_LOG_ERROR("Failed to load scene: " + path);
         return false;
     }
-
     mScene->Clear();
-
     std::stringstream buffer;
     buffer << file.rdbuf();
     std::string content = buffer.str();
 
     auto findSection = [&](const std::string& text, const std::string& key, size_t start) -> size_t {
-        std::string pattern = "\"" + key + "\"";
-        return text.find(pattern, start);
+        return text.find("\"" + key + "\"", start);
     };
-
     auto parseVec3 = [&](const std::string& text, size_t start, size_t end, Vec3& out) {
         size_t bracket = text.find('[', start);
         if (bracket == std::string::npos || bracket >= end) return;
@@ -561,7 +668,6 @@ bool Engine::LoadScene(const std::string& path) {
         char sep;
         ss >> out.x >> sep >> out.y >> sep >> out.z;
     };
-
     auto parseVec4 = [&](const std::string& text, size_t start, size_t end, Vec4& out) {
         size_t bracket = text.find('[', start);
         if (bracket == std::string::npos || bracket >= end) return;
@@ -575,7 +681,6 @@ bool Engine::LoadScene(const std::string& path) {
 
     size_t entityStart = content.find("\"entities\"");
     if (entityStart == std::string::npos) return false;
-
     size_t arrayStart = content.find('[', entityStart);
     if (arrayStart == std::string::npos) return false;
 
@@ -583,8 +688,16 @@ bool Engine::LoadScene(const std::string& path) {
     while (pos < content.size()) {
         size_t objStart = content.find('{', pos);
         if (objStart == std::string::npos) break;
-
-        size_t objEnd = content.find('}', objStart);
+        // naive find matching }: need depth
+        int depth = 0;
+        size_t objEnd = std::string::npos;
+        for (size_t i = objStart; i < content.size(); ++i) {
+            if (content[i] == '{') depth++;
+            else if (content[i] == '}') {
+                depth--;
+                if (depth == 0) { objEnd = i; break; }
+            }
+        }
         if (objEnd == std::string::npos) break;
 
         std::string obj = content.substr(objStart, objEnd - objStart + 1);
@@ -592,11 +705,10 @@ bool Engine::LoadScene(const std::string& path) {
         size_t namePos = findSection(obj, "name", 0);
         std::string name = "Entity";
         if (namePos != std::string::npos) {
-            size_t quote = obj.find('"', namePos + 7);
-            size_t quoteEnd = obj.find('"', quote + 1);
-            if (quote != std::string::npos && quoteEnd != std::string::npos) {
-                name = obj.substr(quote + 1, quoteEnd - quote - 1);
-            }
+            size_t colon = obj.find(':', namePos);
+            size_t q1 = obj.find('\"', colon);
+            size_t q2 = obj.find('\"', q1 + 1);
+            if (q1 != std::string::npos && q2 != std::string::npos) name = obj.substr(q1 + 1, q2 - q1 - 1);
         }
 
         EntityID id = mScene->CreateEntity(name);
@@ -612,8 +724,7 @@ bool Engine::LoadScene(const std::string& path) {
             parseVec3(obj, sPos, obj.size(), t->transform.scale);
         }
 
-        size_t modelPos = findSection(obj, "model", 0);
-        if (modelPos != std::string::npos) {
+        if (findSection(obj, "model", 0) != std::string::npos) {
             auto* m = mScene->AddComponent<ModelRendererComponent>(id);
             m->model = std::make_shared<Model>();
             m->model->AddMesh(MeshFactory::CreateCube(1.0f));
@@ -631,14 +742,6 @@ bool Engine::LoadScene(const std::string& path) {
             auto* l = mScene->AddComponent<LightComponent>(id);
             size_t cPos = findSection(obj, "color", lightPos);
             parseVec4(obj, cPos, obj.size(), l->color);
-            size_t iPos = findSection(obj, "intensity", lightPos);
-            if (iPos != std::string::npos) {
-                size_t colon = obj.find(':', iPos);
-                if (colon != std::string::npos) {
-                    std::string val = obj.substr(colon + 1);
-                    try { l->intensity = std::stof(val); } catch (...) {}
-                }
-            }
         }
 
         size_t pePos = findSection(obj, "particleEmitter", 0);
@@ -653,12 +756,9 @@ bool Engine::LoadScene(const std::string& path) {
                     pe->autoEmit = (val.find("true") != std::string::npos);
                 }
             }
-            size_t cPos = findSection(obj, "color", pePos);
-            parseVec4(obj, cPos, obj.size(), pe->emitColor);
         }
 
         pos = objEnd + 1;
-        while (pos < content.size() && (content[pos] == ',' || std::isspace(static_cast<unsigned char>(content[pos])))) ++pos;
     }
 
     RPG_LOG_INFO("Scene loaded from: " + path);
