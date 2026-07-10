@@ -50,57 +50,58 @@ jobs:
           }
           .\vcpkg\vcpkg.exe install sdl2:x64-windows-static glm:x64-windows-static
 
-      - name: Build mruby with MSVC (mit Windows Fix)
+      - name: Build mruby with MSVC
         shell: pwsh
         run: |
-          if (-not (Test-Path third_party/mruby)) {
-            git clone --depth 1 https://github.com/mruby/mruby.git third_party/mruby
+          # Do not set CC/CXX to cl here. mruby then selects its GCC toolchain
+          # because these variables take precedence over VisualStudioVersion.
+          # Its tested ci/msvc configuration selects the Visual C++ toolchain,
+          # which creates libmruby.lib and libmruby_core.lib.
+          $mrubyTag = "4.0.0"
+          if (Test-Path third_party/mruby) {
+            Remove-Item -Recurse -Force third_party/mruby
+          }
+          git clone --branch $mrubyTag --depth 1 https://github.com/mruby/mruby.git third_party/mruby
+          if ($LASTEXITCODE -ne 0) {
+            throw "mruby $mrubyTag konnte nicht geklont werden."
           }
 
-          # FIX für strndup Konflikt (egal ob GCC oder MSVC)
-          $mirbFile = "third_party/mruby/mrbgems/mruby-bin-mirb/tools/mirb/mirb_completion.c"
-          if (Test-Path $mirbFile) {
-            Write-Host "Patche mruby strndup Konflikt..."
-            $content = Get-Content $mirbFile -Raw
-            $content = $content -replace '\bstrndup\s*\(const char', 'mirb_strndup(const char'
-            $content = $content -replace '\bstrndup\s*\(', 'mirb_strndup('
-            Set-Content -Path $mirbFile -Value $content -Encoding UTF8
-          }
-
-          Write-Host "MSVC Compiler: $(where.exe cl)"
-          $env:CC = "cl"
-          $env:CXX = "cl"
-
-          cd third_party/mruby
+          Push-Location third_party/mruby
           try {
-            Write-Host "Baue mruby mit MSVC (cl.exe)..."
-            ruby minirake
-          } catch {
-            Write-Host "MSVC Build fehlgeschlagen, versuche nochmal..."
-            ruby minirake
-          }
+            Write-Host "MSVC Compiler: $(where.exe cl)"
+            $env:MRUBY_CONFIG = "ci/msvc"
+            Write-Host "Baue mruby $mrubyTag mit der offiziellen MSVC-Konfiguration..."
+            & ruby minirake 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/mruby_build.log"
+            $mrubyExitCode = $LASTEXITCODE
+            if ($mrubyExitCode -ne 0) {
+              throw "mruby Build fehlgeschlagen (Exit-Code $mrubyExitCode)."
+            }
 
-          Write-Host "Prüfe mruby libs..."
-          Get-ChildItem build/host/lib/ -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Name }
+            $requiredFiles = @(
+              "build/host/lib/libmruby.lib",
+              "build/host/lib/libmruby_core.lib",
+              "build/host/include/mruby/presym/id.h",
+              "build/host/include/mruby/presym/table.h"
+            )
+            $missingFiles = $requiredFiles | Where-Object { -not (Test-Path $_) }
+            if ($missingFiles) {
+              Write-Host "mruby Ausgabe:"
+              Get-ChildItem build/host -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host $_.FullName }
+              throw "mruby Build unvollständig. Fehlend: $($missingFiles -join ', ')"
+            }
 
-          $foundLib = $false
-          if (Test-Path "build/host/lib/libmruby.a") { $foundLib = $true }
-          if (Test-Path "build/host/lib/libmruby.lib") { $foundLib = $true }
-          if (Test-Path "build/host/lib/mruby.lib") { $foundLib = $true }
-
-          if (-not $foundLib) {
-            Write-Error "FEHLER: Keine mruby lib gefunden"
-            exit 1
-          }
-
-          $presymId = "build/host/include/mruby/presym/id.h"
-          if (Test-Path $presymId) {
+            # Compatibility for CMake versions which include only mruby/include.
+            # The current CMake configuration also includes build/host/include directly.
             New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
-            Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force -ErrorAction SilentlyContinue
-            Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force -ErrorAction SilentlyContinue
-          } else {
-            Write-Error "presym headers fehlen: $presymId"
-            exit 1
+            Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force
+            Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force
+
+            Write-Host "mruby Bibliotheken erfolgreich gebaut:"
+            Get-ChildItem build/host/lib/*.lib | ForEach-Object { Write-Host $_.FullName }
+          }
+          finally {
+            Pop-Location
           }
 
       - name: Generate OpenGL loader (glad)
