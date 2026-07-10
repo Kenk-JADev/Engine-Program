@@ -191,9 +191,14 @@ void Renderer::DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, con
         EnableWireframe(true);
     }
 
+    // Blending state tracking – default renderer state is BLEND ON
+    GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
     if (material.transparent) {
-        glEnable(GL_BLEND);
+        if (!blendWasEnabled) glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    } else {
+        // Opaque material: disable blending temporarily for correct depth
+        if (blendWasEnabled) glDisable(GL_BLEND);
     }
 
     mDefaultShader->Bind();
@@ -211,9 +216,11 @@ void Renderer::DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, con
     if (material.wireframe && !wasWireframe) {
         EnableWireframe(false);
     }
-    if (material.transparent) {
-        glDisable(GL_BLEND);
-    }
+    // Restore blend state to renderer default (ON)
+    if (blendWasEnabled) glEnable(GL_BLEND);
+    else glDisable(GL_BLEND);
+    // Ensure default blend func is restored
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void Renderer::DrawParticles(const std::vector<Particle>& particles) {
@@ -226,28 +233,43 @@ void Renderer::DrawParticles(const std::vector<Particle>& particles) {
 
 void Renderer::DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& transform, const Color& color) {
     if (!mBoundingBoxMesh) return;
-    mBoundingBoxMesh->vertices = {
-        {{min.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, min.y, min.z}, {0,0,0}, {0,0}},
-        {{max.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, min.y, max.z}, {0,0,0}, {0,0}},
-        {{max.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, min.y, max.z}, {0,0,0}, {0,0}},
-        {{min.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, min.y, min.z}, {0,0,0}, {0,0}},
-        {{min.x, max.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, min.z}, {0,0,0}, {0,0}},
-        {{max.x, max.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, max.z}, {0,0,0}, {0,0}},
-        {{max.x, max.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, max.z}, {0,0,0}, {0,0}},
-        {{min.x, max.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, min.z}, {0,0,0}, {0,0}},
-        {{min.x, min.y, min.z}, {0,0,0}, {0,0}}, {{min.x, max.y, min.z}, {0,0,0}, {0,0}},
-        {{max.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, min.z}, {0,0,0}, {0,0}},
-        {{max.x, min.y, max.z}, {0,0,0}, {0,0}}, {{max.x, max.y, max.z}, {0,0,0}, {0,0}},
-        {{min.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, max.z}, {0,0,0}, {0,0}},
-    };
-    mBoundingBoxMesh->indices.clear();
-    for (size_t i = 0; i < mBoundingBoxMesh->vertices.size(); ++i) {
-        mBoundingBoxMesh->indices.push_back(static_cast<unsigned int>(i));
+
+    // Static cache – rebuild only if bounds changed
+    static Vec3 lastMin(9999.0f), lastMax(-9999.0f);
+    bool boundsChanged = (min != lastMin) || (max != lastMax);
+    
+    if (boundsChanged || mBoundingBoxMesh->vertices.empty()) {
+        mBoundingBoxMesh->vertices = {
+            {{min.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, min.y, min.z}, {0,0,0}, {0,0}},
+            {{max.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, min.y, max.z}, {0,0,0}, {0,0}},
+            {{max.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, min.y, max.z}, {0,0,0}, {0,0}},
+            {{min.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, min.y, min.z}, {0,0,0}, {0,0}},
+            {{min.x, max.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, min.z}, {0,0,0}, {0,0}},
+            {{max.x, max.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, max.z}, {0,0,0}, {0,0}},
+            {{max.x, max.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, max.z}, {0,0,0}, {0,0}},
+            {{min.x, max.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, min.z}, {0,0,0}, {0,0}},
+            {{min.x, min.y, min.z}, {0,0,0}, {0,0}}, {{min.x, max.y, min.z}, {0,0,0}, {0,0}},
+            {{max.x, min.y, min.z}, {0,0,0}, {0,0}}, {{max.x, max.y, min.z}, {0,0,0}, {0,0}},
+            {{max.x, min.y, max.z}, {0,0,0}, {0,0}}, {{max.x, max.y, max.z}, {0,0,0}, {0,0}},
+            {{min.x, min.y, max.z}, {0,0,0}, {0,0}}, {{min.x, max.y, max.z}, {0,0,0}, {0,0}},
+        };
+        mBoundingBoxMesh->indices.clear();
+        for (size_t i = 0; i < mBoundingBoxMesh->vertices.size(); ++i) {
+            mBoundingBoxMesh->indices.push_back(static_cast<unsigned int>(i));
+        }
+        mBoundingBoxMesh->BuildGPU();
+        lastMin = min;
+        lastMax = max;
     }
-    mBoundingBoxMesh->BuildGPU();
-    EnableWireframe(true);
+
+    // Draw as lines
+    GLint oldPolygonMode[2];
+    glGetIntegerv(GL_POLYGON_MODE, oldPolygonMode);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    glDisable(GL_DEPTH_TEST); // always on top in editor
     DrawMesh(*mBoundingBoxMesh, transform, nullptr, color);
-    EnableWireframe(false);
+    glEnable(GL_DEPTH_TEST);
+    glPolygonMode(GL_FRONT_AND_BACK, oldPolygonMode[0]);
 }
 
 } // namespace rpg

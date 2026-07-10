@@ -26,7 +26,9 @@
 #include "rpgmaker3d/UI.h"
 
 #ifdef RPGMAKER3D_BUILD_EDITOR
+#include <imgui.h>
 #include <imgui_impl_sdl2.h>
+#include <imgui_impl_opengl3.h>
 #endif
 
 #include <SDL.h>
@@ -96,6 +98,40 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     mMap = std::make_unique<Map>();
     mResources = std::make_unique<ResourceManager>();
 
+#ifdef RPGMAKER3D_BUILD_EDITOR
+    // ImGui früh initialisieren – auch für Player UI (GameUI nutzt ImGui)
+    // Muss nach Window/GL Context, vor allen UI-Systemen passieren
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    // Viewports temporär deaktiviert gegen Flickering – kann im Editor wieder aktiviert werden
+    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.ConfigViewportsNoAutoMerge = true;
+    io.ConfigViewportsNoTaskBarIcon = true;
+    io.ConfigDockingAlwaysTabBar = true;
+    // Reduziert Flickern beim Resize
+    io.ConfigWindowsResizeFromEdges = true;
+    io.ConfigWindowsMoveFromTitleBarOnly = true;
+
+    ImGui::StyleColorsDark();
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 4.0f;
+    style.FrameRounding = 3.0f;
+    style.GrabRounding = 3.0f;
+    style.AntiAliasedLines = true;
+    style.AntiAliasedFill = true;
+    // Flicker-Reduktion
+    style.WindowBorderSize = 1.0f;
+    style.FrameBorderSize = 0.0f;
+
+    ImGui_ImplSDL2_InitForOpenGL(mWindow->GetNativeWindow(), mWindow->GetGLContext());
+    ImGui_ImplOpenGL3_Init("#version 330");
+    mImGuiInitialized = true;
+    RPG_LOG_INFO("ImGui initialized");
+#endif
+
     // Datenbank laden / Defaults
     try {
         Database::Get().CreateDefaults();
@@ -145,8 +181,9 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
         }
     }
 
-    // Game System
-    Game::Get().NewGame();
+    // Game System – NICHT hier NewGame aufrufen!
+    // Game::NewGame() wird vom Player / Editor Play-Mode explizit gestartet,
+    // damit Editor und Player identisch sind.
     EventSystem::Get().Clear();
 
     // Editor
@@ -202,12 +239,56 @@ unsigned int Engine::GetSceneTextureID() const {
     return 0;
 }
 
+void Engine::SetPlaying(bool playing) {
+    if (playing == mPlayMode) return;
+    
+    mPlayMode = playing;
+
+    if (mEditorMode) {
+        // Editor Play-Test Mode – mit Scene Snapshot
+        if (playing) {
+            // PlayMode START – snapshot scene, start new game
+            RPG_LOG_INFO("Entering Play Mode (Editor)");
+            // Save current scene to temp for restore
+            if (mProject) {
+                SaveScene(mProject->GetProjectPath() + "/__editor_play_backup.json");
+            }
+            // Reset game state – identical to Player.exe
+            Game::Get().NewGame();
+            EventSystem::Get().Clear();
+            // Reset player position to start
+            Game::Get().Player().SetPosition(Vec3(Database::Get().System().startX, 0, Database::Get().System().startY));
+        } else {
+            // PlayMode STOP – restore editor scene
+            RPG_LOG_INFO("Exiting Play Mode (Editor)");
+            if (mProject) {
+                std::string backup = mProject->GetProjectPath() + "/__editor_play_backup.json";
+                if (std::filesystem::exists(backup)) {
+                    LoadScene(backup);
+                }
+            }
+            // Game state clear
+            EventSystem::Get().Clear();
+        }
+    } else {
+        // Echter Player-Modus – kein Scene-Snapshot, nur Flag setzen
+        RPG_LOG_INFO(std::string("Play Mode ") + (playing ? "ON (Player)" : "OFF (Player)"));
+    }
+}
+
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
 #ifdef RPGMAKER3D_BUILD_EDITOR
     if (mEditor) {
         mEditor->Shutdown();
         mEditor.reset();
+    }
+    // ImGui shutdown (Engine owns ImGui context now)
+    if (mImGuiInitialized) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplSDL2_Shutdown();
+        ImGui::DestroyContext();
+        mImGuiInitialized = false;
     }
 #endif
     mGridMesh.Delete();
@@ -328,7 +409,7 @@ void Engine::Update(float dt) {
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
 #ifdef RPGMAKER3D_BUILD_EDITOR
-        if (mEditor) ImGui_ImplSDL2_ProcessEvent(&e);
+        if (mImGuiInitialized) ImGui_ImplSDL2_ProcessEvent(&e);
 #endif
         switch (e.type) {
             case SDL_QUIT:
@@ -372,8 +453,32 @@ void Engine::Update(float dt) {
     // Kamera Navigation (Editor oder Play)
     bool allowCamera = true;
 #ifdef RPGMAKER3D_BUILD_EDITOR
+    if (mImGuiInitialized) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.WantCaptureMouse || io.WantCaptureKeyboard) {
+            // Im Editor: Kamera nur wenn SceneView fokussiert
+            if (mEditor) {
+                allowCamera = mEditor->IsSceneViewFocused();
+            } else {
+                // Im Player: UI blockiert Kamera
+                allowCamera = false;
+            }
+        }
+    }
     if (mEditor && mEditor->WantCaptureInput()) allowCamera = false;
 #endif
+
+    // Im PlayMode: Kamera folgt optional dem GamePlayer
+    // (kann im Editor umgeschaltet werden)
+    if (mPlayMode && mPlayModeFollowPlayer) {
+        Camera& cam = mRenderer->GetCamera();
+        Vec3 playerPos = Game::Get().Player().GetPosition();
+        // Simple Follow-Cam: leicht versetzt hinter/über dem Spieler
+        Vec3 targetPos = playerPos + Vec3(0, 3.0f, 5.0f);
+        cam.SetPosition(targetPos);
+        cam.SetRotation(Vec3(-20.0f, 0.0f, 0.0f));
+        allowCamera = false; // keine Free-Fly im PlayMode wenn Follow aktiv
+    }
 
     if (allowCamera) {
         Camera& cam = mRenderer->GetCamera();
@@ -432,8 +537,15 @@ void Engine::Update(float dt) {
 
 void Engine::Render() {
 #ifdef RPGMAKER3D_BUILD_EDITOR
+    // ImGui New Frame – zentral in Engine
+    if (mImGuiInitialized) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+    }
+
+    // Editor UI zeichnen (nur Docking etc., kein BeginFrame mehr)
     if (mEditor) {
-        mEditor->BeginFrame();
         mEditor->DrawUI();
     }
 #endif
@@ -449,9 +561,13 @@ void Engine::Render() {
             cam.SetPerspective(60.0f, viewSize.x / viewSize.y, 0.1f, 1000.0f);
             RenderScene();
             mSceneFramebuffer->Unbind();
+            // Viewport restore – critical for ImGui flicker fix
+            if (mWindow) {
+                glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
+            }
         }
     } else {
-        // Player Modus: direkt rendern, evtl. feste Auflösung aber jetzt Fenstergröße
+        // Player Modus: direkt rendern
         if (mWindow) {
             Camera& cam = mRenderer->GetCamera();
             cam.SetPerspective(60.0f, (float)mWindow->GetWidth() / (float)mWindow->GetHeight(), 0.1f, 1000.0f);
@@ -467,15 +583,31 @@ void Engine::Render() {
 #endif
 
 #ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mEditor) {
-        // GameUI auch im Editor sichtbar? Nur wenn PlayMode
-        if (mPlayMode) GameUI::Get().Draw();
-        mEditor->EndFrame();
-    } else {
-        GameUI::Get().Draw();
+    // Game UI immer innerhalb ImGui Frame zeichnen
+    if (mImGuiInitialized) {
+        // Im Editor nur im PlayMode, im Player immer
+        if (!mEditor || mPlayMode) {
+            GameUI::Get().Draw();
+        }
+        
+        // ImGui Render
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        // Viewport-Handling für Multi-Viewport – aktuell deaktiviert gegen Flickern
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            SDL_Window* backupCurrentWindow = SDL_GL_GetCurrentWindow();
+            SDL_GLContext backupCurrentContext = SDL_GL_GetCurrentContext();
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            SDL_GL_MakeCurrent(backupCurrentWindow, backupCurrentContext);
+            // Viewport restore nach Platform Windows
+            if (mWindow) {
+                glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
+            }
+        }
     }
-#else
-    GameUI::Get().Draw();
 #endif
 }
 
@@ -569,7 +701,7 @@ void Engine::RenderScene() {
 
     // Auswahl-BoundingBox im Editor
 #ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mEditorMode && mEditor) {
+    if (mEditorMode && mEditor && !mPlayMode) {
         int selected = mEditor->GetSelectedEntity();
         if (selected >= 0) {
             auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(selected));
@@ -580,6 +712,19 @@ void Engine::RenderScene() {
         }
     }
 #endif
+
+    // Player Visual im PlayMode – damit Editor Play-Test = Player aussieht
+    if (mPlayMode) {
+        Vec3 playerPos = Game::Get().Player().GetPosition();
+        static Mesh playerMesh;
+        static bool playerMeshInit = false;
+        if (!playerMeshInit) {
+            playerMesh = MeshFactory::CreateCube(0.8f);
+            playerMeshInit = true;
+        }
+        Mat4 playerMat = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.4f, 0));
+        mRenderer->DrawMesh(playerMesh, playerMat, nullptr, Color(0.2f, 1.0f, 0.3f, 1.0f));
+    }
 
     mRenderer->EndFrame();
 }

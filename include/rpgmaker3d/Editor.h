@@ -33,6 +33,8 @@ public:
     Vec2 GetSceneViewSize() const { return mSceneViewSize; }
     Vec2 GetSceneViewPos() const { return mSceneViewPos; }
     int GetSelectedEntity() const { return mSelectedEntity; }
+    bool IsSceneViewHovered() const { return mSceneViewHovered; }
+    bool IsSceneViewFocused() const { return mSceneViewFocused; }
 
     void HandleSceneViewPicking();
     void PaintTileAt(int x, int z);

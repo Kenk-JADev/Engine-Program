@@ -44,21 +44,8 @@ Editor::~Editor() {
 }
 
 bool Editor::Initialize(Window& window) {
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.GrabRounding = 3.0f;
-
-    ImGui_ImplSDL2_InitForOpenGL(window.GetNativeWindow(), window.GetGLContext());
-    ImGui_ImplOpenGL3_Init("#version 330");
-
+    (void)window;
+    // ImGui wird von Engine initialisiert – Editor nutzt nur bestehenden Context
     mAudioPreview = std::make_unique<AudioPreview>(mEngine.GetAudio());
 
     mInitialized = true;
@@ -67,16 +54,12 @@ bool Editor::Initialize(Window& window) {
 
 void Editor::Shutdown() {
     if (!mInitialized) return;
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
-    ImGui::DestroyContext();
+    mAudioPreview.reset();
     mInitialized = false;
 }
 
 void Editor::BeginFrame() {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
-    ImGui::NewFrame();
+    // ImGui Frame wird von Engine verwaltet
 }
 
 void Editor::DrawUI() {
@@ -87,6 +70,7 @@ void Editor::DrawUI() {
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::SetNextWindowViewport(viewport->ID);
 
+    // NoBackground entfernt – verhindert Flickern beim Fenster verschieben
     ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar
         | ImGuiWindowFlags_NoDocking
         | ImGuiWindowFlags_NoTitleBar
@@ -94,15 +78,16 @@ void Editor::DrawUI() {
         | ImGuiWindowFlags_NoResize
         | ImGuiWindowFlags_NoMove
         | ImGuiWindowFlags_NoBringToFrontOnFocus
-        | ImGuiWindowFlags_NoNavFocus
-        | ImGuiWindowFlags_NoBackground;
+        | ImGuiWindowFlags_NoNavFocus;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::Begin("DockSpace", nullptr, flags);
 
     ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
-    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+    // PassthruCentralNode entfernt – war Hauptursache für Flickern
+    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
     if (!mLayoutInitialized) {
         InitializeDefaultLayout(dockspaceId, viewport->Size.x, viewport->Size.y);
@@ -110,7 +95,7 @@ void Editor::DrawUI() {
     }
 
     ImGui::End();
-    ImGui::PopStyleVar(2);
+    ImGui::PopStyleVar(3);
 
     DrawSceneView();
     DrawHierarchy();
@@ -150,17 +135,7 @@ void Editor::InitializeDefaultLayout(ImGuiID dockspaceId, float width, float hei
 }
 
 void Editor::EndFrame() {
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    ImGuiIO& io = ImGui::GetIO();
-    if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-        SDL_Window* backupCurrentWindow = SDL_GL_GetCurrentWindow();
-        SDL_GLContext backupCurrentContext = SDL_GL_GetCurrentContext();
-        ImGui::UpdatePlatformWindows();
-        ImGui::RenderPlatformWindowsDefault();
-        SDL_GL_MakeCurrent(backupCurrentWindow, backupCurrentContext);
-    }
+    // ImGui Render wird von Engine gemacht
 }
 
 bool Editor::WantCaptureInput() const {
@@ -224,12 +199,24 @@ void Editor::DrawMenuBar() {
         }
         if (ImGui::BeginMenu("View")) {
             ImGui::MenuItem("Demo Window", nullptr, &mShowDemo);
+            if (ImGui::MenuItem("Reset Layout")) { mLayoutInitialized = false; }
+            ImGui::Separator();
+            bool followPlayer = mEngine.IsPlayModeFollowPlayer();
+            if (ImGui::MenuItem("Follow Player in PlayMode", nullptr, &followPlayer)) {
+                mEngine.SetPlayModeFollowPlayer(followPlayer);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Play")) {
-            if (ImGui::MenuItem(mPlayMode ? "Stop" : "Play", "F5")) {
-                mPlayMode = !mPlayMode;
-                mEngine.SetPlaying(mPlayMode);
+            bool isPlaying = mEngine.IsPlaying();
+            mPlayMode = isPlaying; // sync
+            if (ImGui::MenuItem(isPlaying ? "Stop" : "Play", "F5")) {
+                mEngine.SetPlaying(!isPlaying);
+            }
+            ImGui::Separator();
+            bool follow = mEngine.IsPlayModeFollowPlayer();
+            if (ImGui::MenuItem("Camera Follow Player", nullptr, &follow)) {
+                mEngine.SetPlayModeFollowPlayer(follow);
             }
             ImGui::EndMenu();
         }
@@ -246,25 +233,48 @@ void Editor::DrawMenuBar() {
                 mEngine.GetCommandHistory().Redo(mEngine);
             }
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !io.WantTextInput) {
             DeleteSelectedEntity();
         }
         if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
-            mPlayMode = !mPlayMode;
-            mEngine.SetPlaying(mPlayMode);
+            bool isPlaying = mEngine.IsPlaying();
+            mEngine.SetPlaying(!isPlaying);
         }
 
         ImGui::Separator();
+        // PlayMode Status Anzeige
+        if (mEngine.IsPlaying()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.2f, 1.0f));
+            ImGui::Text("PLAYING");
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+        }
         ImGui::Text("FPS: %d", mEngine.GetFPS());
 
         ImGui::EndMainMenuBar();
     }
+    // Sync play mode
+    mPlayMode = mEngine.IsPlaying();
 }
 
 void Editor::DrawSceneView() {
-    ImGui::Begin("Scene");
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::Begin("Scene", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImVec2 size = ImGui::GetContentRegionAvail();
-    mSceneViewSize = Vec2(size.x, size.y);
+    
+    // Stabilize size – round to 2px to reduce framebuffer thrashing / flicker
+    size.x = floorf(size.x / 2.0f) * 2.0f;
+    size.y = floorf(size.y / 2.0f) * 2.0f;
+    if (size.x < 32) size.x = 32;
+    if (size.y < 32) size.y = 32;
+    
+    // Only update if size changed significantly – reduces flicker during resize
+    Vec2 newSize(size.x, size.y);
+    if (fabsf(newSize.x - mSceneViewSize.x) > 2.0f || fabsf(newSize.y - mSceneViewSize.y) > 2.0f) {
+        mSceneViewSize = newSize;
+    }
+    size.x = mSceneViewSize.x;
+    size.y = mSceneViewSize.y;
 
     unsigned int texId = mEngine.GetSceneTextureID();
     if (texId != 0) {
@@ -273,17 +283,30 @@ void Editor::DrawSceneView() {
         mSceneViewPos = Vec2(pos.x, pos.y);
         mEngine.SetSceneViewRect(mSceneViewPos, mSceneViewSize);
 
+        // Background to avoid flicker
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        draw_list->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(30, 30, 35, 255));
+
         ImGui::Image(img, size, ImVec2(0, 1), ImVec2(1, 0));
         mSceneViewHovered = ImGui::IsItemHovered();
-        mSceneViewFocused = ImGui::IsItemFocused();
+        mSceneViewFocused = ImGui::IsWindowFocused();
 
         HandleSceneViewPicking();
+        
+        // Overlay info
+        if (mEngine.IsPlaying()) {
+            ImVec2 overlay_pos = ImVec2(pos.x + 8, pos.y + 8);
+            draw_list->AddText(overlay_pos, IM_COL32(80, 255, 80, 255), "PLAY MODE");
+        }
     } else {
         ImGui::Text("Scene View (%.0f x %.0f)", size.x, size.y);
         ImGui::Text("WASD + Rechtsklick zum Navigieren");
+        mSceneViewHovered = false;
+        mSceneViewFocused = false;
     }
 
     ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void Editor::HandleSceneViewPicking() {

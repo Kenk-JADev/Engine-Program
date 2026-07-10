@@ -63,7 +63,9 @@ public:
     Vec2 GetSceneViewSize() const { return mSceneViewSize; }
 
     bool IsPlaying() const { return mPlayMode; }
-    void SetPlaying(bool playing) { mPlayMode = playing; }
+    void SetPlaying(bool playing);
+    bool IsPlayModeFollowPlayer() const { return mPlayModeFollowPlayer; }
+    void SetPlayModeFollowPlayer(bool follow) { mPlayModeFollowPlayer = follow; }
 
     void SaveScene(const std::string& path) const;
     bool LoadScene(const std::string& path);
@@ -89,6 +91,8 @@ private:
     bool mRunning = false;
     bool mEditorMode = true;
     bool mPlayMode = false;
+    bool mImGuiInitialized = false;
+    bool mPlayModeFollowPlayer = true;
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
     EntityID mActiveCameraEntity = INVALID_ENTITY;
