@@ -46,7 +46,14 @@ public:
     Project& GetProject() { return *mProject; }
     Map& GetMap() { return *mMap; }
     ResourceManager& GetResources() { return *mResources; }
+
+#ifdef RPGMAKER3D_BUILD_EDITOR
     Editor* GetEditor() { return mEditor.get(); }
+#else
+    // Der Standalone-Player wird ohne Editor.cpp gebaut.
+    Editor* GetEditor() { return nullptr; }
+#endif
+
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
 
@@ -58,7 +65,11 @@ public:
     void SetEditorMode(bool enabled) { mEditorMode = enabled; }
     bool IsEditorMode() const { return mEditorMode; }
 
-    void SetSceneViewRect(const Vec2& pos, const Vec2& size) { mSceneViewPos = pos; mSceneViewSize = size; }
+    void SetSceneViewRect(const Vec2& pos, const Vec2& size) {
+        mSceneViewPos = pos;
+        mSceneViewSize = size;
+    }
+
     Vec2 GetSceneViewPos() const { return mSceneViewPos; }
     Vec2 GetSceneViewSize() const { return mSceneViewSize; }
 
@@ -68,8 +79,13 @@ public:
     void SaveScene(const std::string& path) const;
     bool LoadScene(const std::string& path);
 
-    void SetActiveCamera(EntityID cameraEntity) { mActiveCameraEntity = cameraEntity; }
-    EntityID GetActiveCamera() const { return mActiveCameraEntity; }
+    void SetActiveCamera(EntityID cameraEntity) {
+        mActiveCameraEntity = cameraEntity;
+    }
+
+    EntityID GetActiveCamera() const {
+        return mActiveCameraEntity;
+    }
 
 private:
     std::unique_ptr<Window> mWindow;
@@ -80,7 +96,11 @@ private:
     std::unique_ptr<Project> mProject;
     std::unique_ptr<Map> mMap;
     std::unique_ptr<ResourceManager> mResources;
+
+#ifdef RPGMAKER3D_BUILD_EDITOR
     std::unique_ptr<Editor> mEditor;
+#endif
+
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
