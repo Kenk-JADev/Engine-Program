@@ -224,6 +224,8 @@ if(WIN32)
         setupapi
         shlwapi
         shell32
+        ws2_32
+        iphlpapi
     )
     # Subsystem: Konsole oder Windows?
     if(NOT RPGMAKER3D_ENABLE_CONSOLE)
@@ -272,28 +274,28 @@ if(RPGMAKER3D_ENABLE_RUBY)
         target_include_directories(${PROJECT_NAME} PRIVATE ${MRUBY_ROOT}/include)
     endif()
     if(WIN32)
-        if(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby.lib")
-            target_link_libraries(${PROJECT_NAME} PRIVATE
-                ${MRUBY_ROOT}/build/host/lib/libmruby.lib
-            )
-            if(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby_core.lib")
-                target_link_libraries(${PROJECT_NAME} PRIVATE
-                    ${MRUBY_ROOT}/build/host/lib/libmruby_core.lib
-                )
+        # MSVC produziert mruby.lib, MinGW libmruby.lib – beide Varianten prüfen
+        set(MRUBY_CANDIDATES
+            "${MRUBY_ROOT}/build/host/lib/libmruby.lib"
+            "${MRUBY_ROOT}/build/host/lib/mruby.lib"
+            "${MRUBY_ROOT}/build/host/lib/libmruby_core.lib"
+            "${MRUBY_ROOT}/build/host/lib/mruby_core.lib"
+        )
+        foreach(lib_path IN LISTS MRUBY_CANDIDATES)
+            if(EXISTS "${lib_path}")
+                target_link_libraries(${PROJECT_NAME} PRIVATE "${lib_path}")
+                message(STATUS "Linking mruby: ${lib_path}")
             endif()
-        else()
-            message(WARNING "mruby lib not found, Ruby support may fail to link")
+        endforeach()
+        if(NOT EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby.lib" AND NOT EXISTS "${MRUBY_ROOT}/build/host/lib/mruby.lib")
+            message(WARNING "mruby lib not found (libmruby.lib / mruby.lib), Ruby may fail")
         endif()
     else()
         if(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby.a")
-            target_link_libraries(${PROJECT_NAME} PRIVATE
-                ${MRUBY_ROOT}/build/host/lib/libmruby.a
-            )
+            target_link_libraries(${PROJECT_NAME} PRIVATE "${MRUBY_ROOT}/build/host/lib/libmruby.a")
         endif()
         if(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby_core.a")
-            target_link_libraries(${PROJECT_NAME} PRIVATE
-                ${MRUBY_ROOT}/build/host/lib/libmruby_core.a
-            )
+            target_link_libraries(${PROJECT_NAME} PRIVATE "${MRUBY_ROOT}/build/host/lib/libmruby_core.a")
         endif()
     endif()
     target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_ENABLE_RUBY)
@@ -393,11 +395,18 @@ if(RPGMAKER3D_BUILD_PLAYER)
     endif()
     if(RPGMAKER3D_ENABLE_RUBY AND EXISTS "${MRUBY_ROOT}/include")
         target_include_directories(${PROJECT_NAME}_Player PRIVATE ${MRUBY_ROOT}/include)
-        if(WIN32 AND EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby.lib")
-            target_link_libraries(${PROJECT_NAME}_Player PRIVATE ${MRUBY_ROOT}/build/host/lib/libmruby.lib)
-        elseif(EXISTS "${MRUBY_ROOT}/build/host/lib/libmruby.a")
-            target_link_libraries(${PROJECT_NAME}_Player PRIVATE ${MRUBY_ROOT}/build/host/lib/libmruby.a)
-        endif()
+        set(PLAYER_MRUBY_CANDIDATES
+            "${MRUBY_ROOT}/build/host/lib/libmruby.lib"
+            "${MRUBY_ROOT}/build/host/lib/mruby.lib"
+            "${MRUBY_ROOT}/build/host/lib/libmruby_core.lib"
+            "${MRUBY_ROOT}/build/host/lib/mruby_core.lib"
+            "${MRUBY_ROOT}/build/host/lib/libmruby.a"
+        )
+        foreach(lib_path IN LISTS PLAYER_MRUBY_CANDIDATES)
+            if(EXISTS "${lib_path}")
+                target_link_libraries(${PROJECT_NAME}_Player PRIVATE "${lib_path}")
+            endif()
+        endforeach()
         target_compile_definitions(${PROJECT_NAME}_Player PRIVATE RPGMAKER3D_ENABLE_RUBY)
     endif()
 
