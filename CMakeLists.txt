@@ -223,6 +223,7 @@ if(WIN32)
         version
         setupapi
         shlwapi
+        shell32
     )
     # Subsystem: Konsole oder Windows?
     if(NOT RPGMAKER3D_ENABLE_CONSOLE)
@@ -235,6 +236,15 @@ if(WIN32)
         if(MSVC)
             set_property(TARGET ${PROJECT_NAME} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         endif()
+    endif()
+    # Fix für doppeltes Manifest: unser resource.rc enthält bereits ein Manifest (ID 1, Type 24)
+    # MSVC Linker generiert standardmäßig auch ein Manifest -> CVT1100 duplicate resource
+    # Daher automatisches Manifest deaktivieren, nur unseres aus RC verwenden
+    if(MSVC)
+        target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")
+        # Optional: LNK4098 Warnung unterdrücken wenn static/dynamic CRT gemischt (vcpkg static vs dynamic)
+        # Wir nutzen /MT, aber manche System-Libs erwarten /MD - Warnung ist harmlos, aber kann unterdrückt werden:
+        # target_link_options(${PROJECT_NAME} PRIVATE "/NODEFAULTLIB:LIBCMT" "/NODEFAULTLIB:LIBCMTD")
     endif()
 else()
     # Linux
@@ -352,11 +362,19 @@ if(RPGMAKER3D_BUILD_PLAYER)
     )
     if(WIN32)
         target_compile_definitions(${PROJECT_NAME}_Player PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE winmm imm32 version setupapi shlwapi)
+        target_link_libraries(${PROJECT_NAME}_Player PRIVATE winmm imm32 version setupapi shlwapi shell32)
         if(NOT RPGMAKER3D_ENABLE_CONSOLE)
             set_target_properties(${PROJECT_NAME}_Player PROPERTIES WIN32_EXECUTABLE TRUE)
         endif()
         set_property(TARGET ${PROJECT_NAME}_Player PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+        if(VCPKG_TARGET_TRIPLET MATCHES ".*-static")
+            if(MSVC)
+                set_property(TARGET ${PROJECT_NAME}_Player PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+            endif()
+        endif()
+        if(MSVC)
+            target_link_options(${PROJECT_NAME}_Player PRIVATE "/MANIFEST:NO")
+        endif()
     endif()
 
     if(TARGET SDL2::SDL2)
