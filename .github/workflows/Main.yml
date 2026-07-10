@@ -1,5 +1,4 @@
-# Diese Datei muss auf GitHub unter .github/workflows/build-windows.yml liegen.
-# Baut automatisch Windows EXE - MIT MSVC mruby Build für Ruby Support
+# GitHub Actions Workflow für den Windows-Build mit mruby/MSVC
 
 name: Build Windows EXE
 
@@ -53,14 +52,14 @@ jobs:
       - name: Build mruby with MSVC
         shell: pwsh
         run: |
-          # Do not set CC/CXX to cl here. mruby then selects its GCC toolchain
-          # because these variables take precedence over VisualStudioVersion.
-          # Its tested ci/msvc configuration selects the Visual C++ toolchain,
-          # which creates libmruby.lib and libmruby_core.lib.
+          # Do not set CC/CXX to cl here. mruby would then select GCC.
+          # The ci/msvc configuration explicitly selects Visual C++.
           $mrubyTag = "4.0.0"
+
           if (Test-Path third_party/mruby) {
             Remove-Item -Recurse -Force third_party/mruby
           }
+
           git clone --branch $mrubyTag --depth 1 https://github.com/mruby/mruby.git third_party/mruby
           if ($LASTEXITCODE -ne 0) {
             throw "mruby $mrubyTag konnte nicht geklont werden."
@@ -68,11 +67,29 @@ jobs:
 
           Push-Location third_party/mruby
           try {
+            $msvcBin = Split-Path -Parent (Get-Command cl.exe -CommandType Application -ErrorAction Stop).Source
+            $msvcLinker = Join-Path $msvcBin "link.exe"
+            $msvcArchiver = Join-Path $msvcBin "lib.exe"
+
+            if (-not (Test-Path $msvcLinker) -or -not (Test-Path $msvcArchiver)) {
+              throw "MSVC Linker oder Archiver fehlt in $msvcBin"
+            }
+
+            # Git for Windows kann seinen GNU-Linker vor MSVC im PATH haben.
+            # Deshalb wird der tatsächliche MSVC-Binärordner vorangestellt.
+            $env:PATH = "$msvcBin;$env:PATH"
+            $env:LD = "link.exe"
+            $env:AR = "lib.exe"
+
             Write-Host "MSVC Compiler: $(where.exe cl)"
+            Write-Host "MSVC Linker: $((Get-Command link.exe -CommandType Application -ErrorAction Stop).Source)"
+
             $env:MRUBY_CONFIG = "ci/msvc"
             Write-Host "Baue mruby $mrubyTag mit der offiziellen MSVC-Konfiguration..."
+
             & ruby minirake 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/mruby_build.log"
             $mrubyExitCode = $LASTEXITCODE
+
             if ($mrubyExitCode -ne 0) {
               throw "mruby Build fehlgeschlagen (Exit-Code $mrubyExitCode)."
             }
@@ -83,16 +100,17 @@ jobs:
               "build/host/include/mruby/presym/id.h",
               "build/host/include/mruby/presym/table.h"
             )
+
             $missingFiles = $requiredFiles | Where-Object { -not (Test-Path $_) }
             if ($missingFiles) {
               Write-Host "mruby Ausgabe:"
               Get-ChildItem build/host -Recurse -File -ErrorAction SilentlyContinue |
                 ForEach-Object { Write-Host $_.FullName }
+
               throw "mruby Build unvollständig. Fehlend: $($missingFiles -join ', ')"
             }
 
-            # Compatibility for CMake versions which include only mruby/include.
-            # The current CMake configuration also includes build/host/include directly.
+            # Kompatibel mit der bisherigen CMake-Konfiguration.
             New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
             Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force
             Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force
@@ -129,9 +147,12 @@ jobs:
           Write-Host "=== Build mit Ruby ON ==="
           cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_first.log
           $firstResult = $LASTEXITCODE
+
           Get-Content build_first.log | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
+
           if ($firstResult -ne 0) {
             Write-Host "Build mit Ruby ON fehlgeschlagen, Fallback OFF..."
+
             cmake -B build -S . `
               -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
               -DVCPKG_TARGET_TRIPLET=x64-windows-static `
@@ -140,11 +161,13 @@ jobs:
               -DRPGMAKER3D_BUILD_PLAYER=ON `
               -DRPGMAKER3D_ENABLE_CONSOLE=ON `
               -DCMAKE_BUILD_TYPE=Release
+
             cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_second.log
             Get-Content build_second.log | Select-Object -Last 300 | ForEach-Object { Write-Host $_ }
-            if ($LASTEXITCODE -ne 0) { 
+
+            if ($LASTEXITCODE -ne 0) {
               Write-Host "Auch Fallback OFF fehlgeschlagen!"
-              exit 1 
+              exit 1
             }
           }
 
@@ -154,6 +177,7 @@ jobs:
         with:
           name: build-logs
           path: |
+            mruby_build.log
             build_first.log
             build_second.log
             build/CMakeFiles/**/*.log
