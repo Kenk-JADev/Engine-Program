@@ -4,10 +4,28 @@
 #include <cstdlib>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
+// Windows makros kollidieren mit unseren Methodennamen (CreateDirectory -> CreateDirectoryW)
+#ifdef CreateDirectory
+#undef CreateDirectory
+#endif
+#ifdef CreateDirectoryA
+#undef CreateDirectoryA
+#endif
+#ifdef CreateDirectoryW
+#undef CreateDirectoryW
+#endif
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <shellapi.h>
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "shell32.lib")
 #else
 #include <unistd.h>
 #include <limits.h>
