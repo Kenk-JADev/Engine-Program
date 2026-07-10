@@ -125,8 +125,11 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cmake --build build --config Release --parallel
-          if ($LASTEXITCODE -ne 0) {
+          Write-Host "=== Build mit Ruby ON ==="
+          cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_first.log
+          $firstResult = $LASTEXITCODE
+          Get-Content build_first.log | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
+          if ($firstResult -ne 0) {
             Write-Host "Build mit Ruby ON fehlgeschlagen, Fallback OFF..."
             cmake -B build -S . `
               -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
@@ -136,9 +139,24 @@ jobs:
               -DRPGMAKER3D_BUILD_PLAYER=ON `
               -DRPGMAKER3D_ENABLE_CONSOLE=ON `
               -DCMAKE_BUILD_TYPE=Release
-            cmake --build build --config Release --parallel
-            if ($LASTEXITCODE -ne 0) { exit 1 }
+            cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_second.log
+            Get-Content build_second.log | Select-Object -Last 300 | ForEach-Object { Write-Host $_ }
+            if ($LASTEXITCODE -ne 0) { 
+              Write-Host "Auch Fallback OFF fehlgeschlagen!"
+              exit 1 
+            }
           }
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build_first.log
+            build_second.log
+            build/CMakeFiles/**/*.log
+            build/**/*.log
 
       - name: Prepare package
         shell: pwsh
