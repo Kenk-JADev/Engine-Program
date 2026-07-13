@@ -288,10 +288,7 @@ void Engine::SetPlaying(bool playing) {
             GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
             GameUI::Get().Pause().onSave = []() { Game::Get().Save(1); };
             GameUI::Get().Pause().onExitToTitle = [this]() { this->SetPlaying(false); };
-            GameUI::Get().ShowMessage(
-                "PLAYTEST
-WASD bewegen  |  E / Enter sprechen  |  Esc Pause  |  F5 Stop\n"
-                "Gehe zum Dorf-Aeltesten (NPC) und druecke E.");
+            GameUI::Get().ShowMessage(std::string("PLAYTEST\nWASD bewegen | E/Enter sprechen | Esc Pause | F5 Stop\nGehe zum Dorf-Aeltesten (NPC) und druecke E."));
 
             if (mScriptManager) mScriptManager->ExecuteAllScripts();
             RPG_LOG_INFO("Playtest spawn at " + std::to_string(spawn.x) + "," +

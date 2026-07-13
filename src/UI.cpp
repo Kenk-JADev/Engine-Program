@@ -154,9 +154,6 @@ void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>
     mMessage.ShowWithChoices(text, choices);
 }
 
-} // namespace rpg
-
-
 void GameUI::DrawPlayHud(bool playtest) {
     if (mTitle.IsVisible() || mPause.IsVisible()) return;
     ImGuiIO& io = ImGui::GetIO();
@@ -188,3 +185,5 @@ void GameUI::DrawPlayHud(bool playtest) {
     ImGui::End();
     (void)io;
 }
+
+} // namespace rpg
