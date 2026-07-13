@@ -21,6 +21,44 @@ struct RenderCommand {
     Color color{1.0f};
 };
 
+// Fog settings
+struct FogSettings {
+    bool enabled = false;
+    Color color = Color(0.5f, 0.55f, 0.65f, 1.0f);
+    float start = 10.0f;
+    float end = 100.0f;
+    float density = 0.01f;  // for exponential fog
+};
+
+// Skybox
+class Skybox {
+public:
+    Skybox() = default;
+    ~Skybox();
+    bool Load(const std::array<std::string, 6>& faces);  // right, left, top, bottom, front, back
+    bool LoadFromEquirectangular(const std::string& path);  // HDR panorama
+    void Draw(const Camera& camera, Shader& shader);
+    bool IsLoaded() const { return mTextureID != 0; }
+    void SetRotation(const Vec3& rot) { mRotation = rot; }
+    const Vec3& GetRotation() const { return mRotation; }
+    Vec3& GetRotation() { return mRotation; }
+    // Accessors for Renderer shutdown
+    unsigned int& GetTextureID() { return mTextureID; }
+    const unsigned int& GetTextureID() const { return mTextureID; }
+    void SetTextureID(unsigned int id) { mTextureID = id; }
+    unsigned int& GetVAO() { return mVAO; }
+    const unsigned int& GetVAO() const { return mVAO; }
+    void SetVAO(unsigned int vao) { mVAO = vao; }
+    unsigned int& GetVBO() { return mVBO; }
+    const unsigned int& GetVBO() const { return mVBO; }
+    void SetVBO(unsigned int vbo) { mVBO = vbo; }
+
+private:
+    unsigned int mTextureID = 0;
+    unsigned int mVAO = 0, mVBO = 0;
+    Vec3 mRotation{0.0f};
+};
+
 class Renderer {
 public:
     Renderer();
@@ -47,6 +85,7 @@ public:
     void SetViewport(int x, int y, int width, int height);
     void EnableDepthTest(bool enable);
     void EnableWireframe(bool enable);
+    bool IsWireframeEnabled() const { return mWireframeEnabled; }
 
     Camera& GetCamera() { return mCamera; }
     Shader& GetShader() { return *mDefaultShader; }
@@ -55,14 +94,34 @@ public:
     void SetLightDir(const Vec3& dir);
     void SetAmbient(float ambient);
 
+    // Fog control
+    void SetFog(const FogSettings& fog) { mFog = fog; }
+    const FogSettings& GetFog() const { return mFog; }
+    FogSettings& GetFog() { return mFog; }
+    void SetFogEnabled(bool enabled) { mFog.enabled = enabled; }
+    void SetFogColor(const Color& color) { mFog.color = color; }
+    void SetFogRange(float start, float end) { mFog.start = start; mFog.end = end; }
+
+    // Skybox
+    Skybox& GetSkybox() { return mSkybox; }
+    const Skybox& GetSkybox() const { return mSkybox; }
+    void DrawSkybox(const Camera& camera);
+
 private:
+    void UpdateFogUniforms() const;
+
     Camera mCamera;
     std::unique_ptr<Shader> mDefaultShader;
+    std::unique_ptr<Shader> mSkyboxShader;
     std::unique_ptr<Texture> mDefaultTexture;
     std::unique_ptr<Mesh> mParticleMesh;
     std::unique_ptr<Mesh> mBoundingBoxMesh;
     std::vector<RenderCommand> mCommandQueue;
     Color mClearColor{0.1f, 0.1f, 0.15f, 1.0f};
+    bool mWireframeEnabled = false;
+    
+    FogSettings mFog;
+    Skybox mSkybox;
 };
 
 } // namespace rpg

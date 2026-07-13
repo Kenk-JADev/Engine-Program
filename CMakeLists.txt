@@ -56,6 +56,9 @@ set(CORE_LIB_SOURCES
     src/Material.cpp
     src/ParticleSystem.cpp
     src/RubyVM.cpp
+    src/ScriptManager.cpp
+    src/EditorStyle.cpp
+    src/EditorToolbar.cpp
     src/Platform.cpp
     src/Database.cpp
     src/EventSystem.cpp
@@ -71,7 +74,6 @@ set(CORE_SOURCES
 
 set(THIRDPARTY_SOURCES
     ${GLAD_ROOT}/src/gl.c
-    third_party/stb/stb_image_impl.c
     third_party/miniaudio/miniaudio_impl.c
 )
 

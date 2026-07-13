@@ -115,4 +115,8 @@ void Shader::SetMat4(const std::string& name, const Mat4& value) {
     glUniformMatrix4fv(GetUniformLocation(name), 1, GL_FALSE, glm::value_ptr(value));
 }
 
+void Shader::SetBool(const std::string& name, bool value) {
+    glUniform1i(GetUniformLocation(name), value ? 1 : 0);
+}
+
 } // namespace rpg

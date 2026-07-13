@@ -1,7 +1,10 @@
 #pragma once
 
 #include <memory>
+#include <string>
 #include "Types.h"
+#include "EventSystem.h"
+#include "EditorStyle.h"
 
 namespace rpg {
 
@@ -14,6 +17,25 @@ class Map;
 
 class AudioManager;
 class AudioPreview;
+class EditorToolbar;
+
+enum class GizmoMode {
+    None,
+    Translate,
+    Rotate,
+    Scale
+};
+
+enum class GizmoSpace {
+    Local,
+    World
+};
+
+struct CrashInfo {
+    std::string message;
+    std::string stackTrace;
+    std::string timestamp;
+};
 
 class Editor {
 public:
@@ -39,6 +61,11 @@ public:
     void HandleSceneViewPicking();
     void PaintTileAt(int x, int z);
 
+    // Crash handling
+    static void SetCrashCallback(std::function<void(const CrashInfo&)> callback);
+    static void HandleCrash(const std::string& message, const std::string& stackTrace = "");
+    void ShowCrashDialog();
+
 private:
     void DrawMenuBar();
     void DrawSceneView();
@@ -46,10 +73,16 @@ private:
     void DrawInspector();
     void DrawProjectPanel();
     void DrawMapEditor();
+    void DrawEventEditor();
     void DrawScriptEditor();
     void DrawConsole();
     void DrawPrefabBrowser();
     void DrawLightingEditor();
+    void DrawEnvironmentEditor();
+    void DrawGizmo();  // NEW: Gizmo rendering
+    void DrawToolbar(); // NEW: Toolbar with gizmo controls
+    void DrawStatusBar(); // NEW: Status bar
+    void HandleShortcuts(); // NEW: Keyboard shortcuts
 
     void InitializeDefaultLayout(unsigned int dockspaceId, float width, float height);
 
@@ -60,8 +93,36 @@ private:
     void SaveMap();
     void LoadMap();
 
+    // File dialogs
+    std::string OpenFileDialog(const char* filter = "All Files (*.*)\0*.*\0");
+    std::string SaveFileDialog(const char* filter = "All Files (*.*)\0*.*\0");
+    std::string SelectFolderDialog();
+
+    // Gizmo functions
+    void UpdateGizmo();
+    void DrawGizmoAxis(const Vec3& position, const Mat4& view, const Mat4& proj, const Vec2& viewPos, const Vec2& viewSize);
+    bool GizmoIntersect(const Vec2& mousePos, const Vec2& viewPos, const Vec2& viewSize, Vec3& outAxis);
+
+    // Map Editor Funktionen
+    void LoadSelectedMap();
+    void ResizeCurrentMap(int width, int height);
+    void LoadTilesetForMap(int tilesetId);
+
+    // Event Editor Funktionen
+    void DrawEventCommandList(EventPage& page);
+    void DrawAddEventCommand(EventPage& page);
+    void AddCommand(EventPage& page, EventCommandCode code);
+    std::string GetEventCommandName(EventCommandCode code);
+    std::string GetEventCommandParamsString(const EventCommand& cmd);
+
+    // Crash handling
+    static void CrashCallback(const CrashInfo& info);
+    CrashInfo mLastCrashInfo;
+    bool mShowCrashDialog = false;
+
     Engine& mEngine;
     std::unique_ptr<AudioPreview> mAudioPreview;
+    std::unique_ptr<EditorToolbar> mToolbar;
     bool mInitialized = false;
     bool mShowDemo = false;
     bool mPlayMode = false;
@@ -71,11 +132,31 @@ private:
     int mSelectedTile = 0;
     int mPaintX = 0;
     int mPaintZ = 0;
+    int mSelectedMapIndex = -1;  // Für Map-Liste
+    int mSelectedEventId = -1;   // Für Event-Editor
+    int mSelectedEventPage = -1; // Aktuelle Event-Seite
+    int mSelectedCommandIndex = -1; // Ausgewählter Befehl
+    int mEditingCommandIndex = -1;  // Bearbeiteter Befehl
+    bool mShowCommandEditor = false;
+    EventCommand mClipboardCommand; // Für Kopieren/Einfügen
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
     float mTileScale = 2.0f;
     bool mSceneViewHovered = false;
     bool mSceneViewFocused = false;
+    float mTimeOfDay = 12.0f;
+    float mTimeOfDaySpeed = 1.0f;
+    EditorTheme mCurrentTheme = EditorTheme::Dark;
+
+    // NEW: Gizmo state
+    GizmoMode mGizmoMode = GizmoMode::None;
+    GizmoSpace mGizmoSpace = GizmoSpace::Local;
+    bool mGizmoActive = false;
+    int mGizmoAxis = -1; // 0=X, 1=Y, 2=Z, 3=XY, 4=YZ, 5=XZ
+    Vec3 mGizmoStartPos;
+    Vec3 mGizmoStartRot;
+    Vec3 mGizmoStartScale;
+    Vec2 mGizmoStartMousePos;
 };
 
 } // namespace rpg

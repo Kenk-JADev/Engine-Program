@@ -19,6 +19,7 @@ class Editor;
 class Framebuffer;
 class CommandHistory;
 class RubyVM;
+class ScriptManager;
 
 class MeshFactory;
 
@@ -49,6 +50,7 @@ public:
     Editor* GetEditor() { return mEditor.get(); }
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
+    ScriptManager& GetScriptManager() { return *mScriptManager; }
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }
@@ -86,6 +88,7 @@ private:
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
+    std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 
     bool mRunning = false;

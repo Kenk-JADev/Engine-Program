@@ -270,13 +270,16 @@ static mrb_value rb_audio_play_music(mrb_state* mrb, mrb_value self) {
 
     char* path = nullptr;
     mrb_bool loop = true;
+    mrb_float volume = 1.0f;
+    mrb_float pitch = 1.0f;
+    mrb_float fadeIn = 0.0f;
 
-    mrb_get_args(mrb, "z|b", &path, &loop);
+    mrb_get_args(mrb, "z|bfff", &path, &loop, &volume, &pitch, &fadeIn);
 
     Engine* engine = static_cast<Engine*>(mrb->ud);
 
     if (engine && path) {
-        engine->GetAudio().PlayMusic(path, loop);
+        engine->GetAudio().PlayBGM(path, loop, volume, pitch, fadeIn);
     }
 
     return mrb_nil_value();
@@ -287,14 +290,54 @@ static mrb_value rb_audio_play_sound(mrb_state* mrb, mrb_value self) {
 
     char* path = nullptr;
     mrb_bool loop = false;
+    mrb_float volume = 1.0f;
+    mrb_float pitch = 1.0f;
 
-    mrb_get_args(mrb, "z|b", &path, &loop);
+    mrb_get_args(mrb, "z|bff", &path, &loop, &volume, &pitch);
 
     Engine* engine = static_cast<Engine*>(mrb->ud);
 
     if (engine && path) {
-        engine->GetAudio().LoadSound("ruby_sound", path);
-        engine->GetAudio().PlaySound("ruby_sound", loop);
+        engine->GetAudio().PlaySE(path, loop, volume, pitch);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_play_bgs(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    char* path = nullptr;
+    mrb_bool loop = true;
+    mrb_float volume = 1.0f;
+    mrb_float pitch = 1.0f;
+    mrb_float fadeIn = 0.0f;
+
+    mrb_get_args(mrb, "z|bfff", &path, &loop, &volume, &pitch, &fadeIn);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine && path) {
+        engine->GetAudio().PlayBGS(path, loop, volume, pitch, fadeIn);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_play_me(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    char* path = nullptr;
+    mrb_bool loop = false;
+    mrb_float volume = 1.0f;
+    mrb_float pitch = 1.0f;
+
+    mrb_get_args(mrb, "z|bff", &path, &loop, &volume, &pitch);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine && path) {
+        engine->GetAudio().PlayME(path, loop, volume, pitch);
     }
 
     return mrb_nil_value();
@@ -306,7 +349,79 @@ static mrb_value rb_audio_stop_music(mrb_state* mrb, mrb_value self) {
     Engine* engine = static_cast<Engine*>(mrb->ud);
 
     if (engine) {
-        engine->GetAudio().StopMusic();
+        engine->GetAudio().FadeOutBGM(0.5f);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_stop_bgs(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().FadeOutBGS(0.5f);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_fade_out(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_float duration = 0.5f;
+    mrb_get_args(mrb, "|f", &duration);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().FadeOutAll(duration);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_set_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_float volume;
+    mrb_get_args(mrb, "f", &volume);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().SetMasterVolume(volume);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_set_bgm_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_float volume;
+    mrb_get_args(mrb, "f", &volume);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().SetBGMVolume(volume);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_set_se_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_float volume;
+    mrb_get_args(mrb, "f", &volume);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().SetSEVolume(volume);
     }
 
     return mrb_nil_value();
@@ -320,7 +435,7 @@ void RubyVM::BindAudio() {
         audioModule,
         "bgm_play",
         rb_audio_play_music,
-        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1)
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4)
     );
 
     mrb_define_module_function(
@@ -328,7 +443,23 @@ void RubyVM::BindAudio() {
         audioModule,
         "se_play",
         rb_audio_play_sound,
-        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1)
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "bgs_play",
+        rb_audio_play_bgs,
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "me_play",
+        rb_audio_play_me,
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2)
     );
 
     mrb_define_module_function(
@@ -342,9 +473,50 @@ void RubyVM::BindAudio() {
     mrb_define_module_function(
         mMrb,
         audioModule,
+        "bgs_stop",
+        rb_audio_stop_bgs,
+        MRB_ARGS_NONE()
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "fade_out",
+        rb_audio_fade_out,
+        MRB_ARGS_OPT(1)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "volume=",
+        rb_audio_set_volume,
+        MRB_ARGS_REQ(1)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "bgm_volume=",
+        rb_audio_set_bgm_volume,
+        MRB_ARGS_REQ(1)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "se_volume=",
+        rb_audio_set_se_volume,
+        MRB_ARGS_REQ(1)
+    );
+
+    // Aliases for compatibility
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
         "play_music",
         rb_audio_play_music,
-        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1)
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4)
     );
 
     mrb_define_module_function(
@@ -352,7 +524,7 @@ void RubyVM::BindAudio() {
         audioModule,
         "play_sound",
         rb_audio_play_sound,
-        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1)
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2)
     );
 }
 

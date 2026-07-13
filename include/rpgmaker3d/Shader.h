@@ -24,6 +24,7 @@ public:
     void SetVec3(const std::string& name, const Vec3& value);
     void SetVec4(const std::string& name, const Vec4& value);
     void SetMat4(const std::string& name, const Mat4& value);
+    void SetBool(const std::string& name, bool value);
 
     GLuint GetID() const { return mProgramID; }
 

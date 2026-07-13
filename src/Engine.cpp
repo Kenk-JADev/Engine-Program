@@ -14,6 +14,7 @@
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/CommandHistory.h"
 #include "rpgmaker3d/RubyVM.h"
+#include "rpgmaker3d/ScriptManager.h"
 #include "rpgmaker3d/Raycast.h"
 #include "rpgmaker3d/Lighting.h"
 #include "rpgmaker3d/ParticleSystem.h"
@@ -88,6 +89,9 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     mRubyVM = std::make_unique<RubyVM>();
     mRubyVM->Initialize(this);
 
+    mScriptManager = std::make_unique<ScriptManager>();
+    mScriptManager->SetRubyVM(mRubyVM.get());
+
     mAudio = std::make_unique<AudioManager>();
     if (!mAudio->Initialize()) {
         RPG_LOG_WARN("Audio initialization failed - continuing without audio");
@@ -147,6 +151,15 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     } else {
         mProject->New("./SampleProject", "Sample RPG 3D");
         RPG_LOG_INFO("Created new SampleProject");
+    }
+
+    // Load/Create scripts
+    if (mScriptManager) {
+        mScriptManager->LoadProjectScripts(mProject->GetProjectPath());
+        // If no scripts exist, create defaults
+        if (mScriptManager->GetScripts().empty()) {
+            mScriptManager->CreateDefaultScripts(mProject->GetProjectPath());
+        }
     }
 
     // Tileset + Map Setup
@@ -258,6 +271,11 @@ void Engine::SetPlaying(bool playing) {
             EventSystem::Get().Clear();
             // Reset player position to start
             Game::Get().Player().SetPosition(Vec3(Database::Get().System().startX, 0, Database::Get().System().startY));
+            
+            // Execute all scripts
+            if (mScriptManager) {
+                mScriptManager->ExecuteAllScripts();
+            }
         } else {
             // PlayMode STOP – restore editor scene
             RPG_LOG_INFO("Exiting Play Mode (Editor)");
@@ -273,6 +291,10 @@ void Engine::SetPlaying(bool playing) {
     } else {
         // Echter Player-Modus – kein Scene-Snapshot, nur Flag setzen
         RPG_LOG_INFO(std::string("Play Mode ") + (playing ? "ON (Player)" : "OFF (Player)"));
+        
+        if (playing && mScriptManager) {
+            mScriptManager->ExecuteAllScripts();
+        }
     }
 }
 
@@ -455,21 +477,34 @@ void Engine::Update(float dt) {
 #ifdef RPGMAKER3D_BUILD_EDITOR
     if (mImGuiInitialized) {
         ImGuiIO& io = ImGui::GetIO();
-        if (io.WantCaptureMouse || io.WantCaptureKeyboard) {
-            // Im Editor: Kamera nur wenn SceneView fokussiert
-            if (mEditor) {
-                allowCamera = mEditor->IsSceneViewFocused();
-            } else {
-                // Im Player: UI blockiert Kamera
-                allowCamera = false;
-            }
+        // WICHTIG: Prüfen ob Maus ÜBER dem Scene View Image ist (nicht nur Window-Focus)
+        // io.WantCaptureMouse wird true sobald man über ANY ImGui Widget hovert
+        // Wir wollen Kamera erlauben wenn: Scene View gefocust UND Maus über Scene View Image
+        bool sceneViewHovered = false;
+        bool sceneViewFocused = false;
+        if (mEditor) {
+            sceneViewHovered = mEditor->IsSceneViewHovered();
+            sceneViewFocused = mEditor->IsSceneViewFocused();
+        }
+        
+        // Kamera erlauben wenn Scene View fokussiert UND (Maus über Scene View ODER Tastatur-Input nicht von ImGui gewollt)
+        if (io.WantCaptureMouse) {
+            // Maus wird von ImGui Widget gecaptured - aber erlauben wenn über Scene View Image
+            allowCamera = sceneViewHovered && sceneViewFocused;
+        } else if (io.WantCaptureKeyboard) {
+            // Tastatur wird von ImGui gecaptured (z.B. InputText) - blockieren
+            allowCamera = false;
+        } else {
+            // Kein ImGui Capture - erlauben wenn Scene View fokussiert
+            allowCamera = sceneViewFocused;
         }
     }
-    if (mEditor && mEditor->WantCaptureInput()) allowCamera = false;
+    // Editor WantCaptureInput ist jetzt redundant mit der obigen Logik
+    // if (mEditor && mEditor->WantCaptureInput()) allowCamera = false;
 #endif
 
     // Im PlayMode: Kamera folgt optional dem GamePlayer
-    // (kann im Editor umgeschaltet werden)
+    // (kann im Editor umgeschaltet werden) - NUR wenn Follow Player AKTIV
     if (mPlayMode && mPlayModeFollowPlayer) {
         Camera& cam = mRenderer->GetCamera();
         Vec3 playerPos = Game::Get().Player().GetPosition();
@@ -479,28 +514,42 @@ void Engine::Update(float dt) {
         cam.SetRotation(Vec3(-20.0f, 0.0f, 0.0f));
         allowCamera = false; // keine Free-Fly im PlayMode wenn Follow aktiv
     }
+    // Im PlayMode OHNE Follow: Erlaube Editor-Kamera (free-fly) für Testing
+    // Das erlaubt im Editor Play-Test: Kamera frei bewegen während Spiel läuft
 
     if (allowCamera) {
         Camera& cam = mRenderer->GetCamera();
-        float speed = (mInput->IsKeyDown(Key::LShift) ? 10.0f : 5.0f) * dt;
+        float speed = (mInput->IsKeyDown(Key::LShift) ? 15.0f : 6.0f) * dt;
+        
+        // Movement relative to camera direction (WASD)
         if (mInput->IsKeyDown(Key::W)) cam.SetPosition(cam.GetPosition() + cam.GetForward() * speed);
         if (mInput->IsKeyDown(Key::S)) cam.SetPosition(cam.GetPosition() - cam.GetForward() * speed);
         if (mInput->IsKeyDown(Key::A)) cam.SetPosition(cam.GetPosition() - cam.GetRight() * speed);
         if (mInput->IsKeyDown(Key::D)) cam.SetPosition(cam.GetPosition() + cam.GetRight() * speed);
-        if (mInput->IsKeyDown(Key::Q)) cam.SetPosition(cam.GetPosition() + Vec3(0,1,0) * speed);
-        if (mInput->IsKeyDown(Key::E)) cam.SetPosition(cam.GetPosition() - Vec3(0,1,0) * speed);
+        if (mInput->IsKeyDown(Key::Q)) cam.SetPosition(cam.GetPosition() + Vec3(0, 1, 0) * speed);  // Up
+        if (mInput->IsKeyDown(Key::E)) cam.SetPosition(cam.GetPosition() - Vec3(0, 1, 0) * speed);  // Down
 
+        // Orbit / Look around: Right mouse drag
         if (mInput->IsMouseDown(MouseButton::Right)) {
             Vec2 delta = mInput->GetMouseDelta();
             Vec3 rot = cam.GetRotation();
-            rot.y -= delta.x * 0.3f;
-            rot.x -= delta.y * 0.3f;
+            rot.y -= delta.x * 0.3f;   // Yaw (horizontal)
+            rot.x -= delta.y * 0.3f;   // Pitch (vertical)
             rot.x = glm::clamp(rot.x, -89.0f, 89.0f);
             cam.SetRotation(rot);
         }
 
+        // Mouse wheel: Zoom (dolly)
         if (mInput->GetMouseWheel() != 0.0f) {
-            cam.SetPosition(cam.GetPosition() + cam.GetForward() * mInput->GetMouseWheel() * 2.0f);
+            cam.SetPosition(cam.GetPosition() + cam.GetForward() * mInput->GetMouseWheel() * 3.0f);
+        }
+        
+        // Middle mouse: Pan (optional)
+        if (mInput->IsMouseDown(MouseButton::Middle)) {
+            Vec2 delta = mInput->GetMouseDelta();
+            Vec3 right = cam.GetRight();
+            Vec3 up = cam.GetUp();
+            cam.SetPosition(cam.GetPosition() - right * delta.x * 0.01f * speed * 10.0f + up * delta.y * 0.01f * speed * 10.0f);
         }
     }
 
@@ -520,7 +569,7 @@ void Engine::Update(float dt) {
         }
     }
 
-    // Game Logic
+    // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {
         Game::Get().Update(dt);
         Game::Get().Player().Update(dt, *mInput);
@@ -529,7 +578,7 @@ void Engine::Update(float dt) {
         if (mRubyVM) mRubyVM->Update(dt);
     }
 
-    // UI
+    // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode
     GameUI::Get().Update(dt);
 
     mScene->Update(dt);
@@ -555,7 +604,12 @@ void Engine::Render() {
     if (mEditorMode && mSceneFramebuffer && mEditor) {
         Vec2 viewSize = mEditor->GetSceneViewSize();
         if (viewSize.x > 1 && viewSize.y > 1) {
-            mSceneFramebuffer->Resize(static_cast<int>(viewSize.x), static_cast<int>(viewSize.y));
+            // Nur resize wenn Größe sich signifikant geändert hat (verhindert Flickering)
+            static Vec2 lastViewSize(0, 0);
+            if (fabsf(viewSize.x - lastViewSize.x) > 2.0f || fabsf(viewSize.y - lastViewSize.y) > 2.0f) {
+                mSceneFramebuffer->Resize(static_cast<int>(viewSize.x), static_cast<int>(viewSize.y));
+                lastViewSize = viewSize;
+            }
             mSceneFramebuffer->Bind();
             Camera& cam = mRenderer->GetCamera();
             cam.SetPerspective(60.0f, viewSize.x / viewSize.y, 0.1f, 1000.0f);
@@ -634,6 +688,9 @@ void Engine::RenderScene() {
     } else {
         mRenderer->BeginFrame(*camera);
     }
+
+    // Skybox zuerst zeichnen (hinter allem)
+    mRenderer->DrawSkybox(*camera);
 
     // Grid (nur im Editor)
     if (mEditorMode) {

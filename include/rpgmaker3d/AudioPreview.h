@@ -14,11 +14,11 @@ public:
     void LoadAndPlay(const std::string& path, bool loop = false);
 
 private:
-    void DrawFileBrowser(const std::string& path);
-
     AudioManager& mAudio;
     std::string mSelectedAudio;
     float mVolume = 1.0f;
+    float mPitch = 1.0f;
+    float mPan = 0.0f;
     bool mLoop = false;
 };
 

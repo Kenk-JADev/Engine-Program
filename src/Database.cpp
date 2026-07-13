@@ -92,6 +92,37 @@ void Database::CreateDefaults() {
         mTilesets.push_back(td);
     }
 
+    // MapInfos - RPG Maker Standard Maps
+    if (mMapInfos.empty()) {
+        MapInfo map1;
+        map1.id = 1;
+        map1.name = "Karte 001";
+        map1.width = 20;
+        map1.height = 15;
+        map1.tilesetId = 1;
+        map1.bgmAutoPlay = true;
+        map1.bgsAutoPlay = true;
+        map1.scrollType = 0;
+        map1.encounterStep = 30;
+        map1.backgroundColor = Color(0, 0, 0, 1);
+        map1.fogColor = Color(0.5f, 0.5f, 0.5f, 1.0f);
+        mMapInfos.push_back(map1);
+
+        MapInfo map2;
+        map2.id = 2;
+        map2.name = "Karte 002";
+        map2.width = 20;
+        map2.height = 15;
+        map2.tilesetId = 1;
+        map2.bgmAutoPlay = true;
+        map2.bgsAutoPlay = true;
+        map2.scrollType = 0;
+        map2.encounterStep = 30;
+        map2.backgroundColor = Color(0, 0, 0, 1);
+        map2.fogColor = Color(0.5f, 0.5f, 0.5f, 1.0f);
+        mMapInfos.push_back(map2);
+    }
+
     // System defaults
     mSystem.switches.resize(100);
     for (int i=0;i<100;++i) mSystem.switches[i]="Switch "+std::to_string(i+1);

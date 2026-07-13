@@ -128,6 +128,41 @@ struct MapInfo {
     int order = 0;
     int scrollX = 0;
     int scrollY = 0;
+    
+    // RPG Maker Map Properties
+    int width = 20;
+    int height = 20;
+    int tilesetId = 1;
+    std::string bgmName = "";
+    bool bgmAutoPlay = true;
+    std::string bgsName = "";
+    bool bgsAutoPlay = true;
+    bool disableDashing = false;
+    std::string battleback1Name = "";
+    std::string battleback2Name = "";
+    int displayX = 0;
+    int displayY = 0;
+    int parallaxLoopX = 0;
+    int parallaxLoopY = 0;
+    std::string parallaxName = "";
+    bool parallaxShow = true;
+    int parallaxSx = 0;
+    int parallaxSy = 0;
+    int scrollType = 0; // 0=No Loop, 1=Vertical Loop, 2=Horizontal Loop, 3=Both Loop
+    int specifyBattleback = 0;
+    int backgroundType = 1; // 1=Parallax, 2=Color
+    Color backgroundColor = Color(0, 0, 0, 1);
+    bool fogEnabled = false;
+    std::string fogName = "";
+    int fogBlendMode = 0;
+    Color fogColor = Color(0.5f, 0.5f, 0.5f, 1.0f);
+    int fogOpacity = 64;
+    int fogZoom = 100;
+    int fogSx = 0;
+    int fogSy = 0;
+    int encounterList[8] = {0};
+    int encounterStep = 30;
+    int noteId = 0; // für zukünftige Notizen
 };
 
 struct SystemData {

@@ -48,15 +48,24 @@ Vec4 Tileset::GetTileUV(int tileId) const {
     int tx = tileId % mColumns;
     int ty = tileId / mColumns;
 
-    float tw = static_cast<float>(mTileWidth) / static_cast<float>(mTexture->GetWidth());
-    float th = static_cast<float>(mTileHeight) / static_cast<float>(mTexture->GetHeight());
-    float sx = static_cast<float>(mSpacing) / static_cast<float>(mTexture->GetWidth());
-    float sy = static_cast<float>(mSpacing) / static_cast<float>(mTexture->GetHeight());
+    float texW = static_cast<float>(mTexture->GetWidth());
+    float texH = static_cast<float>(mTexture->GetHeight());
+    
+    float tw = static_cast<float>(mTileWidth) / texW;
+    float th = static_cast<float>(mTileHeight) / texH;
+    float sx = static_cast<float>(mSpacing) / texW;
+    float sy = static_cast<float>(mSpacing) / texH;
+    float mx = static_cast<float>(mMargin) / texW;
+    float my = static_cast<float>(mMargin) / texH;
 
-    float u = (tx * (tw + sx)) + (static_cast<float>(mMargin) / mTexture->GetWidth());
-    float v = (ty * (th + sy)) + (static_cast<float>(mMargin) / mTexture->GetHeight());
+    float u = (tx * (tw + sx)) + mx;
+    float v = (ty * (th + sy)) + my;
 
-    return Vec4(u, v, u + tw, v + th);
+    // Add small padding to prevent texture bleeding (0.5 pixel inset)
+    float paddingU = 0.5f / texW;
+    float paddingV = 0.5f / texH;
+    
+    return Vec4(u + paddingU, v + paddingV, u + tw - paddingU, v + th - paddingV);
 }
 
 const TileInfo* Tileset::GetTileInfo(int tileId) const {
