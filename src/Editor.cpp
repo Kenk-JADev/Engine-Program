@@ -39,6 +39,8 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shlobj.h>
+#include <objbase.h>
 #else
 #include <SDL.h>
 #include <gtk/gtk.h>
@@ -1793,7 +1795,7 @@ void Editor::DrawScriptEditor() {
         // Buttons
         if (!script->isCore) {
             if (ImGui::Button("Save")) {
-                scriptManager.SaveScript(script);
+                scriptManager.SaveScript(scripts[selectedTab]);
                 editBuffer = script->content;
             }
             ImGui::SameLine();
@@ -2182,7 +2184,6 @@ void Editor::DrawPrefabBrowser() {
     ImGui::End();
 }
 
-} // namespace rpg
 // ==================== File Dialogs ====================
 
 std::string Editor::OpenFileDialog(const char* filter) {
