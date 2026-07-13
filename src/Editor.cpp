@@ -164,7 +164,7 @@ void Editor::DrawUI() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::Begin("DockSpace", nullptr, flags);
 
-    ImGuiID dockspaceId = ImGui::GetID("MainDockSpace_v2");
+    ImGuiID dockspaceId = ImGui::GetID("MainDockSpace_v3");
     // PassthruCentralNode entfernt – war Hauptursache für Flickern
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
@@ -224,7 +224,12 @@ void Editor::InitializeDefaultLayout(ImGuiID dockspaceId, float width, float hei
 
     ImGui::DockBuilderDockWindow("Projekt", dock_bottom);
     ImGui::DockBuilderDockWindow("Konsole", dock_bottom);
+    ImGui::DockBuilderDockWindow("Debug / Status", dock_bottom);
+    ImGui::DockBuilderDockWindow("Audio Vorschau", dock_bottom);
+
+    // Script/Event as free windows (also dockable if user wants)
     ImGui::DockBuilderDockWindow("Script Editor", dock_bottom);
+    ImGui::DockBuilderDockWindow("Event-Editor", dock_left_bottom);
 
     ImGui::DockBuilderDockWindow("Scene", dock_main);
     ImGui::DockBuilderFinish(dockspaceId);
@@ -254,6 +259,7 @@ void Editor::DrawMenuBar() {
             }
             if (ImGui::MenuItem("Projekt speichern", "Ctrl+S")) {
                 mEngine.GetProject().Save();
+                SaveMap();
             }
             if (ImGui::MenuItem("Projekt speichern unter...")) {
                 std::string path = SelectFolderDialog();
@@ -488,62 +494,50 @@ void Editor::DrawSceneView() {
 }
 
 void Editor::HandleSceneViewPicking() {
-    if (!mSceneViewHovered) return;
+    if (!mSceneViewHovered || mEngine.IsPlaying()) return;
+    // While dragging gizmo, never steal selection / paint
+    if (mGizmoActive) return;
 
     ImVec2 mousePos = ImGui::GetMousePos();
     Vec2 localPos(mousePos.x - mSceneViewPos.x, mousePos.y - mSceneViewPos.y);
     if (localPos.x < 0 || localPos.y < 0 || localPos.x >= mSceneViewSize.x || localPos.y >= mSceneViewSize.y) return;
 
+    // Use raw mouse click — IsItemClicked fails after overlay child widgets
+    bool leftClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mSceneViewFocused;
+    bool leftDragging = ImGui::IsMouseDown(ImGuiMouseButton_Left) && mSceneViewFocused
+                        && !ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
+    if (!leftClicked && !(leftDragging && mGizmoMode == GizmoMode::None && mSelectedTile >= 0)) {
+        return;
+    }
+
     Camera& cam = mEngine.GetRenderer().GetCamera();
     Ray ray = Raycast::ScreenPointToRay(cam, localPos, mSceneViewSize);
 
-    // Left click: pick entities or paint tiles
-    bool leftClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-    bool leftDragging = ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-    
-    if (leftClicked || (leftDragging && mGizmoMode == GizmoMode::None && mSelectedTile >= 0)) {
-        // First try entity bounding boxes
-        bool entityHit = false;
-        float bestDist = 1e9f;
-        int hitEntity = -1;
-        for (EntityID id : mEngine.GetScene().GetEntities()) {
-            auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(id);
-            if (!transform) continue;
-            Vec3 scale = transform->transform.scale;
-            if (glm::length(scale) < 0.001f) scale = Vec3(1.0f);
-            Mat4 matrix = transform->transform.GetMatrix();
-            Vec3 min = Vec3(matrix * Vec4(-0.5f, -0.5f, -0.5f, 1.0f));
-            Vec3 max = Vec3(matrix * Vec4(0.5f, 0.5f, 0.5f, 1.0f));
-            Vec3 bbMin = glm::min(min, max);
-            Vec3 bbMax = glm::max(min, max);
-            auto hit = Raycast::IntersectBoundingBox(ray, bbMin, bbMax);
-            if (hit.hit && hit.distance < bestDist) {
-                bestDist = hit.distance;
-                hitEntity = static_cast<int>(id);
-                entityHit = true;
-            }
-        }
+    // Prefer robust entity pick (unit AABB scaled at entity position)
+    RaycastHit pick = Raycast::PickEntity(ray, mEngine.GetScene(), 2000.0f);
+    if (pick.hit && leftClicked) {
+        mSelectedEntity = static_cast<int>(pick.entity);
+        RPG_LOG_INFO("Selected entity " + std::to_string(mSelectedEntity));
+        return;
+    }
 
-        if (entityHit && !leftDragging) {
-            // Single click on entity - select it
-            mSelectedEntity = hitEntity;
-            RPG_LOG_INFO("Selected entity " + std::to_string(hitEntity));
-        } else if (!entityHit) {
-            // Raycast against ground plane for tile painting
-            auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
-            if (hit.hit) {
-                Map& map = mEngine.GetMap();
-                float halfW = map.GetWidth() * 0.5f;
-                float halfH = map.GetHeight() * 0.5f;
-                int x = static_cast<int>(hit.point.x + halfW);
-                int z = static_cast<int>(map.GetHeight() - (hit.point.z + halfH));
-                if (x >= 0 && x < map.GetWidth() && z >= 0 && z < map.GetHeight()) {
-                    if (mSelectedTile >= 0) {
-                        PaintTileAt(x, z);
-                    }
-                }
+    // Paint tiles on ground when in select mode (or always if no entity)
+    if (mGizmoMode == GizmoMode::None && mSelectedTile >= 0 && (leftClicked || leftDragging)) {
+        auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
+        if (hit.hit) {
+            Map& map = mEngine.GetMap();
+            float halfW = map.GetWidth() * 0.5f;
+            float halfH = map.GetHeight() * 0.5f;
+            int x = static_cast<int>(std::floor(hit.point.x + halfW));
+            int z = static_cast<int>(std::floor(hit.point.z + halfH));
+            if (x >= 0 && x < map.GetWidth() && z >= 0 && z < map.GetHeight()) {
+                PaintTileAt(x, z);
             }
         }
+    } else if (leftClicked && !pick.hit) {
+        // Click empty space deselects
+        mSelectedEntity = -1;
     }
 }
 
@@ -756,17 +750,87 @@ void Editor::PaintTileAt(int x, int z) {
 void Editor::DrawHierarchy() {
     ImGui::Begin("Hierarchy");
     Scene& scene = mEngine.GetScene();
+
+    if (ImGui::Button((std::string(Icons::PLUS) + " Entity").c_str())) {
+        CreateCube();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button((std::string(Icons::TRASH) + " Del").c_str()) && mSelectedEntity >= 0) {
+        DeleteSelectedEntity();
+    }
+    ImGui::Separator();
+
     for (EntityID id : scene.GetEntities()) {
         bool selected = (mSelectedEntity == static_cast<int>(id));
-        if (ImGui::Selectable(scene.GetEntityName(id).c_str(), selected)) {
+        // Icon by components
+        const char* icon = Icons::CUBE;
+        if (scene.GetComponent<LightComponent>(id)) icon = Icons::LIGHTBULB;
+        else if (scene.GetComponent<ParticleEmitterComponent>(id)) icon = Icons::MAGIC;
+        else if (scene.GetComponent<CameraComponent>(id)) icon = Icons::CAMERA;
+        else if (scene.GetComponent<ModelRendererComponent>(id)) icon = Icons::CUBE;
+
+        std::string label = std::string(icon) + "  " + scene.GetEntityName(id);
+        ImGui::PushID(static_cast<int>(id));
+        if (ImGui::Selectable(label.c_str(), selected)) {
             mSelectedEntity = static_cast<int>(id);
         }
+        if (ImGui::BeginPopupContextItem("HierarchyCtx")) {
+            mSelectedEntity = static_cast<int>(id);
+            if (ImGui::MenuItem("Focus", "F")) {
+                if (auto* t = scene.GetComponent<TransformComponent>(id)) {
+                    Camera& cam = mEngine.GetRenderer().GetCamera();
+                    cam.SetPosition(t->transform.position + Vec3(0, 3, 5));
+                    cam.SetRotation(Vec3(-30, 0, 0));
+                }
+            }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D")) {
+                // reuse shortcut logic via synthetic key path: call create copy
+                EntityID srcId = id;
+                auto* st = scene.GetComponent<TransformComponent>(srcId);
+                EntityID nid = scene.CreateEntity(scene.GetEntityName(srcId) + " Copy");
+                auto* nt = scene.AddComponent<TransformComponent>(nid);
+                if (st) { nt->transform = st->transform; nt->transform.position.x += 1.0f; }
+                if (auto* sm = scene.GetComponent<ModelRendererComponent>(srcId)) {
+                    auto* mcomp = scene.AddComponent<ModelRendererComponent>(nid);
+                    mcomp->model = sm->model; mcomp->texture = sm->texture;
+                }
+                if (auto* mat = scene.GetComponent<MaterialComponent>(srcId)) {
+                    auto* mcomp = scene.AddComponent<MaterialComponent>(nid);
+                    mcomp->material = mat->material;
+                }
+                mSelectedEntity = static_cast<int>(nid);
+            }
+            if (ImGui::MenuItem("Delete", "Del")) {
+                DeleteSelectedEntity();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Add Light")) {
+                if (!scene.GetComponent<LightComponent>(id)) scene.AddComponent<LightComponent>(id);
+            }
+            if (ImGui::MenuItem("Add Particles")) {
+                if (!scene.GetComponent<ParticleEmitterComponent>(id)) {
+                    auto* pe = scene.AddComponent<ParticleEmitterComponent>(id);
+                    pe->emitter = std::make_unique<ParticleEmitter>();
+                    pe->emitter->ApplyPreset("fire");
+                    pe->autoEmit = true;
+                }
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
     }
-    if (ImGui::Button("Add Entity")) {
-        scene.CreateEntity("New Entity");
+
+    // empty area context
+    if (ImGui::BeginPopupContextWindow("HierarchyEmpty", ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight)) {
+        if (ImGui::MenuItem("Create Cube")) CreateCube();
+        if (ImGui::MenuItem("Create Plane")) CreatePlane();
+        if (ImGui::MenuItem("Create Light")) CreateLight();
+        ImGui::EndPopup();
     }
+
     ImGui::End();
 }
+
 
 void Editor::DrawInspector() {
     ImGui::Begin("Inspector");
@@ -1025,8 +1089,14 @@ void Editor::DrawMapEditor() {
     
     // Karte laden/speichern
     if (ImGui::Button("Karte speichern")) {
+        // Save full package for current map id
+        if (mSelectedMapIndex >= 0 && mSelectedMapIndex < static_cast<int>(mapInfos.size())) {
+            int mapId = mapInfos[mSelectedMapIndex].id;
+            std::string scenePath = mEngine.GetProject().GetProjectPath() + "/maps/map" + std::to_string(mapId) + "_scene.json";
+            mEngine.SaveScene(scenePath);
+            mEngine.GetMap().Save(mEngine.GetProject().GetMapPath(mapId));
+        }
         SaveMap();
-        // Auch MapInfos speichern
         database.Save(mEngine.GetProject().GetProjectPath());
     }
     ImGui::SameLine();
@@ -1105,6 +1175,7 @@ void Editor::DrawMapEditor() {
 
                     ImGui::Separator();
                     ImGui::Text("Selected Tile: %d", mSelectedTile);
+                    ImGui::TextDisabled("In Scene: Gizmo=Select (Q), then LMB paint on ground");
                     ImGui::Separator();
 
                     // Tile grid
@@ -1264,6 +1335,7 @@ void Editor::DrawMapEditor() {
 // ==================== Event Editor ====================
 
 void Editor::DrawEventEditor() {
+    ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
     ImGui::Begin("Event-Editor");
     
     auto& eventSystem = EventSystem::Get();
@@ -1823,32 +1895,27 @@ std::string Editor::GetEventCommandParamsString(const EventCommand& cmd) {
 }
 
 void Editor::DrawScriptEditor() {
+    // Free floating window (not forced into tiny dock tab)
+    ImGui::SetNextWindowSize(ImVec2(900, 560), ImGuiCond_FirstUseEver);
     ImGui::Begin("Script Editor");
-    
+
     auto& scriptManager = mEngine.GetScriptManager();
     auto& scripts = scriptManager.GetScripts();
-    
-    // Toolbar
-    if (ImGui::Button("New Script")) {
+
+    // Left: ordered script list (top -> bottom load order for game)
+    ImGui::BeginChild("ScriptList", ImVec2(240, 0), true);
+    ImGui::TextDisabled("Load order (top -> bottom)");
+    ImGui::Separator();
+    if (ImGui::Button((std::string(Icons::PLUS) + " New").c_str())) {
         ImGui::OpenPopup("NewScriptPopup");
     }
     ImGui::SameLine();
-    if (ImGui::Button("Save All")) {
-        scriptManager.SaveAllScripts();
-    }
+    if (ImGui::Button("Save All")) scriptManager.SaveAllScripts();
     ImGui::SameLine();
-    if (ImGui::Button("Execute All")) {
-        scriptManager.ExecuteAllScripts();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Reload")) {
-        scriptManager.ReloadFromDisk();
-    }
-    
-    // New script popup
-    static char newScriptName[128] = "new_script.rb";
+    if (ImGui::Button("Reload")) scriptManager.ReloadFromDisk();
+
+    static char newScriptName[128] = "game_logic.rb";
     if (ImGui::BeginPopupModal("NewScriptPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Create new script:");
         ImGui::InputText("Name", newScriptName, sizeof(newScriptName));
         if (ImGui::Button("Create", ImVec2(120, 0))) {
             std::string name = newScriptName;
@@ -1857,99 +1924,69 @@ void Editor::DrawScriptEditor() {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-            ImGui::CloseCurrentPopup();
-        }
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
-    
-    ImGui::Separator();
-    
-    // Tab bar for open scripts
+
     static int selectedTab = 0;
-    
-    if (ImGui::BeginTabBar("ScriptTabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_TabListPopupButton)) {
-        // Add new tab button
-        if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing | ImGuiTabItemFlags_NoTooltip)) {
-            ImGui::OpenPopup("NewScriptPopup");
-        }
-        
-        for (size_t i = 0; i < scripts.size(); ++i) {
-            auto* script = scripts[i].get();
-            ImGuiTabItemFlags flags = 0;
-            if (script->isCore) flags |= ImGuiTabItemFlags_NoCloseWithMiddleMouseButton; // Can't close core
-            
-            std::string tabLabel = script->name;
-            if (script->modified) tabLabel += " *";
-            if (script->isCore) tabLabel += " (core)";
-            
-            bool open = true;
-            if (ImGui::BeginTabItem(tabLabel.c_str(), &open, flags)) {
-                selectedTab = static_cast<int>(i);
-                ImGui::EndTabItem();
+    for (size_t i = 0; i < scripts.size(); ++i) {
+        auto* script = scripts[i].get();
+        std::string label = std::string(Icons::FILE_CODE) + " " + script->name;
+        if (script->modified) label += " *";
+        if (script->isCore) label += " [core]";
+        bool sel = (selectedTab == static_cast<int>(i));
+        if (ImGui::Selectable(label.c_str(), sel)) selectedTab = static_cast<int>(i);
+        if (ImGui::BeginPopupContextItem()) {
+            selectedTab = static_cast<int>(i);
+            if (ImGui::MenuItem("Run")) mEngine.GetRubyVM().ExecuteString(script->content);
+            if (ImGui::MenuItem("Save") && !script->isCore) scriptManager.SaveScript(scripts[i]);
+            if (ImGui::MenuItem("Delete") && !script->isCore) {
+                scriptManager.DeleteScript(script->name);
+                selectedTab = 0;
             }
-            
-            // Handle close
-            if (!open && !script->isCore) {
-                if (ImGui::BeginPopupContextItem(("CloseConfirm##" + script->name).c_str())) {
-                    ImGui::Text("Close '%s'?", script->name.c_str());
-                    ImGui::Text("Unsaved changes will be lost!");
-                    if (ImGui::Button("Close Anyway")) {
-                        scriptManager.DeleteScript(script->name);
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel")) {
-                        // Keep open
-                    }
-                    ImGui::EndPopup();
-                }
-            }
+            ImGui::EndPopup();
         }
-        
-        ImGui::EndTabBar();
     }
-    
-    // Editor for selected script
+    ImGui::Separator();
+    if (ImGui::Button("Execute All (Game Order)", ImVec2(-1, 0))) {
+        scriptManager.ExecuteAllScripts();
+    }
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+
+    // Right: source editor
+    ImGui::BeginChild("ScriptSource", ImVec2(0, 0), true);
     if (selectedTab >= 0 && selectedTab < static_cast<int>(scripts.size())) {
         auto* script = scripts[selectedTab].get();
-        
-        // Read-only indicator for core scripts
+        ImGui::Text("%s", script->path.c_str());
         if (script->isCore) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "Core Script (Read-only in Editor)");
-            ImGui::Separator();
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 1.0f, 1.0f), "(core)");
         }
-        
-        ImGui::Text("Path: %s", script->path.c_str());
         ImGui::Separator();
-        
+
         static std::string editBuffer;
         static int editScriptIndex = -1;
         if (editScriptIndex != selectedTab) {
             editBuffer = script->content;
             editScriptIndex = selectedTab;
         }
-        // ImGui needs a writable, null-terminated buffer with spare capacity
-        if (editBuffer.capacity() < 65536) {
-            editBuffer.reserve(65536);
-        }
+        if (editBuffer.capacity() < 65536) editBuffer.reserve(65536);
         editBuffer.push_back('\0');
         editBuffer.pop_back();
 
         ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
         if (script->isCore) flags |= ImGuiInputTextFlags_ReadOnly;
-
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (ImGui::InputTextMultiline("##ScriptSource", editBuffer.data(),
-            editBuffer.capacity() + 1, ImVec2(avail.x, avail.y - 40), flags)) {
+            editBuffer.capacity() + 1, ImVec2(avail.x, avail.y - 36), flags)) {
             editBuffer.resize(std::strlen(editBuffer.c_str()));
             if (!script->isCore) {
                 script->content = editBuffer;
                 script->modified = true;
             }
         }
-        
-        // Buttons
         if (!script->isCore) {
             if (ImGui::Button("Save")) {
                 scriptManager.SaveScript(scripts[selectedTab]);
@@ -1958,22 +1995,16 @@ void Editor::DrawScriptEditor() {
             ImGui::SameLine();
         }
         if (ImGui::Button("Run Script")) {
-            if (mEngine.GetRubyVM().ExecuteString(script->content)) {
-                RPG_LOG_INFO("Script executed: " + script->name);
-            } else {
-                RPG_LOG_ERROR("Script execution failed: " + script->name);
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Run All")) {
-            scriptManager.ExecuteAllScripts();
+            mEngine.GetRubyVM().ExecuteString(script->content);
         }
     } else {
-        ImGui::Text("No script selected. Click '+' to create a new script.");
+        ImGui::TextDisabled("No script selected. Create one with + New.");
     }
-    
+    ImGui::EndChild();
+
     ImGui::End();
 }
+
 
 static ImVec4 GetLogColor(rpg::LogLevel level) {
     switch (level) {
@@ -2096,12 +2127,26 @@ void Editor::DeleteSelectedEntity() {
 }
 
 void Editor::SaveMap() {
-    std::string path = mEngine.GetProject().GetMapPath(1);
-    mEngine.GetMap().Save(path);
-    RPG_LOG_INFO("Map saved to: " + path);
+    // Full scene package: map tiles + entities + lighting
+    std::string scenePath = mEngine.GetProject().GetProjectPath() + "/scene.json";
+    mEngine.SaveScene(scenePath);
+    // Binary map path for runtime
+    std::string mapPath = mEngine.GetProject().GetMapPath(1);
+    mEngine.GetMap().Save(mapPath);
+    // Persist map infos / database
+    Database::Get().Save(mEngine.GetProject().GetProjectPath());
+    mEngine.GetProject().Save();
+    RPG_LOG_INFO("Map+Scene saved: " + scenePath);
 }
 
 void Editor::LoadMap() {
+    std::string scenePath = mEngine.GetProject().GetProjectPath() + "/scene.json";
+    if (mEngine.LoadScene(scenePath)) {
+        mSelectedEntity = -1;
+        RPG_LOG_INFO("Map+Scene loaded: " + scenePath);
+        return;
+    }
+    // Fallback binary map only
     std::string path = mEngine.GetProject().GetMapPath(1);
     if (mEngine.GetMap().Load(path)) {
         RPG_LOG_INFO("Map loaded from: " + path);
@@ -2149,7 +2194,24 @@ void Editor::LoadSelectedMap() {
     
     // Events für diese Karte laden
     EventSystem::Get().LoadMapEvents(mapInfo.id, mEngine.GetProject().GetProjectPath());
-    
+
+    // Prefer per-map scene package if present
+    std::string scenePath = mEngine.GetProject().GetProjectPath() + "/maps/map" + std::to_string(mapInfo.id) + "_scene.json";
+    if (!fs::exists(scenePath)) {
+        scenePath = mEngine.GetProject().GetProjectPath() + "/scene.json";
+    }
+    if (fs::exists(scenePath)) {
+        mEngine.LoadScene(scenePath);
+        // Keep map size from mapInfo if scene didn't override
+        if (mEngine.GetMap().GetWidth() != mapInfo.width || mEngine.GetMap().GetHeight() != mapInfo.height) {
+            // scene already loaded map; OK
+        }
+        mSelectedEntity = -1;
+    } else {
+        // Binary map fallback
+        mEngine.GetMap().Load(mEngine.GetProject().GetMapPath(mapInfo.id));
+    }
+
     RPG_LOG_INFO("Karte geladen: " + mapInfo.name + " (" + std::to_string(mapInfo.width) + "x" + std::to_string(mapInfo.height) + ")");
 }
 
@@ -2511,7 +2573,8 @@ void Editor::DrawToolbar() {
 void Editor::DrawGizmo() {
     if (mSelectedEntity < 0 || mGizmoMode == GizmoMode::None) return;
     if (mEngine.IsPlaying()) return;
-    if (!mSceneViewHovered && !mGizmoActive) return;
+    // Keep drawing even if mouse left the view briefly while dragging
+    if (!mSceneViewFocused && !mGizmoActive) return;
 
     auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
     if (!transform) return;
@@ -2539,7 +2602,7 @@ void Editor::DrawGizmo() {
 
     // Scale axis length with distance so gizmo stays usable
     float dist = glm::length(cam.GetPosition() - position);
-    const float axisLen = glm::clamp(dist * 0.12f, 0.8f, 4.0f);
+    const float axisLen = glm::clamp(dist * 0.18f, 1.4f, 6.0f);
     Vec3 origin = position;
 
     // Local axes if needed
@@ -2565,26 +2628,27 @@ void Editor::DrawGizmo() {
     for (int i = 0; i < 3; ++i) {
         if (o.x < -9000 || se[i].x < -9000) continue;
         ImU32 col = (mGizmoAxis == i) ? colsHot[i] : cols[i];
-        drawList->AddLine(o, se[i], col, (mGizmoAxis == i) ? 4.0f : 3.0f);
+        drawList->AddLine(o, se[i], col, (mGizmoAxis == i) ? 7.0f : 5.0f);
         // arrow tip
         ImVec2 dir(se[i].x - o.x, se[i].y - o.y);
         float len = std::sqrt(dir.x*dir.x + dir.y*dir.y);
         if (len > 1.0f) {
             dir.x /= len; dir.y /= len;
             ImVec2 n(-dir.y, dir.x);
-            ImVec2 p1(se[i].x - dir.x * 10.0f + n.x * 5.0f, se[i].y - dir.y * 10.0f + n.y * 5.0f);
-            ImVec2 p2(se[i].x - dir.x * 10.0f - n.x * 5.0f, se[i].y - dir.y * 10.0f - n.y * 5.0f);
+            ImVec2 p1(se[i].x - dir.x * 16.0f + n.x * 8.0f, se[i].y - dir.y * 16.0f + n.y * 8.0f);
+            ImVec2 p2(se[i].x - dir.x * 16.0f - n.x * 8.0f, se[i].y - dir.y * 16.0f - n.y * 8.0f);
             drawList->AddTriangleFilled(se[i], p1, p2, col);
         }
         drawList->AddText(ImVec2(se[i].x + 6, se[i].y - 6), col, labels[i]);
     }
     // center handle
-    if (o.x > -9000) drawList->AddCircleFilled(o, 5.0f, IM_COL32(255, 255, 255, 220));
+    if (o.x > -9000) drawList->AddCircleFilled(o, 8.0f, IM_COL32(255, 255, 255, 230));
+    drawList->AddCircle(o, 10.0f, IM_COL32(0, 0, 0, 180), 0, 2.0f);
 
     // Interaction
     ImVec2 mousePos = ImGui::GetMousePos();
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mSceneViewHovered && mSceneViewFocused) {
-        float bestDist = 14.0f;
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mSceneViewFocused) {
+        float bestDist = 28.0f; // large screen hit tolerance for easier axis grabs
         int bestAxis = -1;
         for (int i = 0; i < 3; ++i) {
             if (se[i].x < -9000) continue;
@@ -2667,36 +2731,39 @@ void Editor::DrawGizmo() {
 
 
 void Editor::DrawStatusBar() {
-    ImGui::Begin("StatusBar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-    
+    // Compact debug/status panel (dockable with Konsole)
+    ImGui::Begin("Debug / Status");
     ImGui::Text("FPS: %d", mEngine.GetFPS());
-    ImGui::SameLine(200);
-    ImGui::Text("Entities: %zu", mEngine.GetScene().GetEntities().size());
-    ImGui::SameLine(400);
-    
+    ImGui::SameLine();
+    ImGui::Text("| Entities: %zu", mEngine.GetScene().GetEntities().size());
+    ImGui::SameLine();
+    ImGui::Text("| Map: %dx%d", mEngine.GetMap().GetWidth(), mEngine.GetMap().GetHeight());
+    ImGui::Separator();
+    ImGui::Text("Gizmo: %s (%s)  Snap: %s",
+        mGizmoMode == GizmoMode::None ? "Select" :
+        mGizmoMode == GizmoMode::Translate ? "Move" :
+        mGizmoMode == GizmoMode::Rotate ? "Rotate" : "Scale",
+        mGizmoSpace == GizmoSpace::Local ? "Local" : "World",
+        mGizmoSnap ? "ON" : "OFF");
     if (mSelectedEntity >= 0) {
         auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
         if (transform) {
-            ImGui::Text("Pos: %.1f, %.1f, %.1f", 
-                transform->transform.position.x, 
-                transform->transform.position.y, 
+            ImGui::Text("Selected #%d  Pos: %.2f, %.2f, %.2f",
+                mSelectedEntity,
+                transform->transform.position.x,
+                transform->transform.position.y,
                 transform->transform.position.z);
         }
     } else {
-        ImGui::Text("No entity selected");
+        ImGui::TextDisabled("No entity selected — click an object in Scene");
     }
-    
-    ImGui::SameLine(800);
-    ImGui::Text("Gizmo: %s", 
-        mGizmoMode == GizmoMode::None ? "Select" : 
-        mGizmoMode == GizmoMode::Translate ? "Move" : 
-        mGizmoMode == GizmoMode::Rotate ? "Rotate" : "Scale");
-    
-    ImGui::SameLine(1000);
-    ImGui::Text("%s", mGizmoSpace == GizmoSpace::Local ? "Local" : "World");
-    
+    ImGui::Text("Grid: %s | Wireframe: %s | Play: %s",
+        mEngine.IsGridVisible() ? "ON" : "OFF",
+        mEngine.GetRenderer().IsWireframeEnabled() ? "ON" : "OFF",
+        mEngine.IsPlaying() ? "YES" : "no");
     ImGui::End();
 }
+
 
 void Editor::ShowCrashDialog() {
     if (!mShowCrashDialog) return;

@@ -7,6 +7,7 @@
 #include <glad/gl.h>
 #include <iostream>
 #include <array>
+#include <string>
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
@@ -63,22 +64,41 @@ uniform vec3 uAmbientColor;
 uniform vec3 uFogColor;
 uniform bool uFogEnabled;
 
+// Up to 4 dynamic point lights (editor + runtime)
+uniform int uPointLightCount;
+uniform vec3 uPointLightPos[4];
+uniform vec3 uPointLightColor[4];
+uniform float uPointLightIntensity[4];
+uniform float uPointLightRange[4];
+
 void main() {
     vec4 texColor = texture(uTexture, TexCoord) * TintColor;
     if (texColor.a < 0.05) discard;
 
+    // Two-sided lighting so ground planes (and flipped normals) still receive light
     vec3 norm = normalize(Normal);
     vec3 L = normalize(-uLightDir);
-    float NdotL = max(dot(norm, L), 0.0);
-    // Soft wrap lighting so surfaces aren't pure black
+    float NdotL = abs(dot(norm, L));
     float wrap = NdotL * 0.5 + 0.5;
     wrap = wrap * wrap;
 
     vec3 ambient = uAmbientColor * uAmbient;
-    vec3 diffuse = uLightColor * uLightIntensity * mix(NdotL, wrap, 0.35);
+    vec3 diffuse = uLightColor * uLightIntensity * mix(NdotL, wrap, 0.25);
+
+    // Point lights
+    for (int i = 0; i < uPointLightCount; ++i) {
+        vec3 toL = uPointLightPos[i] - FragPos;
+        float dist = length(toL);
+        float range = max(uPointLightRange[i], 0.001);
+        float atten = clamp(1.0 - dist / range, 0.0, 1.0);
+        atten *= atten;
+        vec3 ldir = toL / max(dist, 0.001);
+        float nd = abs(dot(norm, ldir));
+        diffuse += uPointLightColor[i] * uPointLightIntensity[i] * nd * atten;
+    }
+
     vec3 finalColor = texColor.rgb * (ambient + diffuse);
 
-    // Fog blending (FogFactor: 1 = near/no fog, 0 = far/full fog)
     if (uFogEnabled) {
         finalColor = mix(uFogColor, finalColor, FogFactor);
     }
@@ -254,11 +274,29 @@ void Renderer::UpdateLighting() {
     Lighting& light = Lighting::Get();
     const auto& dir = light.GetDirectionalLight();
     const auto& amb = light.GetAmbient();
-    mDefaultShader->SetVec3("uLightDir", light.GetEffectiveLightDir());
+
+    Vec3 lightDir = light.GetEffectiveLightDir();
+    float intensity = dir.enabled ? dir.intensity : 0.0f;
+
+    mDefaultShader->SetVec3("uLightDir", lightDir);
     mDefaultShader->SetVec3("uLightColor", Vec3(dir.color.r, dir.color.g, dir.color.b));
-    mDefaultShader->SetFloat("uLightIntensity", dir.intensity);
+    mDefaultShader->SetFloat("uLightIntensity", intensity);
     mDefaultShader->SetFloat("uAmbient", amb.intensity);
     mDefaultShader->SetVec3("uAmbientColor", Vec3(amb.color.r, amb.color.g, amb.color.b));
+
+    // Upload up to 4 enabled point lights
+    int count = 0;
+    for (size_t i = 0; i < light.GetPointLightCount() && count < 4; ++i) {
+        const auto& pl = light.GetPointLight(i);
+        if (!pl.enabled) continue;
+        std::string idx = std::to_string(count);
+        mDefaultShader->SetVec3(("uPointLightPos[" + idx + "]").c_str(), pl.position);
+        mDefaultShader->SetVec3(("uPointLightColor[" + idx + "]").c_str(), Vec3(pl.color.r, pl.color.g, pl.color.b));
+        mDefaultShader->SetFloat(("uPointLightIntensity[" + idx + "]").c_str(), pl.intensity);
+        mDefaultShader->SetFloat(("uPointLightRange[" + idx + "]").c_str(), pl.range);
+        ++count;
+    }
+    mDefaultShader->SetInt("uPointLightCount", count);
 }
 
 void Renderer::SetLightDir(const Vec3& dir) {

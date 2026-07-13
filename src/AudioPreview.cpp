@@ -17,6 +17,7 @@ void AudioPreview::LoadAndPlay(const std::string& path, bool loop) {
 }
 
 void AudioPreview::DrawUI() {
+    ImGui::SetNextWindowSize(ImVec2(380, 460), ImGuiCond_FirstUseEver);
     ImGui::Begin("Audio Vorschau");
 
     ImGui::SliderFloat("Lautstärke", &mVolume, 0.0f, 1.0f);

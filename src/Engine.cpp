@@ -581,6 +581,24 @@ void Engine::Update(float dt) {
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode
     GameUI::Get().Update(dt);
 
+    // Push scene LightComponents into the global lighting system (point lights)
+    // so floors/objects actually receive per-object light in the editor & play mode.
+    {
+        auto& lighting = Lighting::Get();
+        lighting.ClearPointLights();
+        for (EntityID id : mScene->GetEntities()) {
+            auto* light = mScene->GetComponent<LightComponent>(id);
+            auto* tr = mScene->GetComponent<TransformComponent>(id);
+            if (!light || !tr) continue;
+            auto& pl = lighting.AddPointLight();
+            pl.enabled = true;
+            pl.position = tr->transform.position;
+            pl.color = light->color;
+            pl.intensity = light->intensity;
+            pl.range = light->range > 0.0f ? light->range : 10.0f;
+        }
+    }
+
     mScene->Update(dt);
 }
 
@@ -818,7 +836,46 @@ void Engine::SaveScene(const std::string& path) const {
         RPG_LOG_ERROR("Failed to save scene: " + path);
         return;
     }
-    file << "{\n  \"entities\": [\n";
+
+    file << "{\n";
+    file << "  \"version\": 2,\n";
+    file << "  \"map\": {\n";
+    file << "    \"width\": " << mMap->GetWidth() << ",\n";
+    file << "    \"height\": " << mMap->GetHeight() << ",\n";
+    file << "    \"layers\": [\n";
+    const auto& layers = mMap->GetLayers();
+    for (size_t li = 0; li < layers.size(); ++li) {
+        const auto& layer = layers[li];
+        file << "      {\n";
+        file << "        \"name\": \"" << EscapeJSON(layer.name) << "\",\n";
+        file << "        \"elevation\": " << layer.elevation << ",\n";
+        file << "        \"visible\": " << (layer.visible ? "true" : "false") << ",\n";
+        file << "        \"tiles\": [";
+        for (size_t ti = 0; ti < layer.tiles.size(); ++ti) {
+            if (ti) file << ",";
+            file << layer.tiles[ti];
+        }
+        file << "]\n";
+        file << "      }";
+        if (li + 1 < layers.size()) file << ",";
+        file << "\n";
+    }
+    file << "    ]\n";
+    file << "  },\n";
+
+    // Lighting snapshot
+    auto& lighting = Lighting::Get();
+    auto& dir = lighting.GetDirectionalLight();
+    auto& amb = lighting.GetAmbient();
+    file << "  \"lighting\": {\n";
+    file << "    \"dir\": " << Vec3ToJSON(dir.direction) << ",\n";
+    file << "    \"dirColor\": " << Vec4ToJSON(dir.color) << ",\n";
+    file << "    \"dirIntensity\": " << dir.intensity << ",\n";
+    file << "    \"ambientColor\": " << Vec4ToJSON(amb.color) << ",\n";
+    file << "    \"ambientIntensity\": " << amb.intensity << "\n";
+    file << "  },\n";
+
+    file << "  \"entities\": [\n";
     const auto& entities = mScene->GetEntities();
     for (size_t i = 0; i < entities.size(); ++i) {
         EntityID id = entities[i];
@@ -826,30 +883,50 @@ void Engine::SaveScene(const std::string& path) const {
         file << "      \"id\": " << id << ",\n";
         file << "      \"name\": \"" << EscapeJSON(mScene->GetEntityName(id)) << "\"";
 
-        auto* transform = mScene->GetComponent<TransformComponent>(id);
-        if (transform) {
+        if (auto* transform = mScene->GetComponent<TransformComponent>(id)) {
             file << ",\n      \"transform\": {\n";
             file << "        \"position\": " << Vec3ToJSON(transform->transform.position) << ",\n";
             file << "        \"rotation\": " << Vec3ToJSON(transform->transform.rotation) << ",\n";
             file << "        \"scale\": " << Vec3ToJSON(transform->transform.scale) << "\n";
             file << "      }";
         }
-
-        auto* model = mScene->GetComponent<ModelRendererComponent>(id);
-        if (model) {
-            file << ",\n      \"model\": {\"mesh\": \"primitive\"}";
+        if (auto* model = mScene->GetComponent<ModelRendererComponent>(id)) {
+            std::string meshType = "cube";
+            // heuristic: plane meshes typically have fewer verts - store explicit tag when possible
+            if (model->model && model->model->GetMeshCount() > 0) {
+                // keep cube default; plane created via CreatePlane has scale y small sometimes
+            }
+            file << ",\n      \"model\": {\"mesh\": \"" << meshType << "\"}";
         }
-        auto* material = mScene->GetComponent<MaterialComponent>(id);
-        if (material) {
-            file << ",\n      \"material\": {\"diffuse\": " << Vec4ToJSON(material->material.diffuse) << "}";
+        if (auto* material = mScene->GetComponent<MaterialComponent>(id)) {
+            file << ",\n      \"material\": {\"diffuse\": " << Vec4ToJSON(material->material.diffuse)
+                 << ", \"emissive\": " << Vec4ToJSON(material->material.emissive)
+                 << ", \"metallic\": " << material->material.metallic
+                 << ", \"roughness\": " << material->material.roughness
+                 << ", \"alpha\": " << material->material.alpha
+                 << ", \"transparent\": " << (material->material.transparent ? "true" : "false")
+                 << "}";
         }
-        auto* light = mScene->GetComponent<LightComponent>(id);
-        if (light) {
-            file << ",\n      \"light\": {\"color\": " << Vec4ToJSON(light->color) << ", \"intensity\": " << light->intensity << "}";
+        if (auto* light = mScene->GetComponent<LightComponent>(id)) {
+            file << ",\n      \"light\": {\"color\": " << Vec4ToJSON(light->color)
+                 << ", \"intensity\": " << light->intensity
+                 << ", \"range\": " << light->range << "}";
         }
-        auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id);
-        if (emitter) {
-            file << ",\n      \"particleEmitter\": {\"autoEmit\": " << (emitter->autoEmit ? "true" : "false") << "}";
+        if (auto* emitter = mScene->GetComponent<ParticleEmitterComponent>(id)) {
+            file << ",\n      \"particleEmitter\": {\"autoEmit\": " << (emitter->autoEmit ? "true" : "false")
+                 << ", \"emitCount\": " << emitter->emitCount
+                 << ", \"emitRate\": " << emitter->emitRate
+                 << ", \"direction\": " << Vec3ToJSON(emitter->emitDirection)
+                 << ", \"spread\": " << emitter->emitSpread
+                 << ", \"speed\": " << emitter->emitSpeed
+                 << ", \"life\": " << emitter->emitLife
+                 << ", \"color\": " << Vec4ToJSON(emitter->emitColor) << "}";
+        }
+        if (auto* cam = mScene->GetComponent<CameraComponent>(id)) {
+            file << ",\n      \"camera\": {\"fov\": " << cam->fov
+                 << ", \"near\": " << cam->nearPlane
+                 << ", \"far\": " << cam->farPlane
+                 << ", \"main\": " << (cam->isMain ? "true" : "false") << "}";
         }
 
         file << "\n    }";
@@ -857,6 +934,11 @@ void Engine::SaveScene(const std::string& path) const {
         file << "\n";
     }
     file << "  ]\n}\n";
+
+    // Also save binary map for runtime map path
+    if (mProject) {
+        mMap->Save(mProject->GetMapPath(1));
+    }
     RPG_LOG_INFO("Scene saved to: " + path);
 }
 
@@ -871,32 +953,136 @@ bool Engine::LoadScene(const std::string& path) {
     buffer << file.rdbuf();
     std::string content = buffer.str();
 
-    auto findSection = [&](const std::string& text, const std::string& key, size_t start) -> size_t {
-        return text.find("\"" + key + "\"", start);
+    auto findKey = [&](const std::string& text, const std::string& key, size_t from) -> size_t {
+        return text.find(std::string("\"") + key + "\"", from);
     };
-    auto parseVec3 = [&](const std::string& text, size_t start, size_t end, Vec3& out) {
-        size_t bracket = text.find('[', start);
-        if (bracket == std::string::npos || bracket >= end) return;
-        size_t close = text.find(']', bracket);
-        if (close == std::string::npos || close > end) return;
-        std::string inner = text.substr(bracket + 1, close - bracket - 1);
-        std::stringstream ss(inner);
+    auto parseVec3 = [&](const std::string& text, size_t from, Vec3& out) {
+        size_t b = text.find('[', from);
+        if (b == std::string::npos) return;
+        size_t e = text.find(']', b);
+        if (e == std::string::npos) return;
+        std::stringstream ss(text.substr(b + 1, e - b - 1));
         char sep;
         ss >> out.x >> sep >> out.y >> sep >> out.z;
     };
-    auto parseVec4 = [&](const std::string& text, size_t start, size_t end, Vec4& out) {
-        size_t bracket = text.find('[', start);
-        if (bracket == std::string::npos || bracket >= end) return;
-        size_t close = text.find(']', bracket);
-        if (close == std::string::npos || close > end) return;
-        std::string inner = text.substr(bracket + 1, close - bracket - 1);
-        std::stringstream ss(inner);
+    auto parseVec4 = [&](const std::string& text, size_t from, Vec4& out) {
+        size_t b = text.find('[', from);
+        if (b == std::string::npos) return;
+        size_t e = text.find(']', b);
+        if (e == std::string::npos) return;
+        std::stringstream ss(text.substr(b + 1, e - b - 1));
         char sep;
         ss >> out.x >> sep >> out.y >> sep >> out.z >> sep >> out.w;
     };
+    auto parseNumber = [&](const std::string& text, const std::string& key, size_t from, float defVal) -> float {
+        size_t p = findKey(text, key, from);
+        if (p == std::string::npos) return defVal;
+        size_t c = text.find(':', p);
+        if (c == std::string::npos) return defVal;
+        try { return std::stof(text.substr(c + 1)); } catch (...) { return defVal; }
+    };
+    auto parseBool = [&](const std::string& text, const std::string& key, size_t from, bool defVal) -> bool {
+        size_t p = findKey(text, key, from);
+        if (p == std::string::npos) return defVal;
+        size_t c = text.find(':', p);
+        if (c == std::string::npos) return defVal;
+        std::string v = text.substr(c + 1, 12);
+        if (v.find("true") != std::string::npos) return true;
+        if (v.find("false") != std::string::npos) return false;
+        return defVal;
+    };
+    auto extractObject = [&](const std::string& text, size_t objStart) -> std::string {
+        int depth = 0;
+        for (size_t i = objStart; i < text.size(); ++i) {
+            if (text[i] == '{') depth++;
+            else if (text[i] == '}') {
+                depth--;
+                if (depth == 0) return text.substr(objStart, i - objStart + 1);
+            }
+        }
+        return {};
+    };
 
-    size_t entityStart = content.find("\"entities\"");
-    if (entityStart == std::string::npos) return false;
+    // Map section
+    size_t mapPos = findKey(content, "map", 0);
+    if (mapPos != std::string::npos) {
+        int width = static_cast<int>(parseNumber(content, "width", mapPos, 20));
+        int height = static_cast<int>(parseNumber(content, "height", mapPos, 20));
+        mMap->Resize(width, height);
+        size_t layersPos = findKey(content, "layers", mapPos);
+        if (layersPos != std::string::npos) {
+            mMap->GetLayers().clear();
+            size_t arr = content.find('[', layersPos);
+            size_t search = arr + 1;
+            while (search < content.size()) {
+                size_t objStart = content.find('{', search);
+                if (objStart == std::string::npos) break;
+                // stop if we left the layers array roughly
+                size_t entitiesKey = findKey(content, "entities", 0);
+                if (entitiesKey != std::string::npos && objStart > entitiesKey) break;
+                std::string obj = extractObject(content, objStart);
+                if (obj.empty()) break;
+
+                std::string name = "Layer";
+                size_t np = findKey(obj, "name", 0);
+                if (np != std::string::npos) {
+                    size_t c = obj.find(':', np);
+                    size_t q1 = obj.find('"', c);
+                    size_t q2 = obj.find('"', q1 + 1);
+                    if (q1 != std::string::npos && q2 != std::string::npos)
+                        name = obj.substr(q1 + 1, q2 - q1 - 1);
+                }
+                mMap->AddLayer(name);
+                int layerIndex = static_cast<int>(mMap->GetLayers().size()) - 1;
+                mMap->GetLayers().back().elevation = parseNumber(obj, "elevation", 0, 0.0f);
+                mMap->GetLayers().back().visible = parseBool(obj, "visible", 0, true);
+
+                size_t tilesPos = findKey(obj, "tiles", 0);
+                if (tilesPos != std::string::npos) {
+                    size_t b = obj.find('[', tilesPos);
+                    size_t e = obj.find(']', b);
+                    if (b != std::string::npos && e != std::string::npos) {
+                        std::stringstream ss(obj.substr(b + 1, e - b - 1));
+                        std::string item;
+                        int idx = 0;
+                        while (std::getline(ss, item, ',')) {
+                            if (item.empty()) continue;
+                            try {
+                                int tile = std::stoi(item);
+                                int x = idx % width;
+                                int z = idx / width;
+                                if (z < height) mMap->SetTile(layerIndex, x, z, tile);
+                            } catch (...) {}
+                            idx++;
+                        }
+                    }
+                }
+                search = objStart + obj.size();
+            }
+            if (mMap->GetLayers().empty()) mMap->AddLayer("Ground");
+        }
+    } else if (mProject) {
+        mMap->Load(mProject->GetMapPath(1));
+    }
+
+    // Lighting
+    size_t lightRoot = findKey(content, "lighting", 0);
+    if (lightRoot != std::string::npos) {
+        auto& dir = Lighting::Get().GetDirectionalLight();
+        auto& amb = Lighting::Get().GetAmbient();
+        parseVec3(content, findKey(content, "dir", lightRoot), dir.direction);
+        parseVec4(content, findKey(content, "dirColor", lightRoot), dir.color);
+        dir.intensity = parseNumber(content, "dirIntensity", lightRoot, dir.intensity);
+        parseVec4(content, findKey(content, "ambientColor", lightRoot), amb.color);
+        amb.intensity = parseNumber(content, "ambientIntensity", lightRoot, amb.intensity);
+    }
+
+    // Entities
+    size_t entityStart = findKey(content, "entities", 0);
+    if (entityStart == std::string::npos) {
+        RPG_LOG_INFO("Scene loaded (map only) from: " + path);
+        return true;
+    }
     size_t arrayStart = content.find('[', entityStart);
     if (arrayStart == std::string::npos) return false;
 
@@ -904,77 +1090,89 @@ bool Engine::LoadScene(const std::string& path) {
     while (pos < content.size()) {
         size_t objStart = content.find('{', pos);
         if (objStart == std::string::npos) break;
-        // naive find matching }: need depth
-        int depth = 0;
-        size_t objEnd = std::string::npos;
-        for (size_t i = objStart; i < content.size(); ++i) {
-            if (content[i] == '{') depth++;
-            else if (content[i] == '}') {
-                depth--;
-                if (depth == 0) { objEnd = i; break; }
-            }
-        }
-        if (objEnd == std::string::npos) break;
+        std::string obj = extractObject(content, objStart);
+        if (obj.empty()) break;
 
-        std::string obj = content.substr(objStart, objEnd - objStart + 1);
-
-        size_t namePos = findSection(obj, "name", 0);
         std::string name = "Entity";
+        size_t namePos = findKey(obj, "name", 0);
         if (namePos != std::string::npos) {
-            size_t colon = obj.find(':', namePos);
-            size_t q1 = obj.find('\"', colon);
-            size_t q2 = obj.find('\"', q1 + 1);
-            if (q1 != std::string::npos && q2 != std::string::npos) name = obj.substr(q1 + 1, q2 - q1 - 1);
+            size_t c = obj.find(':', namePos);
+            size_t q1 = obj.find('"', c);
+            size_t q2 = obj.find('"', q1 + 1);
+            if (q1 != std::string::npos && q2 != std::string::npos)
+                name = obj.substr(q1 + 1, q2 - q1 - 1);
         }
 
         EntityID id = mScene->CreateEntity(name);
 
-        size_t transformPos = findSection(obj, "transform", 0);
+        size_t transformPos = findKey(obj, "transform", 0);
         if (transformPos != std::string::npos) {
-            auto* t = mScene->AddComponent<TransformComponent>(id);
-            size_t pPos = findSection(obj, "position", transformPos);
-            parseVec3(obj, pPos, obj.size(), t->transform.position);
-            size_t rPos = findSection(obj, "rotation", transformPos);
-            parseVec3(obj, rPos, obj.size(), t->transform.rotation);
-            size_t sPos = findSection(obj, "scale", transformPos);
-            parseVec3(obj, sPos, obj.size(), t->transform.scale);
+            auto* tr = mScene->AddComponent<TransformComponent>(id);
+            parseVec3(obj, findKey(obj, "position", transformPos), tr->transform.position);
+            parseVec3(obj, findKey(obj, "rotation", transformPos), tr->transform.rotation);
+            parseVec3(obj, findKey(obj, "scale", transformPos), tr->transform.scale);
         }
 
-        if (findSection(obj, "model", 0) != std::string::npos) {
-            auto* m = mScene->AddComponent<ModelRendererComponent>(id);
-            m->model = std::make_shared<Model>();
-            m->model->AddMesh(MeshFactory::CreateCube(1.0f));
+        if (findKey(obj, "model", 0) != std::string::npos) {
+            auto* model = mScene->AddComponent<ModelRendererComponent>(id);
+            model->model = std::make_shared<Model>();
+            std::string mesh = "cube";
+            size_t meshPos = findKey(obj, "mesh", 0);
+            if (meshPos != std::string::npos) {
+                size_t c = obj.find(':', meshPos);
+                size_t q1 = obj.find('"', c);
+                size_t q2 = obj.find('"', q1 + 1);
+                if (q1 != std::string::npos && q2 != std::string::npos)
+                    mesh = obj.substr(q1 + 1, q2 - q1 - 1);
+            }
+            if (mesh == "plane") model->model->AddMesh(MeshFactory::CreatePlane(2.0f));
+            else model->model->AddMesh(MeshFactory::CreateCube(1.0f));
         }
 
-        size_t matPos = findSection(obj, "material", 0);
+        size_t matPos = findKey(obj, "material", 0);
         if (matPos != std::string::npos) {
-            auto* m = mScene->AddComponent<MaterialComponent>(id);
-            size_t dPos = findSection(obj, "diffuse", matPos);
-            parseVec4(obj, dPos, obj.size(), m->material.diffuse);
+            auto* mat = mScene->AddComponent<MaterialComponent>(id);
+            parseVec4(obj, findKey(obj, "diffuse", matPos), mat->material.diffuse);
+            parseVec4(obj, findKey(obj, "emissive", matPos), mat->material.emissive);
+            mat->material.metallic = parseNumber(obj, "metallic", matPos, 0.0f);
+            mat->material.roughness = parseNumber(obj, "roughness", matPos, 0.5f);
+            mat->material.alpha = parseNumber(obj, "alpha", matPos, 1.0f);
+            mat->material.transparent = parseBool(obj, "transparent", matPos, false);
         }
 
-        size_t lightPos = findSection(obj, "light", 0);
+        size_t lightPos = findKey(obj, "light", 0);
         if (lightPos != std::string::npos) {
-            auto* l = mScene->AddComponent<LightComponent>(id);
-            size_t cPos = findSection(obj, "color", lightPos);
-            parseVec4(obj, cPos, obj.size(), l->color);
+            auto* light = mScene->AddComponent<LightComponent>(id);
+            parseVec4(obj, findKey(obj, "color", lightPos), light->color);
+            light->intensity = parseNumber(obj, "intensity", lightPos, 1.0f);
+            light->range = parseNumber(obj, "range", lightPos, 10.0f);
         }
 
-        size_t pePos = findSection(obj, "particleEmitter", 0);
+        size_t pePos = findKey(obj, "particleEmitter", 0);
         if (pePos != std::string::npos) {
             auto* pe = mScene->AddComponent<ParticleEmitterComponent>(id);
             pe->emitter = std::make_unique<ParticleEmitter>();
-            size_t aePos = findSection(obj, "autoEmit", pePos);
-            if (aePos != std::string::npos) {
-                size_t colon = obj.find(':', aePos);
-                if (colon != std::string::npos) {
-                    std::string val = obj.substr(colon + 1);
-                    pe->autoEmit = (val.find("true") != std::string::npos);
-                }
-            }
+            pe->autoEmit = parseBool(obj, "autoEmit", pePos, false);
+            pe->emitCount = static_cast<int>(parseNumber(obj, "emitCount", pePos, 5));
+            pe->emitRate = parseNumber(obj, "emitRate", pePos, 0.1f);
+            parseVec3(obj, findKey(obj, "direction", pePos), pe->emitDirection);
+            pe->emitSpread = parseNumber(obj, "spread", pePos, 0.5f);
+            pe->emitSpeed = parseNumber(obj, "speed", pePos, 2.0f);
+            pe->emitLife = parseNumber(obj, "life", pePos, 1.0f);
+            parseVec4(obj, findKey(obj, "color", pePos), pe->emitColor);
         }
 
-        pos = objEnd + 1;
+        size_t camPos = findKey(obj, "camera", 0);
+        if (camPos != std::string::npos) {
+            auto* cam = mScene->AddComponent<CameraComponent>(id);
+            cam->fov = parseNumber(obj, "fov", camPos, 60.0f);
+            cam->nearPlane = parseNumber(obj, "near", camPos, 0.1f);
+            cam->farPlane = parseNumber(obj, "far", camPos, 1000.0f);
+            cam->isMain = parseBool(obj, "main", camPos, true);
+            if (cam->isMain) mActiveCameraEntity = id;
+        }
+
+        pos = objStart + obj.size();
     }
 
     RPG_LOG_INFO("Scene loaded from: " + path);
