@@ -37,6 +37,7 @@
 #include <glad/gl.h>
 #include <iostream>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -254,46 +255,68 @@ unsigned int Engine::GetSceneTextureID() const {
 
 void Engine::SetPlaying(bool playing) {
     if (playing == mPlayMode) return;
-    
     mPlayMode = playing;
 
     if (mEditorMode) {
-        // Editor Play-Test Mode – mit Scene Snapshot
         if (playing) {
-            // PlayMode START – snapshot scene, start new game
-            RPG_LOG_INFO("Entering Play Mode (Editor)");
-            // Save current scene to temp for restore
+            RPG_LOG_INFO("=== PLAYTEST START ===");
+            // Snapshot current editor scene so Stop restores everything
             if (mProject) {
                 SaveScene(mProject->GetProjectPath() + "/__editor_play_backup.json");
             }
-            // Reset game state – identical to Player.exe
-            Game::Get().NewGame();
-            EventSystem::Get().Clear();
-            // Reset player position to start
-            Game::Get().Player().SetPosition(Vec3(Database::Get().System().startX, 0, Database::Get().System().startY));
-            
-            // Execute all scripts
-            if (mScriptManager) {
-                mScriptManager->ExecuteAllScripts();
+
+            // Start game at camera-look ground point if possible, else system start
+            Vec3 spawn(static_cast<float>(Database::Get().System().startX),
+                       0.0f,
+                       static_cast<float>(Database::Get().System().startY));
+            {
+                Camera& cam = mRenderer->GetCamera();
+                Ray ray{ cam.GetPosition(), cam.GetForward() };
+                auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
+                if (hit.hit) spawn = hit.point + Vec3(0, 0.05f, 0);
             }
+
+            EventSystem::Get().Clear();
+            Game::Get().NewGameAt(spawn, Database::Get().System().startMapId);
+            EventSystem::Get().BindRuntimeCallbacks();
+            EventSystem::Get().LoadMapEvents(Game::Get().Map().GetMapId(),
+                mProject ? mProject->GetProjectPath() : ".");
+            EventSystem::Get().EnsureDemoEvent();
+
+            // Hide title during playtest; show a short intro message
+            GameUI::Get().Title().Hide();
+            GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
+            GameUI::Get().Pause().onSave = []() { Game::Get().Save(1); };
+            GameUI::Get().Pause().onExitToTitle = [this]() { this->SetPlaying(false); };
+            GameUI::Get().ShowMessage(
+                "PLAYTEST
+WASD bewegen  |  E / Enter sprechen  |  Esc Pause  |  F5 Stop\n"
+                "Gehe zum Dorf-Aeltesten (NPC) und druecke E.");
+
+            if (mScriptManager) mScriptManager->ExecuteAllScripts();
+            RPG_LOG_INFO("Playtest spawn at " + std::to_string(spawn.x) + "," +
+                         std::to_string(spawn.z) + " | gold=" +
+                         std::to_string(Game::Get().Party().GetGold()));
         } else {
-            // PlayMode STOP – restore editor scene
-            RPG_LOG_INFO("Exiting Play Mode (Editor)");
+            RPG_LOG_INFO("=== PLAYTEST STOP ===");
+            GameUI::Get().Message().Hide();
+            GameUI::Get().Pause().Hide();
             if (mProject) {
                 std::string backup = mProject->GetProjectPath() + "/__editor_play_backup.json";
-                if (std::filesystem::exists(backup)) {
-                    LoadScene(backup);
-                }
+                if (std::filesystem::exists(backup)) LoadScene(backup);
             }
-            // Game state clear
             EventSystem::Get().Clear();
+            Game::Get().SetGameStarted(false);
+            Game::Get().Player().SetLocked(false);
         }
     } else {
-        // Echter Player-Modus – kein Scene-Snapshot, nur Flag setzen
         RPG_LOG_INFO(std::string("Play Mode ") + (playing ? "ON (Player)" : "OFF (Player)"));
-        
-        if (playing && mScriptManager) {
-            mScriptManager->ExecuteAllScripts();
+        if (playing) {
+            EventSystem::Get().BindRuntimeCallbacks();
+            EventSystem::Get().LoadMapEvents(Game::Get().Map().GetMapId(),
+                mProject ? mProject->GetProjectPath() : ".");
+            EventSystem::Get().EnsureDemoEvent();
+            if (mScriptManager) mScriptManager->ExecuteAllScripts();
         }
     }
 }
@@ -571,9 +594,29 @@ void Engine::Update(float dt) {
 
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {
+        // Pause menu
+        if (mInput->IsKeyPressed(Key::Escape)) {
+            if (GameUI::Get().Pause().IsVisible()) GameUI::Get().Pause().Hide();
+            else if (!GameUI::Get().Message().IsBusy()) GameUI::Get().Pause().Show();
+        }
+        // Interact with nearby events (E or Enter) when not in dialog
+        if (!GameUI::Get().Message().IsBusy() && !GameUI::Get().Pause().IsVisible()) {
+            if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter)) {
+                EventSystem::Get().TryInteract(Game::Get().Player().GetPosition());
+            }
+        }
+        // Advance/close message with E/Enter/Space
+        if (GameUI::Get().Message().IsBusy()) {
+            if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter) || mInput->IsKeyPressed(Key::Space)) {
+                GameUI::Get().Message().AdvanceInput();
+            }
+        }
+
         Game::Get().Update(dt);
-        Game::Get().Player().Update(dt, *mInput);
-        EventSystem::Get().Update(dt, Game::Get().Player().GetPosition());
+        if (!GameUI::Get().Pause().IsVisible()) {
+            Game::Get().Player().Update(dt, *mInput);
+        }
+        // EventSystem also updated inside Game::Update; keep battle/ruby
         BattleSystem::Get().Update(dt);
         if (mRubyVM) mRubyVM->Update(dt);
     }
@@ -660,6 +703,7 @@ void Engine::Render() {
         // Im Editor nur im PlayMode, im Player immer
         if (!mEditor || mPlayMode) {
             GameUI::Get().Draw();
+            if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
         }
         
         // ImGui Render
@@ -788,17 +832,38 @@ void Engine::RenderScene() {
     }
 #endif
 
-    // Player Visual im PlayMode – damit Editor Play-Test = Player aussieht
+    // Player + Event markers in PlayMode
     if (mPlayMode) {
-        Vec3 playerPos = Game::Get().Player().GetPosition();
         static Mesh playerMesh;
-        static bool playerMeshInit = false;
-        if (!playerMeshInit) {
-            playerMesh = MeshFactory::CreateCube(0.8f);
-            playerMeshInit = true;
+        static Mesh markerMesh;
+        static bool meshesInit = false;
+        if (!meshesInit) {
+            playerMesh = MeshFactory::CreateCube(0.7f);
+            markerMesh = MeshFactory::CreateCube(0.45f);
+            meshesInit = true;
         }
-        Mat4 playerMat = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.4f, 0));
-        mRenderer->DrawMesh(playerMesh, playerMat, nullptr, Color(0.2f, 1.0f, 0.3f, 1.0f));
+        // Player
+        Vec3 playerPos = Game::Get().Player().GetPosition();
+        Mat4 playerMat = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0));
+        mRenderer->DrawMesh(playerMesh, playerMat, nullptr, Color(0.25f, 0.95f, 0.35f, 1.0f));
+        // Facing indicator
+        Vec3 dir = Game::Get().Player().GetDirection();
+        Mat4 nose = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0) + dir * 0.45f);
+        nose = glm::scale(nose, Vec3(0.2f, 0.2f, 0.2f));
+        mRenderer->DrawMesh(markerMesh, nose, nullptr, Color(1.0f, 1.0f, 0.2f, 1.0f));
+
+        // Event NPC markers
+        for (const auto& ev : EventSystem::Get().GetEvents()) {
+            if (!ev.enabled) continue;
+            Vec3 ep = ev.worldPos;
+            if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+            Mat4 em = glm::translate(Mat4(1.0f), ep + Vec3(0, 0.55f, 0));
+            // Bob slightly
+            float bob = std::sin(mTime * 3.0f + ev.id) * 0.08f;
+            em = glm::translate(em, Vec3(0, bob, 0));
+            Color col = (ev.id == 1) ? Color(0.95f, 0.75f, 0.2f, 1.0f) : Color(0.4f, 0.7f, 1.0f, 1.0f);
+            mRenderer->DrawMesh(markerMesh, em, nullptr, col);
+        }
     }
 
     mRenderer->EndFrame();

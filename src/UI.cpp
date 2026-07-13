@@ -1,5 +1,8 @@
 #include "rpgmaker3d/UI.h"
+#include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/EventSystem.h"
 #include <imgui.h>
+#include <algorithm>
 
 namespace rpg {
 
@@ -18,6 +21,18 @@ void MessageWindow::ShowWithChoices(const std::string& text, const std::vector<C
     mChoices = choices;
     mSelectedChoice = 0;
 }
+void MessageWindow::AdvanceInput() {
+    if (!mVisible) return;
+    if (mCharIndex < mText.size()) {
+        mDisplayed = mText;
+        mCharIndex = mText.size();
+        return;
+    }
+    if (mChoices.empty()) {
+        mVisible = false;
+    }
+}
+
 void MessageWindow::Update(float dt) {
     if (!mVisible) return;
     if (mCharIndex < mText.size()) {
@@ -32,13 +47,21 @@ void MessageWindow::Update(float dt) {
 }
 void MessageWindow::Draw() {
     if (!mVisible) return;
-    ImGui::SetNextWindowPos(ImVec2(100, 400), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(500, 150), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Message", nullptr, ImGuiWindowFlags_NoCollapse);
+    ImGuiIO& io = ImGui::GetIO();
+    float w = io.DisplaySize.x * 0.72f;
+    float h = 160.0f;
+    ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, io.DisplaySize.y - h - 28.0f));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##MessageBox", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
     ImGui::TextWrapped("%s", mDisplayed.c_str());
+    ImGui::Dummy(ImVec2(0, 8));
     if (mCharIndex >= mText.size()) {
         if (mChoices.empty()) {
-            if (ImGui::Button("OK")) {
+            ImGui::TextDisabled("E / Enter / Space  -  weiter");
+            if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::Button("OK", ImVec2(100, 0))) {
                 mVisible = false;
             }
         } else {
@@ -52,12 +75,15 @@ void MessageWindow::Draw() {
             }
         }
     } else {
-        if (ImGui::Button("Skip")) {
+        ImGui::TextDisabled("...");
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::Button("Skip")) {
             mDisplayed = mText;
             mCharIndex = mText.size();
         }
     }
     ImGui::End();
+    ImGui::PopStyleColor();
 }
 
 // --- TitleScreen ---
@@ -129,3 +155,36 @@ void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>
 }
 
 } // namespace rpg
+
+
+void GameUI::DrawPlayHud(bool playtest) {
+    if (mTitle.IsVisible() || mPause.IsVisible()) return;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(12, 12));
+    ImGui::SetNextWindowBgAlpha(0.55f);
+    ImGui::Begin("##PlayHUD", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    if (playtest) {
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "PLAYTEST");
+        ImGui::SameLine();
+        ImGui::TextDisabled("F5 Stop");
+    }
+    auto& party = Game::Get().Party();
+    int hp = 0, maxhp = 0;
+    if (!party.Members().empty()) {
+        hp = party.Members()[0].hp;
+        // rough max from current if no max stored
+        maxhp = std::max(hp, 100);
+    }
+    ImGui::Text("HP %d  |  Gold %d", hp, party.GetGold());
+    Vec3 p = Game::Get().Player().GetPosition();
+    ImGui::Text("Pos %.1f, %.1f", p.x, p.z);
+    if (!EventSystem::Get().IsAnyEventRunning()) {
+        ImGui::TextDisabled("E: Sprechen  |  WASD: Bewegen");
+    } else if (EventSystem::Get().IsWaitingForMessage()) {
+        ImGui::TextColored(ImVec4(1,0.9f,0.4f,1), "Dialog...");
+    }
+    ImGui::End();
+    (void)io;
+}

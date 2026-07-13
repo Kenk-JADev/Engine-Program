@@ -96,7 +96,9 @@ public:
     void SetPosition(const Vec3& pos) { mPosition = pos; }
     const Vec3& GetPosition() const { return mPosition; }
 
-    void SetDirection(const Vec3& dir) { mDirection = glm::normalize(dir); }
+    void SetDirection(const Vec3& dir) {
+        if (glm::length(dir) > 1e-5f) mDirection = glm::normalize(dir);
+    }
     const Vec3& GetDirection() const { return mDirection; }
 
     void Move(const Vec3& delta);
@@ -106,13 +108,17 @@ public:
     void SetMoveSpeed(float s) { mMoveSpeed = s; }
 
     bool IsMoving() const { return mIsMoving; }
+    /// When true, player input is ignored (dialog / cutscene)
+    void SetLocked(bool locked) { mLocked = locked; }
+    bool IsLocked() const { return mLocked; }
 
 private:
     Vec3 mPosition{0,0,0};
     Vec3 mDirection{0,0,-1};
     Vec3 mVelocity{0,0,0};
-    float mMoveSpeed = 4.0f;
+    float mMoveSpeed = 4.5f;
     bool mIsMoving = false;
+    bool mLocked = false;
 };
 
 // == Game Map (Runtime) ==
@@ -138,6 +144,8 @@ public:
     static Game& Get();
 
     void NewGame();
+    /// Start playtest at a custom world position (editor "play from here")
+    void NewGameAt(const Vec3& worldPos, int mapId = -1);
     bool Save(int slot);
     bool Load(int slot);
 
@@ -151,6 +159,7 @@ public:
     GameMap& Map() { return mMap; }
 
     bool IsGameStarted() const { return mGameStarted; }
+    void SetGameStarted(bool v) { mGameStarted = v; }
 
 private:
     Game() = default;

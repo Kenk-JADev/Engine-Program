@@ -346,9 +346,14 @@ void Editor::DrawMenuBar() {
         if (ImGui::BeginMenu("Spiel")) {
             bool isPlaying = mEngine.IsPlaying();
             mPlayMode = isPlaying; // sync
-            if (ImGui::MenuItem(isPlaying ? "Stop" : "Start", "F5")) {
+            if (ImGui::MenuItem(isPlaying ? "Stop Playtest" : "Playtest starten", "F5")) {
                 mEngine.SetPlaying(!isPlaying);
             }
+            if (ImGui::MenuItem("Playtest ab Kamera", nullptr, false, !isPlaying)) {
+                mEngine.SetPlaying(true);
+            }
+            ImGui::Separator();
+            ImGui::TextDisabled("Playtest: WASD, E sprechen, Esc Pause");
             ImGui::Separator();
             bool follow = mEngine.IsPlayModeFollowPlayer();
             if (ImGui::MenuItem("Kamera folgt Spieler", nullptr, &follow)) {

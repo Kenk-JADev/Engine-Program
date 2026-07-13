@@ -17,9 +17,11 @@ class MessageWindow {
 public:
     void Show(const std::string& text);
     void ShowWithChoices(const std::string& text, const std::vector<ChoiceOption>& choices);
-    void Hide() { mVisible = false; mText.clear(); }
+    void Hide() { mVisible = false; mText.clear(); mChoices.clear(); }
     bool IsVisible() const { return mVisible; }
     bool IsBusy() const { return mVisible; }
+    /// Skip typewriter or close when complete (keyboard)
+    void AdvanceInput();
 
     void Update(float dt);
     void Draw(); // ImGui rendering
@@ -84,6 +86,9 @@ public:
 
     void ShowMessage(const std::string& text);
     void ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback);
+
+    /// Compact playtest/game HUD (HP/Gold/hints)
+    void DrawPlayHud(bool playtest);
 
 private:
     GameUI() = default;

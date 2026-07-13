@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
     }
 
     rpg::Game::Get().NewGame();
-    engine.SetPlaying(true);
+    engine.SetPlaying(true); // loads demo events + scripts inside SetPlaying
 
     try {
         engine.Run();

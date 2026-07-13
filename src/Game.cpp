@@ -1,4 +1,6 @@
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/UI.h"
+#include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/EventSystem.h"
@@ -87,14 +89,21 @@ void GamePlayer::Move(const Vec3& delta) {
     }
 }
 void GamePlayer::Update(float dt, Input& input) {
+    if (mLocked) {
+        mIsMoving = false;
+        return;
+    }
     Vec3 move{0,0,0};
     float speed = mMoveSpeed * dt;
-    if (input.IsKeyDown(Key::W)) move.z -= speed;
-    if (input.IsKeyDown(Key::S)) move.z += speed;
-    if (input.IsKeyDown(Key::A)) move.x -= speed;
-    if (input.IsKeyDown(Key::D)) move.x += speed;
+    // Sprint
+    if (input.IsKeyDown(Key::LShift)) speed *= 1.75f;
 
-    if (glm::length(move)>0.001f) {
+    if (input.IsKeyDown(Key::W) || input.IsKeyDown(Key::Up))    move.z -= speed;
+    if (input.IsKeyDown(Key::S) || input.IsKeyDown(Key::Down))  move.z += speed;
+    if (input.IsKeyDown(Key::A) || input.IsKeyDown(Key::Left))  move.x -= speed;
+    if (input.IsKeyDown(Key::D) || input.IsKeyDown(Key::Right)) move.x += speed;
+
+    if (glm::length(move) > 0.001f) {
         Move(move);
     } else {
         mIsMoving = false;
@@ -121,14 +130,26 @@ Game& Game::Get() {
 }
 
 void Game::NewGame() {
+    NewGameAt(Vec3(
+        static_cast<float>(Database::Get().System().startX),
+        0.0f,
+        static_cast<float>(Database::Get().System().startY)),
+        Database::Get().System().startMapId);
+}
+
+void Game::NewGameAt(const Vec3& worldPos, int mapId) {
     mSwitches.Clear();
     mVariables.Clear();
     mSelfSwitches.Clear();
     mParty.SetupStartingMembers();
-    mMap.Setup(Database::Get().System().startMapId);
-    mPlayer.SetPosition(Vec3(Database::Get().System().startX, 0, Database::Get().System().startY));
+    int mid = mapId > 0 ? mapId : Database::Get().System().startMapId;
+    mMap.Setup(mid);
+    mPlayer.SetPosition(worldPos);
+    mPlayer.SetLocked(false);
     mGameStarted = true;
-    RPG_LOG_INFO("New Game started");
+    RPG_LOG_INFO("New Game at (" + std::to_string(worldPos.x) + ", " +
+                 std::to_string(worldPos.y) + ", " + std::to_string(worldPos.z) +
+                 ") map=" + std::to_string(mid));
 }
 
 bool Game::Save(int slot) {
@@ -165,6 +186,12 @@ bool Game::Load(int slot) {
 void Game::Update(float dt) {
     if (!mGameStarted) return;
     mMap.Update(dt);
+
+    // Lock player while a message/event is blocking
+    bool busy = EventSystem::Get().IsWaitingForMessage() ||
+                GameUI::Get().Message().IsBusy();
+    mPlayer.SetLocked(busy);
+
     EventSystem::Get().Update(dt, mPlayer.GetPosition());
 }
 
