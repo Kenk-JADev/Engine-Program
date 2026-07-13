@@ -29,7 +29,7 @@ public:
     void LoadProjectScripts(const std::string& projectPath);
     void CreateDefaultScripts(const std::string& projectPath);
 
-    std::vector<std::shared_ptr<Script>> GetScripts() const;
+    const std::vector<std::shared_ptr<Script>>& GetScripts() const;
     std::shared_ptr<Script> CreateScript(const std::string& name);
     void DeleteScript(const std::string& name);
     bool SaveScript(std::shared_ptr<Script> script);

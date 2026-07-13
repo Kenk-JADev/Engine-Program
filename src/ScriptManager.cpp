@@ -81,7 +81,7 @@ void ScriptManager::CreateDefaultScripts(const std::string& projectPath) {
     RPG_LOG_INFO("Created default scripts in: " + mScriptsDirectory);
 }
 
-std::vector<std::shared_ptr<ScriptManager::Script>> ScriptManager::GetScripts() const {
+const std::vector<std::shared_ptr<ScriptManager::Script>>& ScriptManager::GetScripts() const {
     return mScripts;
 }
 

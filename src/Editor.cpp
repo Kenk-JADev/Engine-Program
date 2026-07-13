@@ -126,10 +126,17 @@ void Editor::BeginFrame() {
 void Editor::DrawUI() {
     // Apply editor theme
     EditorStyle::ApplyTheme(mCurrentTheme);
-    
-    // Draw toolbar
-    mToolbar->Draw();
-    
+
+    // Handle global shortcuts
+    HandleShortcuts();
+
+    // Show crash dialog if needed
+    ShowCrashDialog();
+
+    // Primary toolbar (EditorToolbar) + gizmo toolbar
+    if (mToolbar) mToolbar->Draw();
+    DrawToolbar();
+
     DrawMenuBar();
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -176,6 +183,12 @@ void Editor::DrawUI() {
     DrawLightingEditor();
     DrawEnvironmentEditor();
     DrawConsole();
+
+    // Draw gizmo in scene view
+    DrawGizmo();
+
+    // Draw status bar
+    DrawStatusBar();
 
     if (mShowDemo) {
         ImGui::ShowDemoWindow(&mShowDemo);
@@ -1776,17 +1789,26 @@ void Editor::DrawScriptEditor() {
         ImGui::Separator();
         
         static std::string editBuffer;
-        if (editBuffer != script->content) {
+        static int editScriptIndex = -1;
+        if (editScriptIndex != selectedTab) {
             editBuffer = script->content;
+            editScriptIndex = selectedTab;
         }
-        
+        // ImGui needs a writable, null-terminated buffer with spare capacity
+        if (editBuffer.capacity() < 65536) {
+            editBuffer.reserve(65536);
+        }
+        editBuffer.push_back('\0');
+        editBuffer.pop_back();
+
         ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
         if (script->isCore) flags |= ImGuiInputTextFlags_ReadOnly;
-        
+
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        if (ImGui::InputTextMultiline("##ScriptSource", &editBuffer[0], editBuffer.capacity() + 1, 
-            ImVec2(avail.x, avail.y - 40), flags)) {
-            if (!script->isCore && editBuffer != script->content) {
+        if (ImGui::InputTextMultiline("##ScriptSource", editBuffer.data(),
+            editBuffer.capacity() + 1, ImVec2(avail.x, avail.y - 40), flags)) {
+            editBuffer.resize(std::strlen(editBuffer.c_str()));
+            if (!script->isCore) {
                 script->content = editBuffer;
                 script->modified = true;
             }
@@ -2575,74 +2597,6 @@ void Editor::ShowCrashDialog() {
     }
 }
 
-void Editor::DrawUI() {
-    // Apply editor theme
-    EditorStyle::ApplyTheme(mCurrentTheme);
-    
-    // Handle global shortcuts
-    HandleShortcuts();
-    
-    // Show crash dialog if needed
-    ShowCrashDialog();
-    
-    // Draw toolbar
-    DrawToolbar();
-    
-    DrawMenuBar();
-
-    ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::SetNextWindowViewport(viewport->ID);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar
-        | ImGuiWindowFlags_NoDocking
-        | ImGuiWindowFlags_NoTitleBar
-        | ImGuiWindowFlags_NoCollapse
-        | ImGuiWindowFlags_NoResize
-        | ImGuiWindowFlags_NoMove
-        | ImGuiWindowFlags_NoBringToFrontOnFocus
-        | ImGuiWindowFlags_NoNavFocus;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::Begin("DockSpace", nullptr, flags);
-
-    ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
-    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
-
-    if (!mLayoutInitialized) {
-        InitializeDefaultLayout(dockspaceId, viewport->Size.x, viewport->Size.y);
-        mLayoutInitialized = true;
-    }
-
-    ImGui::End();
-    ImGui::PopStyleVar(3);
-
-    DrawSceneView();
-    DrawHierarchy();
-    DrawInspector();
-    DrawProjectPanel();
-    DrawMapEditor();
-    DrawEventEditor();
-    DrawScriptEditor();
-    if (mAudioPreview) mAudioPreview->DrawUI();
-    DrawPrefabBrowser();
-    DrawLightingEditor();
-    DrawEnvironmentEditor();
-    DrawConsole();
-
-    // Draw gizmo in scene view
-    DrawGizmo();
-    
-    // Draw status bar
-    DrawStatusBar();
-
-    if (mShowDemo) {
-        ImGui::ShowDemoWindow(&mShowDemo);
-    }
-}
 
 void Editor::HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
