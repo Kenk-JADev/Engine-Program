@@ -7,6 +7,8 @@
 
 namespace rpg {
 
+class RubyVM;
+
 class ScriptManager {
 public:
     struct Script {
@@ -23,6 +25,10 @@ public:
     void Initialize();
     void Shutdown();
 
+    void SetRubyVM(RubyVM* vm);
+    void LoadProjectScripts(const std::string& projectPath);
+    void CreateDefaultScripts(const std::string& projectPath);
+
     std::vector<std::shared_ptr<Script>> GetScripts() const;
     std::shared_ptr<Script> CreateScript(const std::string& name);
     void DeleteScript(const std::string& name);
@@ -36,6 +42,7 @@ public:
 private:
     std::vector<std::shared_ptr<Script>> mScripts;
     std::string mScriptsDirectory;
+    RubyVM* mRubyVM = nullptr;
 };
 
 } // namespace rpg

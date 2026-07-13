@@ -1,8 +1,10 @@
 #include "rpgmaker3d/ScriptManager.h"
+#include "rpgmaker3d/RubyVM.h"
 #include "rpgmaker3d/Logger.h"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <algorithm>
 
 namespace rpg {
 
@@ -22,6 +24,61 @@ void ScriptManager::Initialize() {
 void ScriptManager::Shutdown() {
     SaveAllScripts();
     mScripts.clear();
+    mRubyVM = nullptr;
+}
+
+void ScriptManager::SetRubyVM(RubyVM* vm) {
+    mRubyVM = vm;
+}
+
+void ScriptManager::LoadProjectScripts(const std::string& projectPath) {
+    mScriptsDirectory = projectPath + "/scripts";
+    std::filesystem::create_directories(mScriptsDirectory);
+    ReloadFromDisk();
+    RPG_LOG_INFO("Loaded project scripts from: " + mScriptsDirectory);
+}
+
+void ScriptManager::CreateDefaultScripts(const std::string& projectPath) {
+    mScriptsDirectory = projectPath + "/scripts";
+    std::filesystem::create_directories(mScriptsDirectory);
+
+    // Main game script
+    {
+        auto script = std::make_shared<Script>();
+        script->name = "main.rb";
+        script->path = mScriptsDirectory + "/main.rb";
+        script->isCore = true;
+        script->modified = true;
+        script->content =
+            "# RPG Maker 3D - Main Script\n"
+            "# This script is executed when the game starts.\n\n"
+            "puts \"RPG Maker 3D game started!\"\n\n"
+            "def on_update(dt)\n"
+            "  # Called every frame\n"
+            "end\n";
+        mScripts.push_back(script);
+        SaveScript(script);
+    }
+
+    // Game helpers
+    {
+        auto script = std::make_shared<Script>();
+        script->name = "game.rb";
+        script->path = mScriptsDirectory + "/game.rb";
+        script->isCore = true;
+        script->modified = true;
+        script->content =
+            "# RPG Maker 3D - Game Helpers\n\n"
+            "module GameHelpers\n"
+            "  def self.hello\n"
+            "    puts \"Hello from GameHelpers!\"\n"
+            "  end\n"
+            "end\n";
+        mScripts.push_back(script);
+        SaveScript(script);
+    }
+
+    RPG_LOG_INFO("Created default scripts in: " + mScriptsDirectory);
 }
 
 std::vector<std::shared_ptr<ScriptManager::Script>> ScriptManager::GetScripts() const {
@@ -113,8 +170,14 @@ void ScriptManager::ReloadFromDisk() {
 
 void ScriptManager::ExecuteAllScripts() {
     for (auto& script : mScripts) {
-        // Execution would be done via RubyVM
         RPG_LOG_INFO("Execute script: " + script->name);
+        if (mRubyVM) {
+            if (!script->path.empty() && std::filesystem::exists(script->path)) {
+                mRubyVM->ExecuteFile(script->path);
+            } else if (!script->content.empty()) {
+                mRubyVM->ExecuteString(script->content);
+            }
+        }
     }
 }
 

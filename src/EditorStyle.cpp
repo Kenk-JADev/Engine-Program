@@ -20,144 +20,145 @@ ImFont* EditorStyle::s_LargeFont = nullptr;
 ImFont* EditorStyle::s_SmallFont = nullptr;
 
 // ==================== FontAwesome Icons (FontAwesome 6 Free Solid) ====================
-// Defined in .cpp to avoid MSVC C4566 warnings with universal character names in headers
+// Defined in .cpp to avoid MSVC C4566 warnings with universal character names in headers.
+// Header declares these as extern const char* — definitions must NOT use inline constexpr.
 namespace Icons {
     // File/Folder operations
-    inline constexpr const char* FOLDER      = "\uf07b";
-    inline constexpr const char* FOLDER_OPEN = "\uf07c";
-    inline constexpr const char* FILE        = "\uf15b";
-    inline constexpr const char* FILE_ALT    = "\uf15c";
-    inline constexpr const char* FILE_CODE   = "\uf1c9";
+    const char* FOLDER      = "\uf07b";
+    const char* FOLDER_OPEN = "\uf07c";
+    const char* FILE        = "\uf15b";
+    const char* FILE_ALT    = "\uf15c";
+    const char* FILE_CODE   = "\uf1c9";
 
     // Media
-    inline constexpr const char* PLAY        = "\uf04b";
-    inline constexpr const char* PAUSE       = "\uf04c";
-    inline constexpr const char* STOP        = "\uf04d";
-    inline constexpr const char* MUSIC       = "\uf001";
-    inline constexpr const char* VOLUME_UP   = "\uf028";
-    inline constexpr const char* VOLUME_MUTE = "\uf6a9";
-    inline constexpr const char* IMAGE       = "\uf03e";
-    inline constexpr const char* VIDEO       = "\uf03d";
-    inline constexpr const char* CAMERA      = "\uf030";
-    inline constexpr const char* FILM        = "\uf008";
+    const char* PLAY        = "\uf04b";
+    const char* PAUSE       = "\uf04c";
+    const char* STOP        = "\uf04d";
+    const char* MUSIC       = "\uf001";
+    const char* VOLUME_UP   = "\uf028";
+    const char* VOLUME_MUTE = "\uf6a9";
+    const char* IMAGE       = "\uf03e";
+    const char* VIDEO       = "\uf03d";
+    const char* CAMERA      = "\uf030";
+    const char* FILM        = "\uf008";
 
     // Editing
-    inline constexpr const char* SAVE        = "\uf0c7";
-    inline constexpr const char* UNDO        = "\uf0e2";
-    inline constexpr const char* REDO        = "\uf01e";
-    inline constexpr const char* PLUS        = "\uf067";
-    inline constexpr const char* MINUS       = "\uf068";
-    inline constexpr const char* TRASH       = "\uf1f8";
-    inline constexpr const char* EDIT        = "\uf044";
-    inline constexpr const char* COPY        = "\uf0c5";
-    inline constexpr const char* CUT         = "\uf0c4";
-    inline constexpr const char* PASTE       = "\uf0ea";
+    const char* SAVE        = "\uf0c7";
+    const char* UNDO        = "\uf0e2";
+    const char* REDO        = "\uf01e";
+    const char* PLUS        = "\uf067";
+    const char* MINUS       = "\uf068";
+    const char* TRASH       = "\uf1f8";
+    const char* EDIT        = "\uf044";
+    const char* COPY        = "\uf0c5";
+    const char* CUT         = "\uf0c4";
+    const char* PASTE       = "\uf0ea";
 
     // View
-    inline constexpr const char* EYE         = "\uf06e";
-    inline constexpr const char* EYE_SLASH   = "\uf070";
-    inline constexpr const char* SEARCH      = "\uf002";
-    inline constexpr const char* ZOOM_IN     = "\uf00e";
-    inline constexpr const char* ZOOM_OUT    = "\uf010";
-    inline constexpr const char* EXPAND      = "\uf065";
-    inline constexpr const char* COMPRESS    = "\uf066";
-    inline constexpr const char* ARROWS_ALT  = "\uf0b2";
+    const char* EYE         = "\uf06e";
+    const char* EYE_SLASH   = "\uf070";
+    const char* SEARCH      = "\uf002";
+    const char* ZOOM_IN     = "\uf00e";
+    const char* ZOOM_OUT    = "\uf010";
+    const char* EXPAND      = "\uf065";
+    const char* COMPRESS    = "\uf066";
+    const char* ARROWS_ALT  = "\uf0b2";
 
     // UI State
-    inline constexpr const char* LOCK        = "\uf023";
-    inline constexpr const char* UNLOCK      = "\uf09c";
-    inline constexpr const char* CHECK       = "\uf00c";
-    inline constexpr const char* TIMES       = "\uf00d";
-    inline constexpr const char* COG         = "\uf013";
-    inline constexpr const char* HOME        = "\uf015";
-    inline constexpr const char* BARS        = "\uf0c9";
+    const char* LOCK        = "\uf023";
+    const char* UNLOCK      = "\uf09c";
+    const char* CHECK       = "\uf00c";
+    const char* TIMES       = "\uf00d";
+    const char* COG         = "\uf013";
+    const char* HOME        = "\uf015";
+    const char* BARS        = "\uf0c9";
 
     // Warnings/Info
-    inline constexpr const char* EXCLAMATION_TRIANGLE = "\uf071";
-    inline constexpr const char* INFO_CIRCLE          = "\uf05a";
-    inline constexpr const char* QUESTION_CIRCLE      = "\uf059";
-    inline constexpr const char* EXCLAMATION_CIRCLE   = "\uf06a";
-    inline constexpr const char* BAN                  = "\uf05e";
-    inline constexpr const char* SPINNER              = "\uf110";
+    const char* EXCLAMATION_TRIANGLE = "\uf071";
+    const char* INFO_CIRCLE          = "\uf05a";
+    const char* QUESTION_CIRCLE      = "\uf059";
+    const char* EXCLAMATION_CIRCLE   = "\uf06a";
+    const char* BAN                  = "\uf05e";
+    const char* SPINNER              = "\uf110";
 
     // Navigation
-    inline constexpr const char* CHEVRON_UP    = "\uf077";
-    inline constexpr const char* CHEVRON_DOWN  = "\uf078";
-    inline constexpr const char* CHEVRON_LEFT  = "\uf053";
-    inline constexpr const char* CHEVRON_RIGHT = "\uf054";
-    inline constexpr const char* ARROW_UP      = "\uf062";
-    inline constexpr const char* ARROW_DOWN    = "\uf063";
-    inline constexpr const char* ARROW_LEFT    = "\uf060";
-    inline constexpr const char* ARROW_RIGHT   = "\uf061";
-    inline constexpr const char* ANGLE_UP      = "\uf106";
-    inline constexpr const char* ANGLE_DOWN    = "\uf107";
-    inline constexpr const char* ANGLE_LEFT    = "\uf104";
-    inline constexpr const char* ANGLE_RIGHT   = "\uf105";
-    inline constexpr const char* CARET_UP      = "\uf0d8";
-    inline constexpr const char* CARET_DOWN    = "\uf0d7";
-    inline constexpr const char* CARET_LEFT    = "\uf0d9";
-    inline constexpr const char* CARET_RIGHT   = "\uf0da";
+    const char* CHEVRON_UP    = "\uf077";
+    const char* CHEVRON_DOWN  = "\uf078";
+    const char* CHEVRON_LEFT  = "\uf053";
+    const char* CHEVRON_RIGHT = "\uf054";
+    const char* ARROW_UP      = "\uf062";
+    const char* ARROW_DOWN    = "\uf063";
+    const char* ARROW_LEFT    = "\uf060";
+    const char* ARROW_RIGHT   = "\uf061";
+    const char* ANGLE_UP      = "\uf106";
+    const char* ANGLE_DOWN    = "\uf107";
+    const char* ANGLE_LEFT    = "\uf104";
+    const char* ANGLE_RIGHT   = "\uf105";
+    const char* CARET_UP      = "\uf0d8";
+    const char* CARET_DOWN    = "\uf0d7";
+    const char* CARET_LEFT    = "\uf0d9";
+    const char* CARET_RIGHT   = "\uf0da";
 
     // Game/Scene specific
-    inline constexpr const char* CUBE            = "\uf1b2";
-    inline constexpr const char* PUZZLE_PIECE    = "\uf12e";
-    inline constexpr const char* MAGIC           = "\uf0d0";
-    inline constexpr const char* LIGHTBULB       = "\uf0eb";
-    inline constexpr const char* PAINT_BRUSH     = "\uf1fc";
-    inline constexpr const char* LAYER_GROUP     = "\uf5fd";
-    inline constexpr const char* OBJECT_GROUP    = "\uf247";
-    inline constexpr const char* DATABASE        = "\uf1c0";
-    inline constexpr const char* SERVER          = "\uf233";
-    inline constexpr const char* CODE            = "\uf121";
-    inline constexpr const char* TERMINAL        = "\uf120";
-    inline constexpr const char* CLOUD_DOWNLOAD  = "\uf381";
-    inline constexpr const char* CLOUD_UPLOAD    = "\uf382";
+    const char* CUBE            = "\uf1b2";
+    const char* PUZZLE_PIECE    = "\uf12e";
+    const char* MAGIC           = "\uf0d0";
+    const char* LIGHTBULB       = "\uf0eb";
+    const char* PAINT_BRUSH     = "\uf1fc";
+    const char* LAYER_GROUP     = "\uf5fd";
+    const char* OBJECT_GROUP    = "\uf247";
+    const char* DATABASE        = "\uf1c0";
+    const char* SERVER          = "\uf233";
+    const char* CODE            = "\uf121";
+    const char* TERMINAL        = "\uf120";
+    const char* CLOUD_DOWNLOAD  = "\uf381";
+    const char* CLOUD_UPLOAD    = "\uf382";
 
     // Text formatting
-    inline constexpr const char* FONT           = "\uf031";
-    inline constexpr const char* TEXT_HEIGHT    = "\uf034";
-    inline constexpr const char* TEXT_WIDTH     = "\uf035";
-    inline constexpr const char* ALIGN_LEFT     = "\uf036";
-    inline constexpr const char* ALIGN_CENTER   = "\uf037";
-    inline constexpr const char* ALIGN_RIGHT    = "\uf038";
-    inline constexpr const char* ALIGN_JUSTIFY  = "\uf039";
-    inline constexpr const char* LIST           = "\uf03a";
-    inline constexpr const char* LIST_UL        = "\uf0ca";
-    inline constexpr const char* LIST_OL        = "\uf0cb";
-    inline constexpr const char* INDENT         = "\uf03c";
-    inline constexpr const char* OUTDENT        = "\uf03b";
-    inline constexpr const char* TABLE          = "\uf0ce";
+    const char* FONT           = "\uf031";
+    const char* TEXT_HEIGHT    = "\uf034";
+    const char* TEXT_WIDTH     = "\uf035";
+    const char* ALIGN_LEFT     = "\uf036";
+    const char* ALIGN_CENTER   = "\uf037";
+    const char* ALIGN_RIGHT    = "\uf038";
+    const char* ALIGN_JUSTIFY  = "\uf039";
+    const char* LIST           = "\uf03a";
+    const char* LIST_UL        = "\uf0ca";
+    const char* LIST_OL        = "\uf0cb";
+    const char* INDENT         = "\uf03c";
+    const char* OUTDENT        = "\uf03b";
+    const char* TABLE          = "\uf0ce";
 
     // Shapes
-    inline constexpr const char* CIRCLE      = "\uf111";
-    inline constexpr const char* SQUARE      = "\uf0c8";
-    inline constexpr const char* CHECK_SQUARE= "\uf14a";
-    inline constexpr const char* MINUS_SQUARE= "\uf146";
-    inline constexpr const char* PLUS_SQUARE = "\uf0fe";
-    inline constexpr const char* CHECK_CIRCLE= "\uf058";
+    const char* CIRCLE      = "\uf111";
+    const char* SQUARE      = "\uf0c8";
+    const char* CHECK_SQUARE= "\uf14a";
+    const char* MINUS_SQUARE= "\uf146";
+    const char* PLUS_SQUARE = "\uf0fe";
+    const char* CHECK_CIRCLE= "\uf058";
 
     // File types
-    inline constexpr const char* FILE_AUDIO    = "\uf1c7";
-    inline constexpr const char* FILE_VIDEO    = "\uf1c8";
-    inline constexpr const char* FILE_IMAGE    = "\uf1c5";
-    inline constexpr const char* FILE_PDF      = "\uf1c1";
-    inline constexpr const char* FILE_WORD     = "\uf1c2";
-    inline constexpr const char* FILE_EXCEL    = "\uf1c3";
-    inline constexpr const char* FILE_POWERPOINT = "\uf1c4";
-    inline constexpr const char* FILE_ARCHIVE  = "\uf1c6";
+    const char* FILE_AUDIO    = "\uf1c7";
+    const char* FILE_VIDEO    = "\uf1c8";
+    const char* FILE_IMAGE    = "\uf1c5";
+    const char* FILE_PDF      = "\uf1c1";
+    const char* FILE_WORD     = "\uf1c2";
+    const char* FILE_EXCEL    = "\uf1c3";
+    const char* FILE_POWERPOINT = "\uf1c4";
+    const char* FILE_ARCHIVE  = "\uf1c6";
 
     // Additional icons used by EditorToolbar
-    inline constexpr const char* MOUSE_POINTER   = "\uf245";
-    inline constexpr const char* SYNC_ALT        = "\uf2f1";
-    inline constexpr const char* EXPAND_ARROWS_ALT = "\uf31e";
-    inline constexpr const char* STEP_FORWARD    = "\uf051";
-    inline constexpr const char* FAST_FORWARD    = "\uf050";
-    inline constexpr const char* FORWARD         = "\uf04e";
-    inline constexpr const char* DOT_CIRCLE      = "\uf192";
-    inline constexpr const char* TH              = "\uf00a";
-    inline constexpr const char* TH_LARGE        = "\uf009";
-    inline constexpr const char* EYEDROPPER      = "\uf1fb";
-    inline constexpr const char* ERASER          = "\uf12d";
+    const char* MOUSE_POINTER   = "\uf245";
+    const char* SYNC_ALT        = "\uf2f1";
+    const char* EXPAND_ARROWS_ALT = "\uf31e";
+    const char* STEP_FORWARD    = "\uf051";
+    const char* FAST_FORWARD    = "\uf050";
+    const char* FORWARD         = "\uf04e";
+    const char* DOT_CIRCLE      = "\uf192";
+    const char* TH              = "\uf00a";
+    const char* TH_LARGE        = "\uf009";
+    const char* EYEDROPPER      = "\uf1fb";
+    const char* ERASER          = "\uf12d";
 } // namespace Icons
 
 // ==================== Theme Color Initialization ====================

@@ -1,4 +1,6 @@
 #include <algorithm>
+#include <functional>
+#include <cstring>
 #include "rpgmaker3d/Editor.h"
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Window.h"
@@ -24,6 +26,8 @@
 #include "rpgmaker3d/AudioManager.h"
 #include "rpgmaker3d/EditorToolbar.h"
 #include "rpgmaker3d/EditorStyle.h"
+#include "rpgmaker3d/Camera.h"
+#include "rpgmaker3d/Input.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -58,7 +62,7 @@
 namespace rpg {
 
 // Static crash callback
-std::function<void(const Editor::CrashInfo&)> g_CrashCallback = nullptr;
+std::function<void(const CrashInfo&)> g_CrashCallback = nullptr;
 
 void Editor::SetCrashCallback(std::function<void(const CrashInfo&)> callback) {
     g_CrashCallback = callback;
@@ -943,43 +947,45 @@ void Editor::DrawMapEditor() {
             
             // ==== TILE-PALETTE ====
             if (ImGui::BeginTabItem(Icons::PAINT_BRUSH " Tile-Palette")) {
-                auto& tileset = mEngine.GetMap().GetTileset();
+                auto tileset = mEngine.GetMap().GetTileset();
                 if (tileset) {
-                    ImGui::Text("Tileset: %dx%d tiles (%dx%d)", 
+                    ImGui::Text("Tileset: %dx%d tiles (%dx%d)",
                         tileset->GetColumns(), tileset->GetRows(),
                         tileset->GetTileWidth(), tileset->GetTileHeight());
-                    
+
                     ImGui::Separator();
                     ImGui::Text("Selected Tile: %d", mSelectedTile);
                     ImGui::Separator();
-                    
+
                     // Tile grid
                     int columns = tileset->GetColumns();
                     int rows = tileset->GetRows();
                     int tileCount = columns * rows;
-                    
+
                     float tileSize = 32.0f * mTileScale;
                     float spacing = 2.0f;
                     int colsPerRow = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (tileSize + spacing)));
-                    
+
                     if (ImGui::BeginChild("TileGrid", ImVec2(0, 0), true)) {
                         ImTextureID texId = (ImTextureID)(intptr_t)(tileset->GetTexture() ? tileset->GetTexture()->GetID() : 0);
-                        
+
                         for (int i = 0; i < tileCount; ++i) {
                             int col = i % colsPerRow;
-                            int row = i / colsPerRow;
-                            
+
                             if (col > 0) ImGui::SameLine();
-                            
-                            ImVec2 uv0 = tileset->GetTileUV(i);
-                            // Use UV coordinates for the tile
-                            
+
+                            // GetTileUV returns Vec4(u0, v0, u1, v1)
+                            Vec4 uv = tileset->GetTileUV(i);
+                            ImVec2 uv0(uv.x, uv.y);
+                            ImVec2 uv1(uv.z, uv.w);
+
                             bool selected = (mSelectedTile == i);
                             ImVec4 tint = selected ? ImVec4(1.0f, 1.0f, 0.5f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-                            
+
                             ImGui::PushID(i);
-                            if (ImGui::ImageButton("##tile", texId, ImVec2(tileSize, tileSize), 
-                                ImVec2(uv0.x, uv0.y), ImVec2(uv0.z, uv0.w), 0, ImVec4(0,0,0,0), tint)) {
+                            // ImGui 1.91+ ImageButton: (str_id, tex, size, uv0, uv1, bg_col, tint_col)
+                            if (ImGui::ImageButton("##tile", texId, ImVec2(tileSize, tileSize),
+                                uv0, uv1, ImVec4(0, 0, 0, 0), tint)) {
                                 mSelectedTile = i;
                             }
                             if (ImGui::IsItemHovered()) {

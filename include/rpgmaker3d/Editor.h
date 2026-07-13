@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <functional>
 #include "Types.h"
 #include "EventSystem.h"
 #include "EditorStyle.h"
@@ -83,6 +84,8 @@ private:
     void DrawToolbar(); // NEW: Toolbar with gizmo controls
     void DrawStatusBar(); // NEW: Status bar
     void HandleShortcuts(); // NEW: Keyboard shortcuts
+    void HandleSceneViewCamera();
+    void HandleSceneViewContextMenu(const ImVec2& viewPos, const ImVec2& viewSize);
 
     void InitializeDefaultLayout(unsigned int dockspaceId, float width, float height);
 

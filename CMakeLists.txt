@@ -118,6 +118,11 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
+# MSVC: UTF-8 source/execution charset (avoids C4566 on icon unicode escapes)
+if(MSVC)
+    target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
+endif()
+
 if(WIN32)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         NOMINMAX
@@ -465,6 +470,10 @@ if(RPGMAKER3D_BUILD_PLAYER)
         GLM_ENABLE_EXPERIMENTAL
         _CRT_SECURE_NO_WARNINGS
     )
+
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME}_Player PRIVATE /utf-8)
+    endif()
 
     if(WIN32)
         target_compile_definitions(${PROJECT_NAME}_Player PRIVATE
