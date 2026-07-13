@@ -946,7 +946,7 @@ void Editor::DrawMapEditor() {
             }
             
             // ==== TILE-PALETTE ====
-            if (ImGui::BeginTabItem(Icons::PAINT_BRUSH " Tile-Palette")) {
+            if (ImGui::BeginTabItem((std::string(Icons::PAINT_BRUSH) + " Tile-Palette").c_str())) {
                 auto tileset = mEngine.GetMap().GetTileset();
                 if (tileset) {
                     ImGui::Text("Tileset: %dx%d tiles (%dx%d)",
@@ -1124,7 +1124,7 @@ void Editor::DrawEventEditor() {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
     
-    if (ImGui::Button(Icons::PLUS " Neues Event")) {
+    if (ImGui::Button((std::string(Icons::PLUS) + " Neues Event").c_str())) {
         MapEvent newEvent;
         newEvent.id = events.empty() ? 1 : events.back().id + 1;
         newEvent.name = "EV" + std::to_string(newEvent.id);
@@ -1147,13 +1147,13 @@ void Editor::DrawEventEditor() {
         mSelectedEventPage = 0;
     }
     ImGui::SameLine();
-    if (ImGui::Button(Icons::TRASH " Löschen") && mSelectedEventId >= 0) {
+    if (ImGui::Button((std::string(Icons::TRASH) + " Löschen").c_str()) && mSelectedEventId >= 0) {
         eventSystem.RemoveEvent(mSelectedEventId);
         mSelectedEventId = -1;
         mSelectedEventPage = -1;
     }
     ImGui::SameLine();
-    if (ImGui::Button(Icons::PLUS " Seite") && mSelectedEventId >= 0) {
+    if (ImGui::Button((std::string(Icons::PLUS) + " Seite").c_str()) && mSelectedEventId >= 0) {
         auto* ev = eventSystem.GetEvent(mSelectedEventId);
         if (ev) {
             EventPage page;
@@ -1164,7 +1164,7 @@ void Editor::DrawEventEditor() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button(Icons::TRASH " Seite") && mSelectedEventId >= 0 && mSelectedEventPage > 0) {
+    if (ImGui::Button((std::string(Icons::TRASH) + " Seite").c_str()) && mSelectedEventId >= 0 && mSelectedEventPage > 0) {
         auto* ev = eventSystem.GetEvent(mSelectedEventId);
         if (ev && ev->pages.size() > 1) {
             ev->pages.erase(ev->pages.begin() + mSelectedEventPage);
@@ -1172,12 +1172,12 @@ void Editor::DrawEventEditor() {
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button(Icons::COPY " Kopieren") && mSelectedEventId >= 0) {
+    if (ImGui::Button((std::string(Icons::COPY) + " Kopieren").c_str()) && mSelectedEventId >= 0) {
         auto* ev = eventSystem.GetEvent(mSelectedEventId);
         if (ev) mClipboardCommand = EventCommand(); // Store event reference
     }
     ImGui::SameLine();
-    if (ImGui::Button(Icons::PASTE " Einfügen") && mSelectedEventId >= 0) {
+    if (ImGui::Button((std::string(Icons::PASTE) + " Einfügen").c_str()) && mSelectedEventId >= 0) {
         // Paste logic
     }
     
@@ -1254,7 +1254,7 @@ void Editor::DrawEventEditor() {
             // Seiten-Auswahl with better UI
             ImGui::Text("Seiten");
             ImGui::SameLine();
-            if (ImGui::Button(Icons::PLUS " Seite hinzufügen")) {
+            if (ImGui::Button((std::string(Icons::PLUS) + " Seite hinzufügen").c_str())) {
                 EventPage page;
                 page.id = static_cast<int>(ev->pages.size()) + 1;
                 page.trigger = EventTrigger::ActionButton;
@@ -2294,19 +2294,19 @@ void Editor::DrawToolbar() {
     ImGui::Text("Gizmo:");
     ImGui::SameLine();
     
-    if (ImGui::RadioButton(Icons::MOUSE_POINTER " Select", mGizmoMode == GizmoMode::None)) {
+    if (ImGui::RadioButton((std::string(Icons::MOUSE_POINTER) + " Select").c_str(), mGizmoMode == GizmoMode::None)) {
         mGizmoMode = GizmoMode::None;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton(Icons::ARROWS_ALT " Move", mGizmoMode == GizmoMode::Translate)) {
+    if (ImGui::RadioButton((std::string(Icons::ARROWS_ALT) + " Move").c_str(), mGizmoMode == GizmoMode::Translate)) {
         mGizmoMode = GizmoMode::Translate;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton(Icons::SYNC_ALT " Rotate", mGizmoMode == GizmoMode::Rotate)) {
+    if (ImGui::RadioButton((std::string(Icons::SYNC_ALT) + " Rotate").c_str(), mGizmoMode == GizmoMode::Rotate)) {
         mGizmoMode = GizmoMode::Rotate;
     }
     ImGui::SameLine();
-    if (ImGui::RadioButton(Icons::EXPAND_ARROWS_ALT " Scale", mGizmoMode == GizmoMode::Scale)) {
+    if (ImGui::RadioButton((std::string(Icons::EXPAND_ARROWS_ALT) + " Scale").c_str(), mGizmoMode == GizmoMode::Scale)) {
         mGizmoMode = GizmoMode::Scale;
     }
     
