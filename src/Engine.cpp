@@ -692,9 +692,9 @@ void Engine::RenderScene() {
     // Skybox zuerst zeichnen (hinter allem)
     mRenderer->DrawSkybox(*camera);
 
-    // Grid (nur im Editor)
-    if (mEditorMode) {
-        mRenderer->DrawMesh(mGridMesh, Mat4(1.0f), nullptr, Color(0.4f, 0.4f, 0.4f, 0.6f));
+    // Grid (nur im Editor, als Linien – nicht als gefüllte Dreiecke)
+    if (mEditorMode && mShowGrid) {
+        mRenderer->DrawGrid(mGridMesh, Mat4(1.0f), Color(0.35f, 0.35f, 0.40f, 0.55f));
     }
 
     // Map

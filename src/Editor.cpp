@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <cstring>
 #include "rpgmaker3d/Editor.h"
@@ -126,6 +127,11 @@ void Editor::BeginFrame() {
 void Editor::DrawUI() {
     // Apply editor theme
     EditorStyle::ApplyTheme(mCurrentTheme);
+    // Optional day/night animation
+    if (mTimeOfDaySpeed > 0.0f && !mEngine.IsPlaying()) {
+        Lighting::Get().UpdateTimeOfDay(mEngine.GetDeltaTime(), mTimeOfDaySpeed);
+        mTimeOfDay = Lighting::Get().GetTimeOfDay();
+    }
 
     // Handle global shortcuts
     HandleShortcuts();
@@ -133,11 +139,10 @@ void Editor::DrawUI() {
     // Show crash dialog if needed
     ShowCrashDialog();
 
-    // Primary toolbar (EditorToolbar) + gizmo toolbar
-    if (mToolbar) mToolbar->Draw();
-    DrawToolbar();
-
     DrawMenuBar();
+
+    // Compact main toolbar under menu bar
+    if (mToolbar) mToolbar->Draw();
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -159,7 +164,7 @@ void Editor::DrawUI() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::Begin("DockSpace", nullptr, flags);
 
-    ImGuiID dockspaceId = ImGui::GetID("MainDockSpace");
+    ImGuiID dockspaceId = ImGui::GetID("MainDockSpace_v2");
     // PassthruCentralNode entfernt – war Hauptursache für Flickern
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
@@ -185,7 +190,6 @@ void Editor::DrawUI() {
     DrawConsole();
 
     // Draw gizmo in scene view
-    DrawGizmo();
 
     // Draw status bar
     DrawStatusBar();
@@ -200,19 +204,29 @@ void Editor::InitializeDefaultLayout(ImGuiID dockspaceId, float width, float hei
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
     ImGui::DockBuilderSetNodeSize(dockspaceId, ImVec2(width, height));
 
-    ImGuiID dock_main_id = dockspaceId;
-    ImGuiID dock_id_left = ImGui::DockBuilderSplitNode(dock_main_id, ImGuiDir_Left, 0.22f, nullptr, &dock_main_id);
-    ImGuiID dock_id_right = ImGui::DockBuilderSplitNode(dock_main_id, ImGuiDir_Right, 0.24f, nullptr, &dock_main_id);
-    ImGuiID dock_id_bottom = ImGui::DockBuilderSplitNode(dock_main_id, ImGuiDir_Down, 0.28f, nullptr, &dock_main_id);
+    // Clean layout matching actual window titles:
+    // Left Hierarchy | Center Scene | Right Inspector
+    // Bottom: Projekt / Konsole / Script Editor
+    ImGuiID dock_main = dockspaceId;
+    ImGuiID dock_left = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Left, 0.18f, nullptr, &dock_main);
+    ImGuiID dock_right = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Right, 0.22f, nullptr, &dock_main);
+    ImGuiID dock_bottom = ImGui::DockBuilderSplitNode(dock_main, ImGuiDir_Down, 0.22f, nullptr, &dock_main);
+    ImGuiID dock_left_bottom = ImGui::DockBuilderSplitNode(dock_left, ImGuiDir_Down, 0.40f, nullptr, &dock_left);
 
-    ImGui::DockBuilderDockWindow("Hierarchy", dock_id_left);
-    ImGui::DockBuilderDockWindow("Map Editor", dock_id_left);
-    ImGui::DockBuilderDockWindow("Inspector", dock_id_right);
-    ImGui::DockBuilderDockWindow("Project", dock_id_bottom);
-    ImGui::DockBuilderDockWindow("Console", dock_id_bottom);
-    ImGui::DockBuilderDockWindow("Prefab Browser", dock_id_right);
-    ImGui::DockBuilderDockWindow("Scene", dock_main_id);
-    ImGui::DockBuilderDockWindow("Script Editor", dock_main_id);
+    ImGui::DockBuilderDockWindow("Hierarchy", dock_left);
+    ImGui::DockBuilderDockWindow("Karten-Editor", dock_left_bottom);
+    ImGui::DockBuilderDockWindow("Event-Editor", dock_left_bottom);
+
+    ImGui::DockBuilderDockWindow("Inspector", dock_right);
+    ImGui::DockBuilderDockWindow("Beleuchtung", dock_right);
+    ImGui::DockBuilderDockWindow("Umgebung", dock_right);
+    ImGui::DockBuilderDockWindow("Prefab Browser", dock_right);
+
+    ImGui::DockBuilderDockWindow("Projekt", dock_bottom);
+    ImGui::DockBuilderDockWindow("Konsole", dock_bottom);
+    ImGui::DockBuilderDockWindow("Script Editor", dock_bottom);
+
+    ImGui::DockBuilderDockWindow("Scene", dock_main);
     ImGui::DockBuilderFinish(dockspaceId);
 }
 
@@ -407,23 +421,60 @@ void Editor::DrawSceneView() {
         mSceneViewHovered = ImGui::IsItemHovered();
         mSceneViewFocused = ImGui::IsWindowFocused();
 
+        // Gizmo tools bar overlaid on scene view (top-center)
+        {
+            ImGui::SetCursorScreenPos(ImVec2(pos.x + 8.0f, pos.y + 8.0f));
+            ImGui::BeginChild("##SceneGizmoBar", ImVec2(size.x - 16.0f, 32.0f), false,
+                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.35f));
+
+            auto modeBtn = [&](const char* label, GizmoMode mode) {
+                bool active = (mGizmoMode == mode);
+                if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.30f, 0.50f, 0.85f, 0.90f));
+                if (ImGui::SmallButton(label)) mGizmoMode = mode;
+                if (active) ImGui::PopStyleColor();
+                ImGui::SameLine();
+            };
+            modeBtn("Select (Q)", GizmoMode::None);
+            modeBtn("Move (W)", GizmoMode::Translate);
+            modeBtn("Rotate (E)", GizmoMode::Rotate);
+            modeBtn("Scale (R)", GizmoMode::Scale);
+            ImGui::Dummy(ImVec2(8, 0)); ImGui::SameLine();
+            if (ImGui::SmallButton(mGizmoSpace == GizmoSpace::Local ? "Local" : "World")) {
+                mGizmoSpace = (mGizmoSpace == GizmoSpace::Local) ? GizmoSpace::World : GizmoSpace::Local;
+            }
+            ImGui::SameLine();
+            ImGui::Checkbox("Snap", &mGizmoSnap);
+            if (mGizmoSnap) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(60);
+                ImGui::DragFloat("##snapv", &mGizmoSnapValue, 0.05f, 0.05f, 5.0f, "%.2f");
+            }
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+            ImGui::EndChild();
+        }
+
+        // Draw interactive gizmo on top of the scene image
+        DrawGizmo();
+
         HandleSceneViewPicking();
         HandleSceneViewCamera();
-        
-        // Right-click context menu
+
+        // Right-click context menu (opens on right click without orbiting if no drag)
         HandleSceneViewContextMenu(pos, size);
-        
+
         // Overlay info
         if (mEngine.IsPlaying()) {
-            ImVec2 overlay_pos = ImVec2(pos.x + 8, pos.y + 8);
-            draw_list->AddText(overlay_pos, IM_COL32(80, 255, 80, 255), "PLAY MODE");
+            draw_list->AddText(ImVec2(pos.x + 8, pos.y + 44), IM_COL32(80, 255, 80, 255), "PLAY MODE");
         }
-        
-        // Show camera controls hint
+
         if (mSceneViewHovered && !mEngine.IsPlaying()) {
-            ImVec2 hint_pos = ImVec2(pos.x + 8, pos.y + size.y - 60);
-            draw_list->AddText(hint_pos, IM_COL32(180, 180, 180, 200), 
-                "RMB: Orbit  |  MMB: Pan  |  Wheel: Zoom  |  WASD: Move  |  Q/E: Up/Down");
+            ImVec2 hint_pos = ImVec2(pos.x + 8, pos.y + size.y - 22);
+            draw_list->AddText(hint_pos, IM_COL32(180, 180, 180, 180),
+                "RMB: Orbit  |  MMB: Pan  |  Wheel: Zoom  |  WASD  |  Q/E  |  F: Focus  |  RMB click: Context");
         }
     } else {
         ImGui::Text("Scene View (%.0f x %.0f)", size.x, size.y);
@@ -550,14 +601,27 @@ void Editor::HandleSceneViewCamera() {
 
 void Editor::HandleSceneViewContextMenu(const ImVec2& viewPos, const ImVec2& viewSize) {
     if (!mSceneViewHovered) return;
-    
-    // Right-click opens context menu
+
+    // Open on right-click release only if almost no drag (so orbit still works)
+    static ImVec2 rmbDownPos(0, 0);
+    static bool rmbWasDown = false;
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && mSceneViewFocused) {
-        ImGui::OpenPopup("SceneViewContextMenu");
+        rmbDownPos = ImGui::GetMousePos();
+        rmbWasDown = true;
     }
-    
+    if (rmbWasDown && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        ImVec2 up = ImGui::GetMousePos();
+        float dx = up.x - rmbDownPos.x, dy = up.y - rmbDownPos.y;
+        if ((dx*dx + dy*dy) < 16.0f) { // ~4px
+            ImGui::OpenPopup("SceneViewContextMenu");
+        }
+        rmbWasDown = false;
+    }
+
     if (ImGui::BeginPopup("SceneViewContextMenu")) {
-        // Camera options
+        ImGui::TextDisabled("Scene");
+        ImGui::Separator();
+
         if (ImGui::MenuItem("Reset Camera")) {
             Camera& cam = mEngine.GetRenderer().GetCamera();
             cam.SetPosition(Vec3(0, 10, 10));
@@ -574,49 +638,107 @@ void Editor::HandleSceneViewContextMenu(const ImVec2& viewPos, const ImVec2& vie
                 }
             }
         }
+        if (ImGui::MenuItem("Frame All")) {
+            Camera& cam = mEngine.GetRenderer().GetCamera();
+            cam.SetPosition(Vec3(0, 12, 16));
+            cam.SetRotation(Vec3(-35, 0, 0));
+        }
+
         ImGui::Separator();
-        
-        // View options
-        if (ImGui::MenuItem("Toggle Grid")) {
-            // Grid is rendered in Engine::RenderScene
+        ImGui::TextDisabled("Create");
+
+        ImVec2 mousePos = ImGui::GetMousePos();
+        Vec2 localPos(mousePos.x - viewPos.x, mousePos.y - viewPos.y);
+        Camera& cam = mEngine.GetRenderer().GetCamera();
+        Ray ray = Raycast::ScreenPointToRay(cam, localPos, mSceneViewSize);
+        auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
+        Vec3 spawn = hit.hit ? hit.point : Vec3(0, 0, 0);
+
+        if (ImGui::MenuItem("Cube")) {
+            CreateCube();
+            if (mSelectedEntity >= 0) {
+                if (auto* t = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity)))
+                    t->transform.position = spawn + Vec3(0, 0.5f, 0);
+            }
+        }
+        if (ImGui::MenuItem("Plane")) {
+            CreatePlane();
+            if (mSelectedEntity >= 0) {
+                if (auto* t = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity)))
+                    t->transform.position = spawn;
+            }
+        }
+        if (ImGui::MenuItem("Light")) {
+            CreateLight();
+            if (mSelectedEntity >= 0) {
+                if (auto* t = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity)))
+                    t->transform.position = spawn + Vec3(0, 3.0f, 0);
+            }
+        }
+        if (ImGui::MenuItem("Particle Emitter")) {
+            EntityID id = mEngine.GetScene().CreateEntity("Particles");
+            auto* tr = mEngine.GetScene().AddComponent<TransformComponent>(id);
+            tr->transform.position = spawn + Vec3(0, 0.5f, 0);
+            auto* pe = mEngine.GetScene().AddComponent<ParticleEmitterComponent>(id);
+            pe->emitter = std::make_unique<ParticleEmitter>();
+            pe->emitter->ApplyPreset("fire");
+            pe->autoEmit = true;
+            pe->emitCount = pe->emitter->defaultCount;
+            pe->emitDirection = pe->emitter->defaultDirection;
+            pe->emitSpread = pe->emitter->defaultSpread;
+            pe->emitSpeed = pe->emitter->defaultSpeed;
+            pe->emitLife = pe->emitter->defaultLife;
+            pe->emitColor = pe->emitter->defaultStartColor;
+            mSelectedEntity = static_cast<int>(id);
+        }
+
+        ImGui::Separator();
+        ImGui::TextDisabled("Edit");
+        if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, mSelectedEntity >= 0)) {
+            if (mSelectedEntity >= 0) {
+                EntityID srcId = static_cast<EntityID>(mSelectedEntity);
+                auto* st = mEngine.GetScene().GetComponent<TransformComponent>(srcId);
+                EntityID id = mEngine.GetScene().CreateEntity(mEngine.GetScene().GetEntityName(srcId) + " Copy");
+                auto* t = mEngine.GetScene().AddComponent<TransformComponent>(id);
+                if (st) {
+                    t->transform = st->transform;
+                    t->transform.position.x += 1.0f;
+                }
+                if (auto* sm = mEngine.GetScene().GetComponent<ModelRendererComponent>(srcId)) {
+                    auto* m = mEngine.GetScene().AddComponent<ModelRendererComponent>(id);
+                    m->model = sm->model;
+                    m->texture = sm->texture;
+                }
+                if (auto* mat = mEngine.GetScene().GetComponent<MaterialComponent>(srcId)) {
+                    auto* m = mEngine.GetScene().AddComponent<MaterialComponent>(id);
+                    m->material = mat->material;
+                }
+                mSelectedEntity = static_cast<int>(id);
+            }
+        }
+        if (ImGui::MenuItem("Delete", "Del", false, mSelectedEntity >= 0)) {
+            DeleteSelectedEntity();
+        }
+        if (ImGui::BeginMenu("Gizmo Mode")) {
+            if (ImGui::MenuItem("Select", "Q", mGizmoMode == GizmoMode::None)) mGizmoMode = GizmoMode::None;
+            if (ImGui::MenuItem("Move", "W", mGizmoMode == GizmoMode::Translate)) mGizmoMode = GizmoMode::Translate;
+            if (ImGui::MenuItem("Rotate", "E", mGizmoMode == GizmoMode::Rotate)) mGizmoMode = GizmoMode::Rotate;
+            if (ImGui::MenuItem("Scale", "R", mGizmoMode == GizmoMode::Scale)) mGizmoMode = GizmoMode::Scale;
+            ImGui::EndMenu();
+        }
+
+        ImGui::Separator();
+        ImGui::TextDisabled("View");
+        if (ImGui::MenuItem("Toggle Grid", "G")) {
+            mEngine.ToggleGrid();
         }
         if (ImGui::MenuItem("Toggle Wireframe")) {
             mEngine.GetRenderer().EnableWireframe(!mEngine.GetRenderer().IsWireframeEnabled());
         }
-        ImGui::Separator();
-        
-        // Create entities at cursor
-        ImVec2 mousePos = ImGui::GetMousePos();
-        Vec2 localPos(mousePos.x - viewPos.x, mousePos.y - viewPos.y);
-        if (localPos.x >= 0 && localPos.y >= 0 && localPos.x < viewSize.x && localPos.y < viewSize.y) {
-            Camera& cam = mEngine.GetRenderer().GetCamera();
-            Ray ray = Raycast::ScreenPointToRay(cam, localPos, mSceneViewSize);
-            auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
-            
-            if (hit.hit) {
-                std::string label = "Create Cube at (" + std::to_string(static_cast<int>(hit.point.x)) + ", " + std::to_string(static_cast<int>(hit.point.z)) + ")";
-                if (ImGui::MenuItem(label.c_str())) {
-                    CreateCube();
-                    if (mSelectedEntity >= 0) {
-                        auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
-                        if (transform) transform->transform.position = hit.point + Vec3(0, 0.5f, 0);
-                    }
-                }
-                label = "Create Light at (" + std::to_string(static_cast<int>(hit.point.x)) + ", " + std::to_string(static_cast<int>(hit.point.z)) + ")";
-                if (ImGui::MenuItem(label.c_str())) {
-                    CreateLight();
-                    if (mSelectedEntity >= 0) {
-                        auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
-                        if (transform) transform->transform.position = hit.point + Vec3(0, 3.0f, 0);
-                    }
-                }
-            }
+        if (ImGui::MenuItem("Snap", nullptr, mGizmoSnap)) {
+            mGizmoSnap = !mGizmoSnap;
         }
-        
-        ImGui::Separator();
-        if (ImGui::MenuItem("Delete Selected", "Del", false, mSelectedEntity >= 0)) {
-            DeleteSelectedEntity();
-        }
+
         ImGui::EndPopup();
     }
 }
@@ -702,12 +824,25 @@ void Editor::DrawInspector() {
                 ImGui::SliderFloat("Speed", &emitter->emitSpeed, 0.0f, 10.0f);
                 ImGui::SliderFloat("Life", &emitter->emitLife, 0.1f, 5.0f);
                 ImGui::ColorEdit4("Color", &emitter->emitColor.x);
+                ImGui::Text("Presets");
+                if (ImGui::SmallButton("Fire")) emitter->emitter->ApplyPreset("fire");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Smoke")) emitter->emitter->ApplyPreset("smoke");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Spark")) emitter->emitter->ApplyPreset("spark");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Magic")) emitter->emitter->ApplyPreset("magic");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Heal")) emitter->emitter->ApplyPreset("heal");
+                ImGui::Text("Alive: %d / %d", emitter->emitter->GetAliveCount(), emitter->emitter->GetMaxParticles());
                 if (ImGui::Button("Burst")) {
                     auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(id);
                     Vec3 origin = transform ? transform->transform.position : Vec3(0.0f);
                     emitter->emitter->Emit(emitter->emitCount, origin, emitter->emitDirection,
                         emitter->emitSpread, emitter->emitSpeed, emitter->emitLife, emitter->emitColor);
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear")) emitter->emitter->Clear();
                 ImGui::TreePop();
             }
         }
@@ -2061,18 +2196,76 @@ void Editor::LoadTilesetForMap(int tilesetId) {
 
 void Editor::DrawLightingEditor() {
     ImGui::Begin("Beleuchtung");
-    auto& dir = Lighting::Get().GetDirectionalLight();
-    auto& amb = Lighting::Get().GetAmbient();
+    auto& lighting = Lighting::Get();
+    auto& dir = lighting.GetDirectionalLight();
+    auto& amb = lighting.GetAmbient();
 
-    ImGui::Text("Richtungslicht");
-    ImGui::DragFloat3("Richtung", &dir.direction.x, 0.01f);
-    ImGui::ColorEdit3("Farbe", &dir.color.x);
-    ImGui::SliderFloat("Intensität", &dir.intensity, 0.0f, 5.0f);
+    ImGui::Text("Presets");
+    if (ImGui::Button("Studio")) lighting.ApplyPreset("studio");
+    ImGui::SameLine();
+    if (ImGui::Button("Mittag")) lighting.ApplyPreset("noon");
+    ImGui::SameLine();
+    if (ImGui::Button("Abend")) lighting.ApplyPreset("sunset");
+    ImGui::SameLine();
+    if (ImGui::Button("Nacht")) lighting.ApplyPreset("night");
+    ImGui::SameLine();
+    if (ImGui::Button("Bewölkt")) lighting.ApplyPreset("overcast");
 
     ImGui::Separator();
-    ImGui::Text("Umgebungslicht");
-    ImGui::ColorEdit3("Farbe", &amb.color.x);
-    ImGui::SliderFloat("Intensität", &amb.intensity, 0.0f, 1.0f);
+    if (ImGui::CollapsingHeader("Richtungslicht (Sonne)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Aktiv", &dir.enabled);
+        ImGui::DragFloat3("Richtung", &dir.direction.x, 0.01f);
+        ImGui::ColorEdit3("Farbe", &dir.color.x);
+        ImGui::SliderFloat("Intensität", &dir.intensity, 0.0f, 5.0f);
+    }
+
+    if (ImGui::CollapsingHeader("Umgebungslicht", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::ColorEdit3("Farbe", &amb.color.x);
+        ImGui::SliderFloat("Intensität", &amb.intensity, 0.0f, 1.0f);
+    }
+
+    if (ImGui::CollapsingHeader("Tageszeit")) {
+        float tod = lighting.GetTimeOfDay();
+        if (ImGui::SliderFloat("Uhrzeit", &tod, 0.0f, 24.0f, "%.1f h")) {
+            lighting.SetTimeOfDay(tod);
+        }
+        ImGui::SliderFloat("Geschwindigkeit", &mTimeOfDaySpeed, 0.0f, 10.0f);
+        ImGui::TextWrapped("Geschwindigkeit > 0 animiert die Sonne im Editor.");
+        mTimeOfDay = tod;
+    }
+
+    if (ImGui::CollapsingHeader("Punktlichter")) {
+        ImGui::Text("Anzahl: %d", (int)lighting.GetPointLightCount());
+        if (ImGui::Button("Punktlicht hinzufügen")) {
+            auto& pl = lighting.AddPointLight();
+            pl.position = Vec3(0, 3, 0);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Alle löschen")) lighting.ClearPointLights();
+        for (size_t i = 0; i < lighting.GetPointLightCount(); ++i) {
+            auto& pl = lighting.GetPointLight(i);
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::Checkbox("An", &pl.enabled);
+            ImGui::DragFloat3("Pos", &pl.position.x, 0.1f);
+            ImGui::ColorEdit3("Col", &pl.color.x);
+            ImGui::SliderFloat("Int", &pl.intensity, 0.0f, 5.0f);
+            ImGui::SliderFloat("Range", &pl.range, 0.5f, 50.0f);
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Spotlight")) {
+        auto& spot = lighting.GetSpotLight();
+        ImGui::Checkbox("Aktiv##spot", &spot.enabled);
+        ImGui::DragFloat3("Position##s", &spot.position.x, 0.1f);
+        ImGui::DragFloat3("Richtung##s", &spot.direction.x, 0.01f);
+        ImGui::ColorEdit3("Farbe##s", &spot.color.x);
+        ImGui::SliderFloat("Intensität##s", &spot.intensity, 0.0f, 5.0f);
+        ImGui::SliderFloat("Range##s", &spot.range, 0.5f, 80.0f);
+        ImGui::SliderFloat("Inner Cone", &spot.innerConeDeg, 1.0f, 80.0f);
+        ImGui::SliderFloat("Outer Cone", &spot.outerConeDeg, 1.0f, 90.0f);
+    }
 
     ImGui::End();
 }
@@ -2311,139 +2504,101 @@ std::string Editor::SelectFolderDialog() {
 // ==================== Gizmo System ====================
 
 void Editor::DrawToolbar() {
-    ImGui::Begin("Toolbar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
-    
-    // Gizmo mode buttons
-    ImGui::Text("Gizmo:");
-    ImGui::SameLine();
-    
-    if (ImGui::RadioButton((std::string(Icons::MOUSE_POINTER) + " Select").c_str(), mGizmoMode == GizmoMode::None)) {
-        mGizmoMode = GizmoMode::None;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton((std::string(Icons::ARROWS_ALT) + " Move").c_str(), mGizmoMode == GizmoMode::Translate)) {
-        mGizmoMode = GizmoMode::Translate;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton((std::string(Icons::SYNC_ALT) + " Rotate").c_str(), mGizmoMode == GizmoMode::Rotate)) {
-        mGizmoMode = GizmoMode::Rotate;
-    }
-    ImGui::SameLine();
-    if (ImGui::RadioButton((std::string(Icons::EXPAND_ARROWS_ALT) + " Scale").c_str(), mGizmoMode == GizmoMode::Scale)) {
-        mGizmoMode = GizmoMode::Scale;
-    }
-    
-    ImGui::Separator();
-    ImGui::SameLine();
-    
-    // Gizmo space toggle
-    if (ImGui::Button(mGizmoSpace == GizmoSpace::Local ? "Local" : "World")) {
-        mGizmoSpace = (mGizmoSpace == GizmoSpace::Local) ? GizmoSpace::World : GizmoSpace::Local;
-    }
-    
-    ImGui::Separator();
-    ImGui::SameLine();
-    
-    // Snap toggle
-    static bool snapEnabled = true;
-    if (ImGui::Checkbox("Snap", &snapEnabled)) {
-        // Handle snap toggle
-    }
-    ImGui::SameLine();
-    ImGui::DragFloat("##snap", &mTileScale, 0.1f, 0.1f, 10.0f);
-    
-    ImGui::End();
+    // Gizmo toolbar is drawn as an overlay inside DrawSceneView.
 }
+
 
 void Editor::DrawGizmo() {
     if (mSelectedEntity < 0 || mGizmoMode == GizmoMode::None) return;
     if (mEngine.IsPlaying()) return;
-    
+    if (!mSceneViewHovered && !mGizmoActive) return;
+
     auto* transform = mEngine.GetScene().GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
     if (!transform) return;
-    
+
     Camera& cam = mEngine.GetRenderer().GetCamera();
     Mat4 view = cam.GetViewMatrix();
     Mat4 proj = cam.GetProjectionMatrix();
-    
+
     Vec3 position = transform->transform.position;
     Vec3 rotation = transform->transform.rotation;
     Vec3 scale = transform->transform.scale;
-    
-    // Draw gizmo axes
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    
-    // World to screen projection
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+
+    // Project world -> scene-view screen using stored scene rect
     auto worldToScreen = [&](const Vec3& world) -> ImVec2 {
         Vec4 clip = proj * view * Vec4(world, 1.0f);
-        if (clip.w == 0) return ImVec2(-1000, -1000);
-        
-        Vec3 ndc = Vec3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
-        
-        ImVec2 viewPos = ImGui::GetCursorScreenPos();
-        ImVec2 viewSize = ImGui::GetContentRegionAvail();
-        
-        float x = (ndc.x * 0.5f + 0.5f) * viewSize.x + viewPos.x;
-        float y = (1.0f - (ndc.y * 0.5f + 0.5f)) * viewSize.y + viewPos.y;
-        
+        if (clip.w <= 0.001f) return ImVec2(-10000, -10000);
+        Vec3 ndc(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+        if (ndc.z < -1.0f || ndc.z > 1.0f) return ImVec2(-10000, -10000);
+        float x = (ndc.x * 0.5f + 0.5f) * mSceneViewSize.x + mSceneViewPos.x;
+        float y = (1.0f - (ndc.y * 0.5f + 0.5f)) * mSceneViewSize.y + mSceneViewPos.y;
         return ImVec2(x, y);
     };
-    
-    // Draw axis lines
-    const float axisLen = 2.0f;
+
+    // Scale axis length with distance so gizmo stays usable
+    float dist = glm::length(cam.GetPosition() - position);
+    const float axisLen = glm::clamp(dist * 0.12f, 0.8f, 4.0f);
     Vec3 origin = position;
-    
-    // X axis (red)
-    Vec3 xEnd = origin + Vec3(axisLen, 0, 0);
+
+    // Local axes if needed
+    Vec3 ax(1,0,0), ay(0,1,0), az(0,0,1);
+    if (mGizmoSpace == GizmoSpace::Local) {
+        Mat4 rotM = glm::rotate(Mat4(1.0f), glm::radians(rotation.y), Vec3(0,1,0));
+        rotM = glm::rotate(rotM, glm::radians(rotation.x), Vec3(1,0,0));
+        rotM = glm::rotate(rotM, glm::radians(rotation.z), Vec3(0,0,1));
+        ax = glm::normalize(Vec3(rotM * Vec4(1,0,0,0)));
+        ay = glm::normalize(Vec3(rotM * Vec4(0,1,0,0)));
+        az = glm::normalize(Vec3(rotM * Vec4(0,0,1,0)));
+    }
+
+    Vec3 ends[3] = { origin + ax * axisLen, origin + ay * axisLen, origin + az * axisLen };
+    ImU32 cols[3] = { IM_COL32(230, 70, 70, 255), IM_COL32(70, 210, 70, 255), IM_COL32(70, 130, 255, 255) };
+    ImU32 colsHot[3] = { IM_COL32(255, 220, 60, 255), IM_COL32(255, 220, 60, 255), IM_COL32(255, 220, 60, 255) };
+    const char* labels[3] = { "X", "Y", "Z" };
+
     ImVec2 o = worldToScreen(origin);
-    ImVec2 xe = worldToScreen(xEnd);
-    if (o.x > 0 && xe.x > 0) {
-        ImU32 color = (mGizmoAxis == 0) ? IM_COL32(255, 255, 0, 255) : IM_COL32(255, 80, 80, 255);
-        drawList->AddLine(o, xe, color, 3.0f);
+    ImVec2 se[3] = { worldToScreen(ends[0]), worldToScreen(ends[1]), worldToScreen(ends[2]) };
+
+    // Draw axes + arrow heads
+    for (int i = 0; i < 3; ++i) {
+        if (o.x < -9000 || se[i].x < -9000) continue;
+        ImU32 col = (mGizmoAxis == i) ? colsHot[i] : cols[i];
+        drawList->AddLine(o, se[i], col, (mGizmoAxis == i) ? 4.0f : 3.0f);
+        // arrow tip
+        ImVec2 dir(se[i].x - o.x, se[i].y - o.y);
+        float len = std::sqrt(dir.x*dir.x + dir.y*dir.y);
+        if (len > 1.0f) {
+            dir.x /= len; dir.y /= len;
+            ImVec2 n(-dir.y, dir.x);
+            ImVec2 p1(se[i].x - dir.x * 10.0f + n.x * 5.0f, se[i].y - dir.y * 10.0f + n.y * 5.0f);
+            ImVec2 p2(se[i].x - dir.x * 10.0f - n.x * 5.0f, se[i].y - dir.y * 10.0f - n.y * 5.0f);
+            drawList->AddTriangleFilled(se[i], p1, p2, col);
+        }
+        drawList->AddText(ImVec2(se[i].x + 6, se[i].y - 6), col, labels[i]);
     }
-    
-    // Y axis (green)
-    Vec3 yEnd = origin + Vec3(0, axisLen, 0);
-    ImVec2 ye = worldToScreen(yEnd);
-    if (o.x > 0 && ye.x > 0) {
-        ImU32 color = (mGizmoAxis == 1) ? IM_COL32(255, 255, 0, 255) : IM_COL32(80, 255, 80, 255);
-        drawList->AddLine(o, ye, color, 3.0f);
-    }
-    
-    // Z axis (blue)
-    Vec3 zEnd = origin + Vec3(0, 0, axisLen);
-    ImVec2 ze = worldToScreen(zEnd);
-    if (o.x > 0 && ze.x > 0) {
-        ImU32 color = (mGizmoAxis == 2) ? IM_COL32(255, 255, 0, 255) : IM_COL32(80, 120, 255, 255);
-        drawList->AddLine(o, ze, color, 3.0f);
-    }
-    
-    // Draw axis labels
-    if (o.x > 0) {
-        drawList->AddText(ImVec2(xe.x + 5, xe.y), IM_COL32(255, 100, 100, 255), "X");
-        drawList->AddText(ImVec2(ye.x + 5, ye.y), IM_COL32(100, 255, 100, 255), "Y");
-        drawList->AddText(ImVec2(ze.x + 5, ze.y), IM_COL32(100, 150, 255, 255), "Z");
-    }
-    
-    // Handle gizmo interaction
+    // center handle
+    if (o.x > -9000) drawList->AddCircleFilled(o, 5.0f, IM_COL32(255, 255, 255, 220));
+
+    // Interaction
     ImVec2 mousePos = ImGui::GetMousePos();
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mSceneViewHovered && mSceneViewFocused) {
-        // Check which axis was clicked
-        // Simplified: just check distance to axis lines
-        float bestDist = 100.0f;
+        float bestDist = 14.0f;
         int bestAxis = -1;
-        
-        for (int i = 0; i < 3; i++) {
-            Vec3 axisEnd = origin;
-            axisEnd[i] += axisLen;
-            ImVec2 axisScreen = worldToScreen(axisEnd);
-            float dist = std::sqrt(std::pow(mousePos.x - axisScreen.x, 2) + std::pow(mousePos.y - axisScreen.y, 2));
-            if (dist < bestDist && dist < 15.0f) {
-                bestDist = dist;
-                bestAxis = i;
-            }
+        for (int i = 0; i < 3; ++i) {
+            if (se[i].x < -9000) continue;
+            // distance point-to-segment in screen space
+            ImVec2 a = o, b = se[i];
+            ImVec2 ab(b.x - a.x, b.y - a.y);
+            ImVec2 ap(mousePos.x - a.x, mousePos.y - a.y);
+            float ab2 = ab.x*ab.x + ab.y*ab.y;
+            float t = ab2 > 0 ? (ap.x*ab.x + ap.y*ab.y) / ab2 : 0.0f;
+            t = t < 0 ? 0 : (t > 1 ? 1 : t);
+            ImVec2 closest(a.x + ab.x * t, a.y + ab.y * t);
+            float d = std::sqrt((mousePos.x - closest.x)*(mousePos.x - closest.x) + (mousePos.y - closest.y)*(mousePos.y - closest.y));
+            if (d < bestDist) { bestDist = d; bestAxis = i; }
         }
-        
         if (bestAxis >= 0) {
             mGizmoActive = true;
             mGizmoAxis = bestAxis;
@@ -2453,72 +2608,63 @@ void Editor::DrawGizmo() {
             mGizmoStartMousePos = Vec2(mousePos.x, mousePos.y);
         }
     }
-    
-    if (mGizmoActive && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        ImVec2 delta = ImVec2(mousePos.x - mGizmoStartMousePos.x, mousePos.y - mGizmoStartMousePos.y);
-        
+
+    if (mGizmoActive && ImGui::IsMouseDown(ImGuiMouseButton_Left) && mGizmoAxis >= 0) {
+        Vec2 delta(mousePos.x - mGizmoStartMousePos.x, mousePos.y - mGizmoStartMousePos.y);
+        Vec3 axisDir = (mGizmoAxis == 0) ? ax : (mGizmoAxis == 1) ? ay : az;
+
         switch (mGizmoMode) {
             case GizmoMode::Translate: {
-                // Convert screen delta to world delta
-                Camera& cam = mEngine.GetRenderer().GetCamera();
-                Vec3 forward = cam.GetForward();
-                Vec3 right = cam.GetRight();
-                Vec3 up = cam.GetUp();
-                
-                float sensitivity = 0.01f;
-                Vec3 worldDelta = right * (delta.x * sensitivity) - up * (delta.y * sensitivity);
-                
-                if (mGizmoSpace == GizmoSpace::Local) {
-                    // Apply in local space
-                    Mat4 rot = glm::rotate(Mat4(1.0f), glm::radians(transform->transform.rotation.y), Vec3(0,1,0));
-                    rot = glm::rotate(rot, glm::radians(transform->transform.rotation.x), Vec3(1,0,0));
-                    rot = glm::rotate(rot, glm::radians(transform->transform.rotation.z), Vec3(0,0,1));
-                    worldDelta = Vec3(rot * Vec4(worldDelta, 0));
+                // Project mouse delta onto axis screen direction for natural dragging
+                ImVec2 aScr = worldToScreen(mGizmoStartPos);
+                ImVec2 bScr = worldToScreen(mGizmoStartPos + axisDir);
+                ImVec2 axisScr(bScr.x - aScr.x, bScr.y - aScr.y);
+                float axisScrLen = std::sqrt(axisScr.x*axisScr.x + axisScr.y*axisScr.y);
+                float along = 0.0f;
+                if (axisScrLen > 1.0f) {
+                    along = (delta.x * axisScr.x + delta.y * axisScr.y) / (axisScrLen * axisScrLen);
                 }
-                
-                // Constrain to selected axis
-                if (mGizmoAxis >= 0 && mGizmoAxis <= 2) {
-                    Vec3 constrained = worldDelta;
-                    for (int i = 0; i < 3; i++) {
-                        if (i != mGizmoAxis) constrained[i] = 0;
-                    }
-                    worldDelta = constrained;
+                float move = along * axisLen;
+                if (mGizmoSnap) {
+                    float s = std::max(0.05f, mGizmoSnapValue);
+                    move = std::round(move / s) * s;
                 }
-                
-                transform->transform.position = mGizmoStartPos + worldDelta;
+                transform->transform.position = mGizmoStartPos + axisDir * move;
                 break;
             }
             case GizmoMode::Rotate: {
-                float sensitivity = 0.5f;
-                float rotDelta = (delta.x + delta.y) * sensitivity;
-                
+                float rotDelta = delta.x * 0.4f;
+                if (mGizmoSnap) {
+                    float s = 15.0f;
+                    rotDelta = std::round(rotDelta / s) * s;
+                }
+                transform->transform.rotation = mGizmoStartRot;
                 if (mGizmoAxis == 0) transform->transform.rotation.x = mGizmoStartRot.x + rotDelta;
                 else if (mGizmoAxis == 1) transform->transform.rotation.y = mGizmoStartRot.y + rotDelta;
-                else if (mGizmoAxis == 2) transform->transform.rotation.z = mGizmoStartRot.z + rotDelta;
+                else transform->transform.rotation.z = mGizmoStartRot.z + rotDelta;
                 break;
             }
             case GizmoMode::Scale: {
-                float sensitivity = 0.01f;
-                float scaleDelta = 1.0f + (delta.x + delta.y) * sensitivity;
-                
-                if (mGizmoAxis >= 0 && mGizmoAxis <= 2) {
-                    transform->transform.scale = mGizmoStartScale;
-                    transform->transform.scale[mGizmoAxis] = mGizmoStartScale[mGizmoAxis] * scaleDelta;
-                } else {
-                    transform->transform.scale = mGizmoStartScale * scaleDelta;
+                float scaleDelta = 1.0f + (delta.x + delta.y) * 0.005f;
+                if (scaleDelta < 0.05f) scaleDelta = 0.05f;
+                transform->transform.scale = mGizmoStartScale;
+                transform->transform.scale[mGizmoAxis] = std::max(0.05f, mGizmoStartScale[mGizmoAxis] * scaleDelta);
+                if (mGizmoSnap) {
+                    float s = std::max(0.05f, mGizmoSnapValue);
+                    transform->transform.scale[mGizmoAxis] = std::round(transform->transform.scale[mGizmoAxis] / s) * s;
                 }
                 break;
             }
-            default:
-                break;
+            default: break;
         }
     }
-    
+
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
         mGizmoActive = false;
         mGizmoAxis = -1;
     }
 }
+
 
 void Editor::DrawStatusBar() {
     ImGui::Begin("StatusBar", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
@@ -2644,8 +2790,29 @@ void Editor::HandleShortcuts() {
     if (ImGui::IsKeyPressed(ImGuiKey_R, false) && !io.WantTextInput) mGizmoMode = GizmoMode::Scale;
     
     // Toggle space
-    if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_X, false) && !io.WantTextInput) {
         mGizmoSpace = (mGizmoSpace == GizmoSpace::Local) ? GizmoSpace::World : GizmoSpace::Local;
+    }
+    // Toggle grid
+    if (ImGui::IsKeyPressed(ImGuiKey_G, false) && !io.WantTextInput && !io.KeyCtrl) {
+        mEngine.ToggleGrid();
+    }
+    // Duplicate
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D, false) && mSelectedEntity >= 0) {
+        EntityID srcId = static_cast<EntityID>(mSelectedEntity);
+        auto* st = mEngine.GetScene().GetComponent<TransformComponent>(srcId);
+        EntityID id = mEngine.GetScene().CreateEntity(mEngine.GetScene().GetEntityName(srcId) + " Copy");
+        auto* t = mEngine.GetScene().AddComponent<TransformComponent>(id);
+        if (st) { t->transform = st->transform; t->transform.position.x += 1.0f; }
+        if (auto* sm = mEngine.GetScene().GetComponent<ModelRendererComponent>(srcId)) {
+            auto* m = mEngine.GetScene().AddComponent<ModelRendererComponent>(id);
+            m->model = sm->model; m->texture = sm->texture;
+        }
+        if (auto* mat = mEngine.GetScene().GetComponent<MaterialComponent>(srcId)) {
+            auto* m = mEngine.GetScene().AddComponent<MaterialComponent>(id);
+            m->material = mat->material;
+        }
+        mSelectedEntity = static_cast<int>(id);
     }
 }
 

@@ -151,15 +151,20 @@ private:
     float mTimeOfDaySpeed = 1.0f;
     EditorTheme mCurrentTheme = EditorTheme::Dark;
 
-    // NEW: Gizmo state
-    GizmoMode mGizmoMode = GizmoMode::None;
+    // Gizmo state
+    GizmoMode mGizmoMode = GizmoMode::Translate;
     GizmoSpace mGizmoSpace = GizmoSpace::Local;
     bool mGizmoActive = false;
-    int mGizmoAxis = -1; // 0=X, 1=Y, 2=Z, 3=XY, 4=YZ, 5=XZ
+    bool mGizmoSnap = true;
+    float mGizmoSnapValue = 0.5f;
+    int mGizmoAxis = -1; // 0=X, 1=Y, 2=Z
     Vec3 mGizmoStartPos;
     Vec3 mGizmoStartRot;
     Vec3 mGizmoStartScale;
     Vec2 mGizmoStartMousePos;
+    bool mShowGrid = true;
+    bool mContextMenuPending = false;
+    ImVec2 mContextMenuMousePos{0, 0};
 };
 
 } // namespace rpg

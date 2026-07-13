@@ -43,6 +43,8 @@ public:
 
     void BuildGPU();
     void Draw() const;
+    /// Draw as GL_LINES (for grids / debug lines). Indices must form line pairs.
+    void DrawLines() const;
     void Delete();
 
 private:

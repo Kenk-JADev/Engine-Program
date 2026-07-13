@@ -56,7 +56,10 @@ in float FogFactor;
 
 uniform sampler2D uTexture;
 uniform vec3 uLightDir;
+uniform vec3 uLightColor;
+uniform float uLightIntensity;
 uniform float uAmbient;
+uniform vec3 uAmbientColor;
 uniform vec3 uFogColor;
 uniform bool uFogEnabled;
 
@@ -65,12 +68,17 @@ void main() {
     if (texColor.a < 0.05) discard;
 
     vec3 norm = normalize(Normal);
-    float diff = max(dot(norm, -normalize(uLightDir)), 0.0);
-    float light = uAmbient + diff * (1.0 - uAmbient);
+    vec3 L = normalize(-uLightDir);
+    float NdotL = max(dot(norm, L), 0.0);
+    // Soft wrap lighting so surfaces aren't pure black
+    float wrap = NdotL * 0.5 + 0.5;
+    wrap = wrap * wrap;
 
-    vec3 finalColor = texColor.rgb * light;
-    
-    // Fog blending
+    vec3 ambient = uAmbientColor * uAmbient;
+    vec3 diffuse = uLightColor * uLightIntensity * mix(NdotL, wrap, 0.35);
+    vec3 finalColor = texColor.rgb * (ambient + diffuse);
+
+    // Fog blending (FogFactor: 1 = near/no fog, 0 = far/full fog)
     if (uFogEnabled) {
         finalColor = mix(uFogColor, finalColor, FogFactor);
     }
@@ -162,9 +170,9 @@ void Renderer::Shutdown() {
 }
 
 void Renderer::BeginFrame(const Camera& camera) {
-    // Clear with fog color if fog enabled, otherwise clear color
-    Color clearCol = mFog.enabled ? mFog.color : mClearColor;
-    glClearColor(clearCol.r, clearCol.g, clearCol.b, clearCol.a);
+    // Always clear with scene clear color (not fog) – fog is only applied in the shader.
+    // Using fog color as clear made the whole viewport look washed-out grey.
+    glClearColor(mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     mDefaultShader->Bind();
@@ -244,8 +252,13 @@ void Renderer::EnableWireframe(bool enable) {
 
 void Renderer::UpdateLighting() {
     Lighting& light = Lighting::Get();
+    const auto& dir = light.GetDirectionalLight();
+    const auto& amb = light.GetAmbient();
     mDefaultShader->SetVec3("uLightDir", light.GetEffectiveLightDir());
-    mDefaultShader->SetFloat("uAmbient", light.GetEffectiveAmbient());
+    mDefaultShader->SetVec3("uLightColor", Vec3(dir.color.r, dir.color.g, dir.color.b));
+    mDefaultShader->SetFloat("uLightIntensity", dir.intensity);
+    mDefaultShader->SetFloat("uAmbient", amb.intensity);
+    mDefaultShader->SetVec3("uAmbientColor", Vec3(amb.color.r, amb.color.g, amb.color.b));
 }
 
 void Renderer::SetLightDir(const Vec3& dir) {
@@ -298,11 +311,32 @@ void Renderer::DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, con
 }
 
 void Renderer::DrawParticles(const std::vector<Particle>& particles) {
-    if (!mParticleMesh) return;
+    if (!mParticleMesh || particles.empty()) return;
+    // Additive-ish soft particles look better for VFX
+    GLboolean depthMask;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+    glDepthMask(GL_FALSE);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     for (const auto& p : particles) {
         Mat4 transform = glm::translate(Mat4(1.0f), p.position) * glm::scale(Mat4(1.0f), Vec3(p.size));
         DrawMesh(*mParticleMesh, transform, nullptr, p.color);
     }
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(depthMask);
+}
+
+void Renderer::DrawGrid(const Mesh& mesh, const Mat4& transform, const Color& color) {
+    // Line rendering – never fill grid as triangles (was causing colored floor strips)
+    mDefaultShader->Bind();
+    mDefaultShader->SetMat4("uModel", transform);
+    mDefaultShader->SetVec4("uColor", color);
+    mDefaultTexture->Bind(0);
+    mDefaultShader->SetInt("uTexture", 0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE); // grid does not occlude objects
+    mesh.DrawLines();
+    glDepthMask(GL_TRUE);
 }
 
 void Renderer::DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& transform, const Color& color) {

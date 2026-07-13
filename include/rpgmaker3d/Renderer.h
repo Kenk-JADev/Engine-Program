@@ -21,12 +21,12 @@ struct RenderCommand {
     Color color{1.0f};
 };
 
-// Fog settings
+// Fog settings (disabled by default – avoids washed-out grey scene)
 struct FogSettings {
     bool enabled = false;
-    Color color = Color(0.5f, 0.55f, 0.65f, 1.0f);
-    float start = 10.0f;
-    float end = 100.0f;
+    Color color = Color(0.55f, 0.60f, 0.70f, 1.0f);
+    float start = 25.0f;
+    float end = 180.0f;
     float density = 0.01f;  // for exponential fog
 };
 
@@ -78,6 +78,8 @@ public:
     void DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, const Material& material);
     void DrawParticles(const std::vector<Particle>& particles);
     void DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& transform, const Color& color);
+    /// Draw line-list mesh (e.g. editor grid) without triangle fill
+    void DrawGrid(const Mesh& mesh, const Mat4& transform, const Color& color = Color(0.4f, 0.4f, 0.45f, 0.6f));
 
     void Submit(const RenderCommand& cmd);
     void Flush();
@@ -117,7 +119,7 @@ private:
     std::unique_ptr<Mesh> mParticleMesh;
     std::unique_ptr<Mesh> mBoundingBoxMesh;
     std::vector<RenderCommand> mCommandQueue;
-    Color mClearColor{0.1f, 0.1f, 0.15f, 1.0f};
+    Color mClearColor{0.12f, 0.13f, 0.16f, 1.0f};
     bool mWireframeEnabled = false;
     
     FogSettings mFog;

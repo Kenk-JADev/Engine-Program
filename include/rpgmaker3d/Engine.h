@@ -75,6 +75,10 @@ public:
     void SetActiveCamera(EntityID cameraEntity) { mActiveCameraEntity = cameraEntity; }
     EntityID GetActiveCamera() const { return mActiveCameraEntity; }
 
+    bool IsGridVisible() const { return mShowGrid; }
+    void SetGridVisible(bool visible) { mShowGrid = visible; }
+    void ToggleGrid() { mShowGrid = !mShowGrid; }
+
 private:
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
@@ -96,6 +100,7 @@ private:
     bool mPlayMode = false;
     bool mImGuiInitialized = false;
     bool mPlayModeFollowPlayer = true;
+    bool mShowGrid = true;
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
     EntityID mActiveCameraEntity = INVALID_ENTITY;

@@ -39,6 +39,12 @@ void Mesh::Draw() const {
     glBindVertexArray(0);
 }
 
+void Mesh::DrawLines() const {
+    glBindVertexArray(mVAO);
+    glDrawElements(GL_LINES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+    glBindVertexArray(0);
+}
+
 void Mesh::Delete() {
     if (mVAO) glDeleteVertexArrays(1, &mVAO);
     if (mVBO) glDeleteBuffers(1, &mVBO);
