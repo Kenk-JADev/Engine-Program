@@ -7,6 +7,33 @@
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Model.h"
+#include "rpgmaker3d/UI.h"
+#include "rpgmaker3d/Game.h"
+
+// Fix ssize_t for MSVC mruby build - must be before mruby headers
+#include <cstddef>
+#ifdef _WIN32
+#include <BaseTsd.h>
+#ifndef _SSIZE_T_DEFINED
+typedef SSIZE_T ssize_t;
+#define _SSIZE_T_DEFINED
+#endif
+// mruby 4.0.0 compatibility: mrb_int_p may be missing, define fallback
+#ifndef mrb_int_p
+#define mrb_int_p(o) (mrb_type(o) == MRB_TT_INTEGER)
+#endif
+#ifndef mrb_integer_p
+#define mrb_integer_p(o) (mrb_type(o) == MRB_TT_INTEGER)
+#endif
+#else
+#ifndef mrb_int_p
+#ifdef mrb_integer_p
+#define mrb_int_p(o) mrb_integer_p(o)
+#else
+#define mrb_int_p(o) (mrb_type(o) == MRB_TT_INTEGER)
+#endif
+#endif
+#endif
 
 #ifdef RPGMAKER3D_ENABLE_RUBY
 
@@ -52,6 +79,7 @@ bool RubyVM::Initialize(Engine* engine) {
     BindMap();
     BindActor();
     BindCamera();
+    BindUI();
 
     RPG_LOG_INFO("Ruby VM initialized");
     return true;
@@ -753,6 +781,203 @@ void RubyVM::BindCamera() {
     );
 }
 
+// ==================== UI / ScreenText Bindings ====================
+
+static mrb_value rb_ui_show_message(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    char* text = nullptr;
+    mrb_get_args(mrb, "z", &text);
+    if (text) {
+        GameUI::Get().ShowMessage(std::string(text));
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_ui_show_screen_text(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    char* text = nullptr;
+    mrb_float x = 0.5f, y = 0.1f;
+    mrb_float r = 1.0f, g = 1.0f, b = 1.0f;
+    mrb_float duration = 3.0f;
+    mrb_get_args(mrb, "z|fffff", &text, &x, &y, &r, &g, &b);
+    // Try to parse optional duration as 6th arg if provided via extra handling
+    // For simplicity, we use 5 args; if caller provides more, we ignore
+    if (!text) return mrb_nil_value();
+    // If more args passed, try to get duration via checking stack?
+    // We'll attempt to get extra float for duration from optional
+    // Actually MRB_ARGS allows us to parse flexibly - we already handle x,y,r,g,b
+    // Duration will be parsed as extra if provided: we can attempt another parse
+    int argc = mrb_get_argc(mrb);
+    if (argc >= 6) {
+        // Re-parse with duration
+        mrb_get_args(mrb, "z|ffffff", &text, &x, &y, &r, &g, &b, &duration);
+    }
+    int id = GameUI::Get().AddScreenText(std::string(text), Vec2((float)x, (float)y), Color((float)r, (float)g, (float)b, 1.0f), (float)duration);
+    return mrb_int_value(mrb, id);
+}
+
+static mrb_value rb_ui_show_world_text(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    char* text = nullptr;
+    mrb_float x = 0, y = 0, z = 0;
+    mrb_float r = 1.0f, g = 1.0f, b = 0.0f;
+    mrb_float duration = 2.5f;
+    mrb_get_args(mrb, "z|ffffff", &text, &x, &y, &z, &r, &g, &b);
+    int argc = mrb_get_argc(mrb);
+    if (argc >= 7) {
+        mrb_get_args(mrb, "z|fffffff", &text, &x, &y, &z, &r, &g, &b, &duration);
+    }
+    if (!text) return mrb_nil_value();
+    int id = GameUI::Get().AddWorldText(std::string(text), Vec3((float)x, (float)y, (float)z), Color((float)r, (float)g, (float)b, 1.0f), (float)duration);
+    return mrb_int_value(mrb, id);
+}
+
+static mrb_value rb_ui_clear_screen_texts(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    GameUI::Get().ClearScreenTexts();
+    return mrb_nil_value();
+}
+
+static mrb_value rb_ui_gold(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, Game::Get().Party().GetGold());
+}
+
+static mrb_value rb_ui_add_gold(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int amount;
+    mrb_get_args(mrb, "i", &amount);
+    Game::Get().Party().GainGold((int)amount);
+    return mrb_nil_value();
+}
+
+static mrb_value rb_ui_show_picture(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    char* filename = nullptr;
+    char* name = nullptr;
+    mrb_float x = 0.5f, y = 0.5f;
+    mrb_float scale = 1.0f, opacity = 1.0f;
+    // Args: filename, name (optional), x, y, scale, opacity
+    mrb_get_args(mrb, "z|zffff", &filename, &name, &x, &y, &scale, &opacity);
+    if (!filename) return mrb_nil_value();
+    std::string fname(filename);
+    std::string picName = name ? std::string(name) : fname;
+    int id = GameUI::Get().ShowPicture(fname, picName, Vec2((float)x, (float)y), (float)scale, (float)opacity, 0.0f);
+    return mrb_int_value(mrb, id);
+}
+
+static mrb_value rb_ui_move_picture(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value id_or_name;
+    mrb_float x = 0.5f, y = 0.5f;
+    mrb_float duration = 0.5f;
+    mrb_int easing = 2;
+    mrb_get_args(mrb, "o|fffi", &id_or_name, &x, &y, &duration, &easing);
+    if (mrb_string_p(id_or_name)) {
+        std::string name(mrb_string_value_cstr(mrb, &id_or_name));
+        GameUI::Get().MovePicture(name, Vec2((float)x, (float)y), (float)duration, (int)easing);
+    } else if (mrb_int_p(id_or_name)) {
+        int id = (int)mrb_integer(id_or_name);
+        GameUI::Get().MovePicture(id, Vec2((float)x, (float)y), (float)duration, (int)easing);
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_ui_tween_picture(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value id_val;
+    mrb_float x = 0.5f, y = 0.5f, scale = 1.0f, opacity = 1.0f, rotation = 0.0f;
+    mrb_float duration = 1.0f;
+    mrb_int easing = 2;
+    mrb_get_args(mrb, "o|ffffffi", &id_val, &x, &y, &scale, &opacity, &rotation, &duration, &easing);
+    int id = 0;
+    if (mrb_int_p(id_val)) id = (int)mrb_integer(id_val);
+    else return mrb_nil_value();
+    GameUI::Get().TweenPicture(id, Vec2((float)x, (float)y), (float)scale, (float)opacity, (float)rotation, (float)duration, (int)easing);
+    return mrb_nil_value();
+}
+
+static mrb_value rb_ui_remove_picture(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value id_or_name;
+    mrb_get_args(mrb, "o", &id_or_name);
+    if (mrb_string_p(id_or_name)) {
+        std::string name(mrb_string_value_cstr(mrb, &id_or_name));
+        GameUI::Get().RemovePicture(name);
+    } else if (mrb_int_p(id_or_name)) {
+        int id = (int)mrb_integer(id_or_name);
+        GameUI::Get().RemovePicture(id);
+    } else {
+        GameUI::Get().ClearPictures();
+    }
+    return mrb_nil_value();
+}
+
+static mrb_value rb_game_map_visible(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    (void)mrb;
+    return mrb_bool_value(Game::Get().Map().IsVisible());
+}
+
+static mrb_value rb_game_map_set_visible(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_bool visible;
+    mrb_get_args(mrb, "b", &visible);
+    Game::Get().Map().SetVisible(visible);
+    return mrb_nil_value();
+}
+
+static mrb_value rb_game_map_id(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, Game::Get().Map().GetMapId());
+}
+
+static mrb_value rb_game_map_setup(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int mapId;
+    mrb_get_args(mrb, "i", &mapId);
+    Game::Get().Map().Setup((int)mapId);
+    return mrb_nil_value();
+}
+
+void RubyVM::BindUI() {
+    struct RClass* uiModule = mrb_define_module(mMrb, "UI");
+
+    mrb_define_module_function(mMrb, uiModule, "show_message", rb_ui_show_message, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "show_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
+    mrb_define_module_function(mMrb, uiModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
+    mrb_define_module_function(mMrb, uiModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, uiModule, "clear_texts", rb_ui_clear_screen_texts, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "gold", rb_ui_gold, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "add_gold", rb_ui_add_gold, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "show_picture", rb_ui_show_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
+    mrb_define_module_function(mMrb, uiModule, "move_picture", rb_ui_move_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4));
+    mrb_define_module_function(mMrb, uiModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, uiModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, uiModule, "clear_pictures", rb_ui_remove_picture, MRB_ARGS_NONE());
+
+    // Game module extensions for convenience
+    struct RClass* gameModule = mrb_define_module(mMrb, "Game");
+    mrb_define_module_function(mMrb, gameModule, "show_message", rb_ui_show_message, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
+    mrb_define_module_function(mMrb, gameModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, gameModule, "show_picture", rb_ui_show_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
+    mrb_define_module_function(mMrb, gameModule, "move_picture", rb_ui_move_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4));
+    mrb_define_module_function(mMrb, gameModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, gameModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "map_visible", rb_game_map_visible, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gameModule, "set_map_visible", rb_game_map_set_visible, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameModule, "map_id", rb_game_map_id, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gameModule, "setup_map", rb_game_map_setup, MRB_ARGS_REQ(1));
+
+    // Game_Map module for map data via script - damit Scenes Map Daten nutzen
+    struct RClass* gameMapModule = mrb_define_module(mMrb, "Game_Map");
+    mrb_define_module_function(mMrb, gameMapModule, "visible?", rb_game_map_visible, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gameMapModule, "visible=", rb_game_map_set_visible, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameMapModule, "id", rb_game_map_id, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gameMapModule, "setup", rb_game_map_setup, MRB_ARGS_REQ(1));
+}
+
 // ==================== Actor Bindings ====================
 
 static void actor_free(mrb_state* mrb, void* pointer) {
@@ -1191,6 +1416,7 @@ void RubyVM::BindMap() {}
 void RubyVM::BindActor() {}
 void RubyVM::BindCamera() {}
 void RubyVM::BindGame() {}
+void RubyVM::BindUI() {}
 
 } // namespace rpg
 
