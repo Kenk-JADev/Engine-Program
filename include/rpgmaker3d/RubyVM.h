@@ -32,6 +32,7 @@ private:
     void BindActor();
     void BindCamera();
     void BindGame();
+    void BindUI();
 
     mrb_state* mMrb = nullptr;
     Engine* mEngine = nullptr;

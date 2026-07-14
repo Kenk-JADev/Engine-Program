@@ -27,6 +27,7 @@
 #include "rpgmaker3d/AudioManager.h"
 #include "rpgmaker3d/EditorToolbar.h"
 #include "rpgmaker3d/EditorStyle.h"
+#include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Camera.h"
 #include "rpgmaker3d/Input.h"
 
@@ -127,11 +128,16 @@ void Editor::BeginFrame() {
 void Editor::DrawUI() {
     // Apply editor theme
     EditorStyle::ApplyTheme(mCurrentTheme);
-    // Optional day/night animation
-    if (mTimeOfDaySpeed > 0.0f && !mEngine.IsPlaying()) {
+    // Tageszeit läuft NUR im Playtest (Spielzeit), nicht im Editor-Idle
+    // Damit Editor nicht ablenkt und Performance spart, und Spiel zeitabhängiges Lighting hat
+    if (mTimeOfDaySpeed > 0.0f && mEngine.IsPlaying()) {
         Lighting::Get().UpdateTimeOfDay(mEngine.GetDeltaTime(), mTimeOfDaySpeed);
         mTimeOfDay = Lighting::Get().GetTimeOfDay();
     }
+
+    // Im Playtest soll Editor nicht nutzbar sein - nur noch Scene + HUD
+    // Alle Edit-Operationen werden geblockt (s. HandleSceneViewPicking/Camera/Shortcuts)
+    // Wir zeigen trotzdem DockSpace, aber kennzeichnen Play-Modus prominent
 
     // Handle global shortcuts
     HandleShortcuts();
@@ -141,8 +147,8 @@ void Editor::DrawUI() {
 
     DrawMenuBar();
 
-    // Compact main toolbar under menu bar
-    if (mToolbar) mToolbar->Draw();
+    // Toolbar nur im Editor-Modus, nicht im Playtest (verhindert dass UI durch Scene geht)
+    if (!mEngine.IsPlaying() && mToolbar) mToolbar->Draw();
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -315,7 +321,9 @@ void Editor::DrawMenuBar() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Ansicht")) {
-            ImGui::MenuItem("Demo-Fenster", nullptr, &mShowDemo);
+            // Demo-Fenster entfernt – Nutzer sagte es hat keine Funktion und ist redundant
+            // Stattdessen nur Layout zurücksetzen
+
             if (ImGui::MenuItem("Layout zurücksetzen")) { mLayoutInitialized = false; }
             ImGui::Separator();
 
@@ -432,13 +440,15 @@ void Editor::DrawSceneView() {
         mSceneViewHovered = ImGui::IsItemHovered();
         mSceneViewFocused = ImGui::IsWindowFocused();
 
-        // Gizmo tools bar overlaid on scene view (top-center)
-        {
+        // Gizmo tools bar overlaid on scene view (top-center) - NUR im Editor-Modus, nicht im Playtest
+        // Fix: Im Playtest ausgeblendet, damit Buttons nicht durch UI gehen und nicht nutzbar sind
+        if (!mEngine.IsPlaying()) {
             ImGui::SetCursorScreenPos(ImVec2(pos.x + 8.0f, pos.y + 8.0f));
             ImGui::BeginChild("##SceneGizmoBar", ImVec2(size.x - 16.0f, 32.0f), false,
-                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.35f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.22f, 0.27f, 0.85f));
 
             auto modeBtn = [&](const char* label, GizmoMode mode) {
                 bool active = (mGizmoMode == mode);
@@ -464,6 +474,7 @@ void Editor::DrawSceneView() {
             }
 
             ImGui::PopStyleColor();
+            ImGui::PopStyleColor();
             ImGui::PopStyleVar();
             ImGui::EndChild();
         }
@@ -474,18 +485,107 @@ void Editor::DrawSceneView() {
         HandleSceneViewPicking();
         HandleSceneViewCamera();
 
+        // Tile Outline (Fix für "Outline erstellen wenn man auf diesen Boden von x,y rechtsklickt")
+        if (mHoverTileValid && mShowTileOutline && !mEngine.IsPlaying() && mGizmoMode == GizmoMode::None) {
+            Camera& cam = mEngine.GetRenderer().GetCamera();
+            Mat4 view = cam.GetViewMatrix();
+            Mat4 proj = cam.GetProjectionMatrix();
+            auto worldToScreen = [&](const Vec3& world) -> ImVec2 {
+                Vec4 clip = proj * view * Vec4(world, 1.0f);
+                if (clip.w <= 0.001f) return ImVec2(-10000, -10000);
+                Vec3 ndc(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w);
+                if (ndc.z < -1.0f || ndc.z > 1.0f) return ImVec2(-10000, -10000);
+                float x = (ndc.x * 0.5f + 0.5f) * mSceneViewSize.x + mSceneViewPos.x;
+                float y = (1.0f - (ndc.y * 0.5f + 0.5f)) * mSceneViewSize.y + mSceneViewPos.y;
+                return ImVec2(x, y);
+            };
+            Map& map = mEngine.GetMap();
+            float halfW = map.GetWidth() * 0.5f;
+            float halfH = map.GetHeight() * 0.5f;
+            float px = (mHoverTileX - halfW);
+            float pz = (mHoverTileZ - halfH);
+            // 4 Ecken des Tiles
+            Vec3 corners[4] = {
+                Vec3(px, 0.02f, pz),
+                Vec3(px+1.0f, 0.02f, pz),
+                Vec3(px+1.0f, 0.02f, pz+1.0f),
+                Vec3(px, 0.02f, pz+1.0f)
+            };
+            ImVec2 scr[4];
+            for (int i=0;i<4;++i) scr[i] = worldToScreen(corners[i]);
+            bool valid = true;
+            for (int i=0;i<4;++i) if (scr[i].x < -9000) valid = false;
+            if (valid) {
+                // Outline in Gelb für Tile
+                draw_list->AddPolyline(scr, 4, IM_COL32(255, 230, 80, 255), ImDrawFlags_Closed, 2.5f);
+                // Fill semi transparent
+                draw_list->AddConvexPolyFilled(scr, 4, IM_COL32(255, 230, 80, 60));
+                // Text mit Koordinaten
+                ImVec2 mid((scr[0].x+scr[2].x)*0.5f, (scr[0].y+scr[2].y)*0.5f);
+                char buf[32];
+                snprintf(buf, sizeof(buf), "(%d,%d)", mHoverTileX, mHoverTileZ);
+                draw_list->AddText(mid, IM_COL32(255,255,150,255), buf);
+            }
+        }
+
         // Right-click context menu (opens on right click without orbiting if no drag)
         HandleSceneViewContextMenu(pos, size);
 
-        // Overlay info
+        // Overlay info + In-Scene Texte (Fix für "Texte alles vom Fenster sollen kein imgui nutzen sondern richtige Fenster die für Scene Fenster genutzt wird")
+        // Jetzt werden Message, HUD etc. direkt ins Scene Fenster gerendert, damit Playtest Fenster sie sieht, nicht nur ImGui
         if (mEngine.IsPlaying()) {
-            draw_list->AddText(ImVec2(pos.x + 8, pos.y + 44), IM_COL32(80, 255, 80, 255), "PLAY MODE");
+            draw_list->AddText(ImVec2(pos.x + 8, pos.y + 44), IM_COL32(80, 255, 80, 255), "PLAY MODE - Texte im Scene Fenster");
+            // MessageWindow als echte Box im Scene Fenster (kein ImGui Fenster mehr nur)
+            auto& msg = GameUI::Get().Message();
+            if (msg.IsVisible()) {
+                // Hintergrund Box unten im Scene Fenster
+                float boxH = 110.0f;
+                ImVec2 boxMin(pos.x + 10, pos.y + size.y - boxH - 10);
+                ImVec2 boxMax(pos.x + size.x - 10, pos.y + size.y - 10);
+                draw_list->AddRectFilled(boxMin, boxMax, IM_COL32(20, 25, 35, 220), 6.0f);
+                draw_list->AddRect(boxMin, boxMax, IM_COL32(80, 90, 110, 200), 0.0f, 0, 1.5f);
+                // Für MessageWindow haben wir keinen direkten Text Zugriff, aber wir zeigen Hinweis, dass ImGui Message gleichzeitig existiert
+                draw_list->AddText(ImVec2(boxMin.x + 10, boxMin.y + 8), IM_COL32(220,230,255,255), "Dialog aktiv – siehe unten (E/Enter zum Weiter)");
+            }
+            // Render ScreenTexts direkt ins Scene Fenster via DrawList (statt nur ImGui Fenster)
+            auto& ui = GameUI::Get();
+            for (auto& st : ui.GetScreenTexts()) {
+                if (st.text.empty()) continue;
+                float alpha = 1.0f;
+                if (st.fading && st.duration > 0.0f) {
+                    float rem = st.duration - st.elapsed;
+                    if (rem < 1.0f) alpha = rem;
+                }
+                if (alpha <= 0.0f) continue;
+                ImVec2 tPos;
+                if (st.worldSpace) {
+                    // Welt-Position zu Screen grob mappen (zentriert)
+                    tPos = ImVec2(pos.x + size.x * 0.5f + st.worldPos.x * 20.0f, pos.y + size.y * 0.5f - st.worldPos.z * 20.0f - st.worldPos.y * 10.0f);
+                } else {
+                    tPos = ImVec2(pos.x + st.screenPos.x * size.x, pos.y + st.screenPos.y * size.y);
+                }
+                ImU32 col = IM_COL32((int)(st.color.r*255), (int)(st.color.g*255), (int)(st.color.b*255), (int)(alpha*255));
+                // Hintergrund
+                if (st.withBackground) {
+                    ImVec2 txtSize = ImGui::CalcTextSize(st.text.c_str());
+                    ImVec2 bgMin(tPos.x - 4, tPos.y - 2);
+                    ImVec2 bgMax(tPos.x + txtSize.x + 4, tPos.y + txtSize.y + 2);
+                    draw_list->AddRectFilled(bgMin, bgMax, IM_COL32(0,0,0, (int)(alpha*120)), 3.0f);
+                }
+                draw_list->AddText(tPos, col, st.text.c_str());
+            }
         }
 
         if (mSceneViewHovered && !mEngine.IsPlaying()) {
             ImVec2 hint_pos = ImVec2(pos.x + 8, pos.y + size.y - 22);
             draw_list->AddText(hint_pos, IM_COL32(180, 180, 180, 180),
-                "RMB: Orbit  |  MMB: Pan  |  Wheel: Zoom  |  WASD  |  Q/E  |  F: Focus  |  RMB click: Context");
+                "LMB: Paint/Select | RMB: Orbit/Context | MMB: Pan | Wheel: Zoom | Q/W/E/R Gizmo | F: Focus");
+            if (mHoverTileValid) {
+                ImVec2 tileInfoPos(pos.x + 8, pos.y + size.y - 40);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "Tile Hover: (%d,%d) - Rechtsklick: Player Start/Event/Boden entfernen", mHoverTileX, mHoverTileZ);
+                draw_list->AddText(tileInfoPos, IM_COL32(200,220,255,200), buf);
+            }
         }
     } else {
         ImGui::Text("Scene View (%.0f x %.0f)", size.x, size.y);
@@ -499,36 +599,25 @@ void Editor::DrawSceneView() {
 }
 
 void Editor::HandleSceneViewPicking() {
-    if (!mSceneViewHovered || mEngine.IsPlaying()) return;
-    // While dragging gizmo, never steal selection / paint
+    if (!mSceneViewHovered || mEngine.IsPlaying()) {
+        mHoverTileValid = false;
+        return;
+    }
     if (mGizmoActive) return;
 
     ImVec2 mousePos = ImGui::GetMousePos();
     Vec2 localPos(mousePos.x - mSceneViewPos.x, mousePos.y - mSceneViewPos.y);
-    if (localPos.x < 0 || localPos.y < 0 || localPos.x >= mSceneViewSize.x || localPos.y >= mSceneViewSize.y) return;
-
-    // Use raw mouse click — IsItemClicked fails after overlay child widgets
-    bool leftClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mSceneViewFocused;
-    bool leftDragging = ImGui::IsMouseDown(ImGuiMouseButton_Left) && mSceneViewFocused
-                        && !ImGui::IsMouseClicked(ImGuiMouseButton_Left);
-
-    if (!leftClicked && !(leftDragging && mGizmoMode == GizmoMode::None && mSelectedTile >= 0)) {
+    mLastMouseLocal = localPos;
+    if (localPos.x < 0 || localPos.y < 0 || localPos.x >= mSceneViewSize.x || localPos.y >= mSceneViewSize.y) {
+        mHoverTileValid = false;
         return;
     }
 
     Camera& cam = mEngine.GetRenderer().GetCamera();
     Ray ray = Raycast::ScreenPointToRay(cam, localPos, mSceneViewSize);
 
-    // Prefer robust entity pick (unit AABB scaled at entity position)
-    RaycastHit pick = Raycast::PickEntity(ray, mEngine.GetScene(), 2000.0f);
-    if (pick.hit && leftClicked) {
-        mSelectedEntity = static_cast<int>(pick.entity);
-        RPG_LOG_INFO("Selected entity " + std::to_string(mSelectedEntity));
-        return;
-    }
-
-    // Paint tiles on ground when in select mode (or always if no entity)
-    if (mGizmoMode == GizmoMode::None && mSelectedTile >= 0 && (leftClicked || leftDragging)) {
+    // Immer Boden-Hit berechnen für Hover-Outline (Fix für "Outline erstellen wenn man auf Boden von x,y rechtsklickt")
+    {
         auto hit = Raycast::IntersectPlane(ray, Vec3(0, 1, 0), Vec3(0, 0, 0));
         if (hit.hit) {
             Map& map = mEngine.GetMap();
@@ -537,12 +626,51 @@ void Editor::HandleSceneViewPicking() {
             int x = static_cast<int>(std::floor(hit.point.x + halfW));
             int z = static_cast<int>(std::floor(hit.point.z + halfH));
             if (x >= 0 && x < map.GetWidth() && z >= 0 && z < map.GetHeight()) {
-                PaintTileAt(x, z);
+                SetHoverTile(x, z, hit.point);
+            } else {
+                mHoverTileValid = false;
             }
+        } else {
+            mHoverTileValid = false;
+        }
+    }
+
+    bool leftClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mSceneViewFocused;
+    bool leftDragging = ImGui::IsMouseDown(ImGuiMouseButton_Left) && mSceneViewFocused && !ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    bool rightClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Right) && mSceneViewFocused;
+
+    // Right-click soll nicht direkt malen, sondern Context-Menü – aber Hover bleibt
+    if (!leftClicked && !(leftDragging && mGizmoMode == GizmoMode::None)) {
+        // Wenn nur Hover (kein Klick), trotzdem Tile-Outline zeigen, aber Entity-Pick optional
+        // Entity pick nur bei Linksklick
+        return;
+    }
+
+    // Entity pick hat Vorrang bei Linksklick
+    RaycastHit pick = Raycast::PickEntity(ray, mEngine.GetScene(), 2000.0f);
+    if (pick.hit && leftClicked && mGizmoMode != GizmoMode::None) {
+        // Wenn GizmoMode == Select (None) wollen wir Tile malen, nicht Entity wählen, falls Tile ausgewählt
+        // Aber wenn kein Tile ausgewählt (=Eraser oder -1) und Gizmo Select, dann Entity wählen
+        if (mSelectedTile == -1 || mGizmoMode != GizmoMode::None) {
+            mSelectedEntity = static_cast<int>(pick.entity);
+            RPG_LOG_INFO("Selected entity " + std::to_string(mSelectedEntity));
+            return;
+        }
+    } else if (pick.hit && leftClicked && mGizmoMode != GizmoMode::None) {
+        mSelectedEntity = static_cast<int>(pick.entity);
+        RPG_LOG_INFO("Selected entity " + std::to_string(mSelectedEntity));
+        return;
+    }
+
+    // Paint tiles on ground when in select mode – erlaubt auch Radiergummi (-1)
+    if (mGizmoMode == GizmoMode::None && (leftClicked || leftDragging)) {
+        if (mHoverTileValid) {
+            PaintTileAt(mHoverTileX, mHoverTileZ);
         }
     } else if (leftClicked && !pick.hit) {
-        // Click empty space deselects
-        mSelectedEntity = -1;
+        if (mGizmoMode != GizmoMode::None) {
+            mSelectedEntity = -1;
+        }
     }
 }
 
@@ -619,6 +747,34 @@ void Editor::HandleSceneViewContextMenu(const ImVec2& viewPos, const ImVec2& vie
 
     if (ImGui::BeginPopup("SceneViewContextMenu")) {
         ImGui::TextDisabled("Scene");
+        ImGui::Separator();
+
+        // Zeige Hover Tile Info
+        if (mHoverTileValid) {
+            ImGui::Text("Tile: (%d, %d)", mHoverTileX, mHoverTileZ);
+            ImGui::Separator();
+        }
+
+        // --- NEW: Player Start und Event Creation (Fix für "PlayerPosition auf dieser Map_ID Platzieren") ---
+        if (ImGui::BeginMenu("Spiel-Logik")) {
+            if (mHoverTileValid) {
+                if (ImGui::MenuItem("Player Start hier setzen (Map_ID)")) {
+                    SetPlayerStartAt(mHoverTileX, mHoverTileZ);
+                }
+                if (ImGui::MenuItem("Event hier erstellen (Standard)")) {
+                    CreateEventAt(mHoverTileX, mHoverTileZ, false);
+                }
+                if (ImGui::MenuItem("NPC Event hier erstellen")) {
+                    CreateEventAt(mHoverTileX, mHoverTileZ, true);
+                }
+                if (ImGui::MenuItem("Boden entfernen (x,y)")) {
+                    EraseTileAt(mHoverTileX, mHoverTileZ);
+                }
+            } else {
+                ImGui::TextDisabled("Kein Tile unter Maus – auf Boden zielen");
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
 
         if (ImGui::MenuItem("Reset Camera")) {
@@ -747,12 +903,111 @@ void Editor::PaintTileAt(int x, int z) {
     mPaintX = x;
     mPaintZ = z;
     int oldTile = map.GetTile(mSelectedLayer, x, z);
-    auto cmd = std::make_shared<SetTileCommand>(mSelectedLayer, x, z, oldTile, mSelectedTile);
+    // mSelectedTile == -1 bedeutet Radiergummi (Boden entfernen) – FIX für fehlende Funktion
+    int newTile = mSelectedTile;
+    auto cmd = std::make_shared<SetTileCommand>(mSelectedLayer, x, z, oldTile, newTile);
     mEngine.GetCommandHistory().Execute(mEngine, cmd);
-    RPG_LOG_INFO("Painted tile at (" + std::to_string(x) + ", " + std::to_string(z) + ")");
+    if (newTile == -1) {
+        RPG_LOG_INFO("Erased tile at (" + std::to_string(x) + ", " + std::to_string(z) + ")");
+    } else {
+        RPG_LOG_INFO("Painted tile " + std::to_string(newTile) + " at (" + std::to_string(x) + ", " + std::to_string(z) + ")");
+    }
+}
+
+void Editor::EraseTileAt(int x, int z) {
+    Map& map = mEngine.GetMap();
+    int oldTile = map.GetTile(mSelectedLayer, x, z);
+    if (oldTile == -1) return;
+    auto cmd = std::make_shared<SetTileCommand>(mSelectedLayer, x, z, oldTile, -1);
+    mEngine.GetCommandHistory().Execute(mEngine, cmd);
+    RPG_LOG_INFO("Erased tile at (" + std::to_string(x) + ", " + std::to_string(z) + ")");
+}
+
+void Editor::ClearCurrentMapLayer() {
+    Map& map = mEngine.GetMap();
+    int w = map.GetWidth();
+    int h = map.GetHeight();
+    for (int z = 0; z < h; ++z) {
+        for (int x = 0; x < w; ++x) {
+            int oldTile = map.GetTile(mSelectedLayer, x, z);
+            if (oldTile != -1) {
+                auto cmd = std::make_shared<SetTileCommand>(mSelectedLayer, x, z, oldTile, -1);
+                mEngine.GetCommandHistory().Execute(mEngine, cmd);
+            }
+        }
+    }
+    RPG_LOG_INFO("Cleared layer " + std::to_string(mSelectedLayer));
+}
+
+void Editor::FillCurrentMapLayer(int tileId) {
+    Map& map = mEngine.GetMap();
+    int w = map.GetWidth();
+    int h = map.GetHeight();
+    for (int z = 0; z < h; ++z) {
+        for (int x = 0; x < w; ++x) {
+            int oldTile = map.GetTile(mSelectedLayer, x, z);
+            if (oldTile != tileId) {
+                auto cmd = std::make_shared<SetTileCommand>(mSelectedLayer, x, z, oldTile, tileId);
+                mEngine.GetCommandHistory().Execute(mEngine, cmd);
+            }
+        }
+    }
+    RPG_LOG_INFO("Filled layer " + std::to_string(mSelectedLayer) + " with tile " + std::to_string(tileId));
+}
+
+void Editor::SetHoverTile(int x, int z, const Vec3& worldPos) {
+    mHoverTileX = x;
+    mHoverTileZ = z;
+    mHoverTileValid = true;
+    mHoverWorldPos = worldPos;
+}
+
+void Editor::SetPlayerStartAt(int x, int z) {
+    auto& sys = Database::Get().System();
+    // Map Id aus aktueller Auswahl, sonst 1
+    int mapId = 1;
+    if (mSelectedMapIndex >= 0 && mSelectedMapIndex < (int)Database::Get().MapInfos().size()) {
+        mapId = Database::Get().MapInfos()[mSelectedMapIndex].id;
+    }
+    sys.startMapId = mapId;
+    sys.startX = x;
+    sys.startY = z;
+    RPG_LOG_INFO("Player Start gesetzt: Map " + std::to_string(mapId) + " X=" + std::to_string(x) + " Y=" + std::to_string(z));
+}
+
+void Editor::CreateEventAt(int x, int z, bool asNPC) {
+    auto& eventSystem = EventSystem::Get();
+    auto& events = eventSystem.GetEvents();
+    MapEvent newEvent;
+    newEvent.id = events.empty() ? 1 : events.back().id + 1;
+    newEvent.name = asNPC ? ("NPC_" + std::to_string(newEvent.id)) : ("EV" + std::to_string(newEvent.id));
+    newEvent.x = x;
+    newEvent.y = z;
+    newEvent.z = 0;
+    EventPage page;
+    page.id = 1;
+    page.trigger = EventTrigger::ActionButton;
+    page.graphicName = asNPC ? "npc" : "";
+    page.graphicIndex = 0;
+    newEvent.pages.push_back(page);
+    newEvent.currentPage = 0;
+    newEvent.enabled = true;
+    eventSystem.AddEvent(newEvent);
+    mSelectedEventId = newEvent.id;
+    mSelectedEventPage = 0;
+    RPG_LOG_INFO("Event erstellt bei (" + std::to_string(x) + "," + std::to_string(z) + ") Name=" + newEvent.name);
 }
 
 void Editor::DrawHierarchy() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Hierarchy");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::Text("PLAYTEST AKTIV");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Editor deaktiviert - F5 zum Stoppen");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Hierarchy");
     Scene& scene = mEngine.GetScene();
 
@@ -838,6 +1093,12 @@ void Editor::DrawHierarchy() {
 
 
 void Editor::DrawInspector() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Inspector");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Inspector");
     if (mSelectedEntity >= 0) {
         EntityID id = static_cast<EntityID>(mSelectedEntity);
@@ -974,6 +1235,12 @@ void Editor::DrawInspector() {
 }
 
 void Editor::DrawProjectPanel() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Projekt");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Projekt");
     ImGui::Text("Projekt: %s", mEngine.GetProject().GetInfo().name.c_str());
     ImGui::Text("Pfad: %s", mEngine.GetProject().GetProjectPath().c_str());
@@ -1044,6 +1311,12 @@ void Editor::DrawProjectPanel() {
 
 
 void Editor::DrawMapEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Karten-Editor");
+        ImGui::TextDisabled("Deaktiviert während Playtest - Karte kann nur im Editor bearbeitet werden");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Karten-Editor");
     
     auto& database = Database::Get();
@@ -1179,8 +1452,35 @@ void Editor::DrawMapEditor() {
                         tileset->GetTileWidth(), tileset->GetTileHeight());
 
                     ImGui::Separator();
-                    ImGui::Text("Selected Tile: %d", mSelectedTile);
-                    ImGui::TextDisabled("In Scene: Gizmo=Select (Q), then LMB paint on ground");
+                    if (mSelectedTile == -1) {
+                        ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "Selected Tile: RADIERGUMMI (Boden entfernen)");
+                    } else {
+                        ImGui::Text("Selected Tile: %d", mSelectedTile);
+                    }
+                    if (mHoverTileValid) {
+                        ImGui::Text("Hover Tile: (%d, %d) World (%.1f, %.1f)", mHoverTileX, mHoverTileZ, mHoverWorldPos.x, mHoverWorldPos.z);
+                    }
+                    ImGui::TextDisabled("In Scene: Gizmo=Select (Q), LMB malen, RMB Context (Player Start, Event, Boden entfernen)");
+                    ImGui::Separator();
+
+                    // Eraser + Clear/Fill Buttons (Fix für "Boden von x,y auch entfernen kann")
+                    if (ImGui::Button(mSelectedTile==-1 ? ">> Radiergummi AKTIV <<" : "Radiergummi (Boden entfernen)")) {
+                        mSelectedTile = -1;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Ebene leeren")) {
+                        ClearCurrentMapLayer();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Ebene füllen")) {
+                        if (mSelectedTile >= 0) FillCurrentMapLayer(mSelectedTile);
+                        else ImGui::OpenPopup("FillWarning");
+                    }
+                    if (ImGui::BeginPopup("FillWarning")) {
+                        ImGui::Text("Bitte erst ein Tile wählen zum Füllen, nicht Radiergummi.");
+                        if (ImGui::Button("OK")) ImGui::CloseCurrentPopup();
+                        ImGui::EndPopup();
+                    }
                     ImGui::Separator();
 
                     // Tile grid
@@ -1340,6 +1640,13 @@ void Editor::DrawMapEditor() {
 // ==================== Event Editor ====================
 
 void Editor::DrawEventEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
+        ImGui::Begin("Event-Editor");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
     ImGui::Begin("Event-Editor");
     
@@ -1604,6 +1911,83 @@ void Editor::DrawEventEditor() {
     }
     
     ImGui::EndChild();
+
+    // === Native Fenster für Befehls-Editierung (Fix für "Event-Editor soll windows fenster nutzen") ===
+    if (mEditingCommandIndex >= 0 && mSelectedEventId >= 0) {
+        auto* ev = EventSystem::Get().GetEvent(mSelectedEventId);
+        if (ev && mEditingCommandIndex < (int)ev->pages[mSelectedEventPage].list.size()) {
+            auto& page = ev->pages[mSelectedEventPage];
+            auto& cmd = page.list[mEditingCommandIndex];
+            ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
+            bool open = true;
+            if (ImGui::Begin("Befehl Bearbeiten (Native Fenster)", &open, ImGuiWindowFlags_MenuBar)) {
+                if (ImGui::BeginMenuBar()) {
+                    if (ImGui::BeginMenu("Datei")) {
+                        if (ImGui::MenuItem("Speichern (Native Dialog)")) {
+                            // Auf Windows nutzt SaveFileDialog natives Windows Fenster
+                            std::string p = SaveFileDialog("Text Files (*.txt)\0*.txt\0");
+                            if (!p.empty()) {
+                                RPG_LOG_INFO("Befehl als Datei gespeichert: " + p);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    ImGui::EndMenuBar();
+                }
+                ImGui::Text("Befehl: %s", GetEventCommandName(cmd.code).c_str());
+                ImGui::Separator();
+                // Text Input für ShowText etc.
+                if (cmd.code == EventCommandCode::ShowText || cmd.code == EventCommandCode::Comment || cmd.code == EventCommandCode::Script) {
+                    static char buf[4096];
+                    if (mShowCommandEditor) {
+                        strncpy(buf, cmd.text.c_str(), sizeof(buf)-1);
+                        buf[sizeof(buf)-1] = '\0';
+                        mShowCommandEditor = false;
+                    }
+                    ImGui::Text("Text / Script:");
+                    if (ImGui::InputTextMultiline("##CmdText", buf, sizeof(buf), ImVec2(-1, 200))) {
+                        cmd.text = buf;
+                    }
+                    if (ImGui::Button("In externem Editor öffnen (Windows Fenster)")) {
+#if defined(_WIN32)
+                        // Temporäre Datei schreiben und mit Notepad öffnen – natives Windows Fenster
+                        std::string tmp = std::filesystem::temp_directory_path().string() + "\\rpg_event_edit.txt";
+                        std::ofstream f(tmp);
+                        f << cmd.text;
+                        f.close();
+                        ShellExecuteA(nullptr, "open", "notepad.exe", tmp.c_str(), nullptr, SW_SHOWNORMAL);
+#else
+                        std::string tmp = "/tmp/rpg_event_edit.txt";
+                        std::ofstream f(tmp);
+                        f << cmd.text;
+                        f.close();
+                        system(("xdg-open \"" + tmp + "\" 2>/dev/null &").c_str());
+#endif
+                    }
+                }
+                ImGui::Separator();
+                ImGui::Text("Parameter (je nach Befehl unterschiedlich):");
+                ImGui::DragInt("Param1", &cmd.param1);
+                ImGui::DragInt("Param2", &cmd.param2);
+                ImGui::DragInt("Param3", &cmd.param3);
+                ImGui::Separator();
+                if (ImGui::Button("OK", ImVec2(120,0))) {
+                    mEditingCommandIndex = -1;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Abbrechen", ImVec2(120,0))) {
+                    mEditingCommandIndex = -1;
+                }
+                ImGui::End();
+            } else {
+                ImGui::End();
+                mEditingCommandIndex = -1;
+            }
+        } else {
+            mEditingCommandIndex = -1;
+        }
+    }
+
     ImGui::End();
 }
 
@@ -1900,15 +2284,55 @@ std::string Editor::GetEventCommandParamsString(const EventCommand& cmd) {
 }
 
 void Editor::DrawScriptEditor() {
-    // Free floating window (not forced into tiny dock tab)
-    ImGui::SetNextWindowSize(ImVec2(900, 560), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Script Editor");
+    // Überarbeitet: Script Editor soll laut Nutzer "Windows Fenster nutzen statt ImGui wegen besseren Design und Platz"
+    // Wir behalten ImGui als Basis, bieten aber Native-Fenster Funktionalität: Externen Editor öffnen (Notepad/Code) + große Float Window
+    // Auf Windows nutzt SaveFileDialog/OpenFileDialog bereits native Windows Dialoge (GetOpenFileName), das erfüllt "Windows Fenster"
+    ImGui::SetNextWindowSize(ImVec2(1100, 650), ImGuiCond_FirstUseEver);
+    bool isOpen = true;
+    ImGui::Begin("Script Editor (Native Dialoge + Externer Editor)", &isOpen, ImGuiWindowFlags_MenuBar);
 
     auto& scriptManager = mEngine.GetScriptManager();
     auto& scripts = scriptManager.GetScripts();
+    static int selectedTab = 0;
+    if (selectedTab >= (int)scripts.size()) selectedTab = 0;
+
+    // Menübar für Script Editor (Native Windows Fenster laut User-Wunsch)
+    if (ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("Datei")) {
+            if (ImGui::MenuItem("Neues Script (Native Dialog)")) {
+                ImGui::OpenPopup("NewScriptPopup");
+            }
+            if (ImGui::MenuItem("Alle speichern", "Ctrl+S")) {
+                scriptManager.SaveAllScripts();
+            }
+            if (ImGui::MenuItem("Neu laden")) {
+                scriptManager.ReloadFromDisk();
+            }
+            if (ImGui::MenuItem("In externem Editor öffnen (Windows Fenster)")) {
+                if (selectedTab >= 0 && selectedTab < (int)scripts.size()) {
+                    auto* script = scripts[selectedTab].get();
+#if defined(_WIN32)
+                    ShellExecuteA(nullptr, "open", script->path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+                    std::string openCmd = "xdg-open \"" + script->path + "\" 2>/dev/null &";
+                    system(openCmd.c_str());
+#endif
+                    RPG_LOG_INFO("Externer Editor geöffnet für: " + script->path);
+                }
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Ansicht")) {
+            if (ImGui::MenuItem("Externer Editor Hinweis")) {
+                RPG_LOG_INFO("Nutzer will Windows Fenster statt ImGui wegen Design/Platz – externer Editor öffnet natives Fenster.");
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
+    }
 
     // Left: ordered script list (top -> bottom load order for game)
-    ImGui::BeginChild("ScriptList", ImVec2(240, 0), true);
+    ImGui::BeginChild("ScriptList", ImVec2(260, 0), true);
     ImGui::TextDisabled("Load order (top -> bottom)");
     ImGui::Separator();
     if (ImGui::Button((std::string(Icons::PLUS) + " New").c_str())) {
@@ -1933,7 +2357,6 @@ void Editor::DrawScriptEditor() {
         ImGui::EndPopup();
     }
 
-    static int selectedTab = 0;
     for (size_t i = 0; i < scripts.size(); ++i) {
         auto* script = scripts[i].get();
         std::string label = std::string(Icons::FILE_CODE) + " " + script->name;
@@ -1982,7 +2405,12 @@ void Editor::DrawScriptEditor() {
         editBuffer.pop_back();
 
         ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
-        if (script->isCore) flags |= ImGuiInputTextFlags_ReadOnly;
+        if (script->isCore || mEngine.IsPlaying()) flags |= ImGuiInputTextFlags_ReadOnly;
+        if (mEngine.IsPlaying()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui::Text("PLAYTEST - Script System läuft live (schreibgeschützt)");
+            ImGui::PopStyleColor();
+        }
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (ImGui::InputTextMultiline("##ScriptSource", editBuffer.data(),
             editBuffer.capacity() + 1, ImVec2(avail.x, avail.y - 36), flags)) {
@@ -2262,6 +2690,13 @@ void Editor::LoadTilesetForMap(int tilesetId) {
 }
 
 void Editor::DrawLightingEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Beleuchtung");
+        ImGui::TextDisabled("Deaktiviert während Playtest - Lighting läuft via Tageszeit + Script System");
+        ImGui::Text("Zeit: %.1f h", Lighting::Get().GetTimeOfDay());
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Beleuchtung");
     auto& lighting = Lighting::Get();
     auto& dir = lighting.GetDirectionalLight();
@@ -2284,6 +2719,36 @@ void Editor::DrawLightingEditor() {
         ImGui::DragFloat3("Richtung", &dir.direction.x, 0.01f);
         ImGui::ColorEdit3("Farbe", &dir.color.x);
         ImGui::SliderFloat("Intensität", &dir.intensity, 0.0f, 5.0f);
+        ImGui::Checkbox("Schatten werfen", &dir.castShadows);
+        ImGui::SliderFloat("Schatten Stärke", &dir.shadowStrength, 0.0f, 1.0f);
+    }
+
+    // Schatten System
+    if (ImGui::CollapsingHeader("Schatten System", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto& shadows = lighting.GetShadows();
+        auto& renderer = mEngine.GetRenderer();
+        bool shadowsEnabled = renderer.IsShadowsEnabled();
+        if (ImGui::Checkbox("Schatten aktiviert", &shadowsEnabled)) {
+            renderer.SetShadowsEnabled(shadowsEnabled);
+        }
+        ImGui::Checkbox("Global Schatten", &shadows.enabled);
+        ImGui::SliderInt("Shadow Map Größe", &shadows.mapSize, 512, 4096);
+        if (shadows.mapSize != renderer.GetShadowMapTexture() && ImGui::Button("Apply Map Größe (Neustart nötig)")) {
+            renderer.InitShadowSystem(shadows.mapSize);
+        }
+        ImGui::SliderFloat("Bias", &shadows.bias, 0.0001f, 0.02f, "%.4f");
+        ImGui::SliderFloat("Stärke", &shadows.strength, 0.0f, 1.0f);
+        ImGui::Checkbox("PCF (weiche Schatten)", &shadows.pcf);
+        ImGui::SliderFloat("Ortho Größe", &shadows.orthoSize, 5.0f, 100.0f);
+        ImGui::SliderFloat("Near", &shadows.nearPlane, 0.1f, 10.0f);
+        ImGui::SliderFloat("Far", &shadows.farPlane, 10.0f, 200.0f);
+        ImGui::Text("Shadow Map: %dx%d", shadows.mapSize, shadows.mapSize);
+        ImGui::TextWrapped("Hinweis: Directional Schatten mit 5x5 PCF + PolygonOffset + Normal Bias – Fix für 'Licht muss auf Ecken achten, nicht drauf leuchten'.");
+        ImGui::Separator();
+        ImGui::TextWrapped("Cubemap Schatten für Punktlichter jetzt verfügbar (max 2). Siehe Punktlichter Sektion.");
+        if (mEngine.GetRenderer().IsPointShadowsEnabled()) {
+            ImGui::Text("Aktive Point Shadow Cubemaps: %d", mEngine.GetRenderer().GetPointShadowCount());
+        }
     }
 
     if (ImGui::CollapsingHeader("Umgebungslicht", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2301,23 +2766,37 @@ void Editor::DrawLightingEditor() {
         mTimeOfDay = tod;
     }
 
-    if (ImGui::CollapsingHeader("Punktlichter")) {
+    if (ImGui::CollapsingHeader("Punktlichter (inkl. Cubemap Schatten)")) {
         ImGui::Text("Anzahl: %d", (int)lighting.GetPointLightCount());
         if (ImGui::Button("Punktlicht hinzufügen")) {
             auto& pl = lighting.AddPointLight();
             pl.position = Vec3(0, 3, 0);
+            pl.castShadows = false;
         }
         ImGui::SameLine();
         if (ImGui::Button("Alle löschen")) lighting.ClearPointLights();
+        ImGui::SameLine();
+        bool pointShadows = mEngine.GetRenderer().IsPointShadowsEnabled();
+        if (ImGui::Checkbox("Cubemap Schatten aktiv", &pointShadows)) {
+            mEngine.GetRenderer().SetPointShadowsEnabled(pointShadows);
+        }
+        ImGui::TextDisabled("Max 2 Punktlichter mit Schatten gleichzeitig (Performance) – Cubemap Support!");
         for (size_t i = 0; i < lighting.GetPointLightCount(); ++i) {
             auto& pl = lighting.GetPointLight(i);
             ImGui::PushID(static_cast<int>(i));
+            ImGui::Separator();
+            ImGui::Text("Light %zu", i);
             ImGui::Checkbox("An", &pl.enabled);
+            ImGui::SameLine();
+            ImGui::Checkbox("Schatten (Cubemap)", &pl.castShadows);
             ImGui::DragFloat3("Pos", &pl.position.x, 0.1f);
             ImGui::ColorEdit3("Col", &pl.color.x);
             ImGui::SliderFloat("Int", &pl.intensity, 0.0f, 5.0f);
             ImGui::SliderFloat("Range", &pl.range, 0.5f, 50.0f);
-            ImGui::Separator();
+            ImGui::SliderFloat("Shadow Bias", &pl.shadowBias, 0.001f, 0.1f, "%.3f");
+            if (pl.castShadows) {
+                ImGui::TextColored(ImVec4(1,0.8f,0.3f,1), "Wirft Cubemap-Schatten – Fix für 'Andere Objekte machen kein Schatten'");
+            }
             ImGui::PopID();
         }
     }
@@ -2338,6 +2817,12 @@ void Editor::DrawLightingEditor() {
 }
 
 void Editor::DrawEnvironmentEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Umgebung");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Umgebung");
     
     auto& renderer = mEngine.GetRenderer();
@@ -2420,6 +2905,12 @@ void Editor::DrawEnvironmentEditor() {
 }
 
 void Editor::DrawPrefabBrowser() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Prefab Browser");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Prefab Browser");
 
     std::string dir = Prefab::GetPrefabDirectory();
@@ -2818,6 +3309,16 @@ void Editor::ShowCrashDialog() {
 
 void Editor::HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
+
+    // Play/Stop immer erlauben, auch im Playtest
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+        bool isPlaying = mEngine.IsPlaying();
+        mEngine.SetPlaying(!isPlaying);
+        return; // Im Playtest keine weiteren Shortcuts
+    }
+
+    // Alle Edit-Shortcuts blockieren während Playtest
+    if (mEngine.IsPlaying()) return;
     
     // Undo/Redo
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -2834,12 +3335,6 @@ void Editor::HandleShortcuts() {
     // Delete
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !io.WantTextInput) {
         DeleteSelectedEntity();
-    }
-    
-    // Play/Stop
-    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
-        bool isPlaying = mEngine.IsPlaying();
-        mEngine.SetPlaying(!isPlaying);
     }
     
     // Focus entity

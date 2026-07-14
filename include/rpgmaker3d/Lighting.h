@@ -17,6 +17,10 @@ struct DirectionalLight {
     Color color = Color(1.0f, 0.98f, 0.92f, 1.0f);
     float intensity = 1.15f;
     bool enabled = true;
+    bool castShadows = true;
+    float shadowStrength = 0.65f;
+    float shadowBias = 0.004f;
+    int shadowMapSize = 2048;
 };
 
 struct AmbientLight {
@@ -30,6 +34,8 @@ struct PointLight {
     Color color{1.0f, 0.9f, 0.7f, 1.0f};
     float intensity = 1.0f;
     float range = 12.0f;
+    bool castShadows = false; // cubemap shadows (max 2 lights for performance)
+    float shadowBias = 0.02f;
 };
 
 struct SpotLight {
@@ -41,6 +47,17 @@ struct SpotLight {
     float range = 20.0f;
     float innerConeDeg = 15.0f;
     float outerConeDeg = 30.0f;
+};
+
+struct ShadowSettings {
+    bool enabled = true;
+    int mapSize = 2048;
+    float bias = 0.004f;
+    float strength = 0.65f;
+    bool pcf = true;
+    float orthoSize = 30.0f;
+    float nearPlane = 1.0f;
+    float farPlane = 60.0f;
 };
 
 /// Global lighting singleton used by the forward renderer.
@@ -62,6 +79,9 @@ public:
     SpotLight& GetSpotLight() { return mSpot; }
     const SpotLight& GetSpotLight() const { return mSpot; }
 
+    ShadowSettings& GetShadows() { return mShadows; }
+    const ShadowSettings& GetShadows() const { return mShadows; }
+
     Vec3 GetEffectiveLightDir() const;
     float GetEffectiveAmbient() const;
 
@@ -79,6 +99,7 @@ private:
     AmbientLight mAmbient;
     std::vector<PointLight> mPointLights;
     SpotLight mSpot;
+    ShadowSettings mShadows;
     float mTimeOfDay = 12.0f;
 };
 

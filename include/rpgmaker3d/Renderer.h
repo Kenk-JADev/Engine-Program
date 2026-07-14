@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <array>
+#include <vector>
 #include "Types.h"
 #include "Camera.h"
 #include "Material.h"
@@ -13,6 +15,9 @@ class Shader;
 class Texture;
 class Model;
 class Mesh;
+class ShadowMap;
+class ShadowCubeMap;
+class Scene;
 
 struct RenderCommand {
     Mesh* mesh = nullptr;
@@ -109,18 +114,52 @@ public:
     const Skybox& GetSkybox() const { return mSkybox; }
     void DrawSkybox(const Camera& camera);
 
+    // Shadows – directional
+    bool InitShadowSystem(int mapSize = 2048);
+    void ShutdownShadowSystem();
+    void BeginShadowPass();
+    void EndShadowPass();
+    void DrawMeshDepth(const Mesh& mesh, const Mat4& transform);
+    void DrawModelDepth(const Model& model, const Mat4& transform);
+    Mat4 CalculateLightSpaceMatrix(float orthoSize = 30.0f, float nearPlane = 1.0f, float farPlane = 60.0f);
+    unsigned int GetShadowMapTexture() const;
+    const Mat4& GetLightSpaceMatrix() const { return mLightSpaceMatrix; }
+    bool IsShadowsEnabled() const { return mShadowsEnabled; }
+    void SetShadowsEnabled(bool enabled) { mShadowsEnabled = enabled; }
+    Shader* GetShadowShader() { return mShadowShader.get(); }
+
+    // Point light cubemap shadows
+    bool InitPointShadowSystem(int cubeSize = 1024);
+    void ShutdownPointShadowSystem();
+    void RenderPointShadows(Scene& scene);
+    bool IsPointShadowsEnabled() const { return mPointShadowsEnabled; }
+    void SetPointShadowsEnabled(bool v) { mPointShadowsEnabled = v; }
+    unsigned int GetPointShadowCubemap(int index) const;
+    int GetPointShadowCount() const { return static_cast<int>(mPointShadowMaps.size()); }
+
 private:
     void UpdateFogUniforms() const;
+    void UpdateShadowUniforms() const;
+    void UpdatePointShadowUniforms() const;
 
     Camera mCamera;
     std::unique_ptr<Shader> mDefaultShader;
     std::unique_ptr<Shader> mSkyboxShader;
+    std::unique_ptr<Shader> mShadowShader;
+    std::unique_ptr<Shader> mPointShadowShader;
     std::unique_ptr<Texture> mDefaultTexture;
     std::unique_ptr<Mesh> mParticleMesh;
     std::unique_ptr<Mesh> mBoundingBoxMesh;
+    std::unique_ptr<ShadowMap> mShadowMap;
+    std::vector<std::unique_ptr<ShadowCubeMap>> mPointShadowMaps;
     std::vector<RenderCommand> mCommandQueue;
     Color mClearColor{0.12f, 0.13f, 0.16f, 1.0f};
     bool mWireframeEnabled = false;
+    Mat4 mLightSpaceMatrix{1.0f};
+    bool mShadowsEnabled = true;
+    bool mPointShadowsEnabled = true;
+    int mShadowMapSize = 2048;
+    int mPointShadowSize = 1024;
     
     FogSettings mFog;
     Skybox mSkybox;

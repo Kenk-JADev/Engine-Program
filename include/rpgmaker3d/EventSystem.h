@@ -24,32 +24,44 @@ enum class EventCommandCode {
     ShowText = 101,
     ShowChoices = 102,
     InputNumber = 103,
-    ChangeGold = 125,
-    ChangeItems = 126,
+    ShowScreenText = 104,   // NEW: HUD text
+    ShowWorldText = 105,    // NEW: floating world text
+    ClearScreenTexts = 106, // NEW: clear HUD
+    Comment = 108,
+    ConditionalBranch = 111,
+    Label = 118,
+    JumpToLabel = 119,
     ChangeSwitch = 121,
     ChangeVariable = 122,
     ChangeSelfSwitch = 123,
+    ControlSelfSwitch = 123,
+    ChangeGold = 125,
+    ChangeItems = 126,
     TransferPlayer = 201,
     SetMoveRoute = 205,
     Wait = 230,
     PlayBGM = 241,
     FadeOutBGM = 242,
     PlaySE = 250,
-    Script = 355,
-    Comment = 108,
-    ConditionalBranch = 111,
-    EndBranch = 412,
-    Label = 118,
-    JumpToLabel = 119,
-    ControlSelfSwitch = 123,
     ChangeActorHP = 311,
+    ChangeActorMP = 312,
+    ChangeActorState = 313,
+    RecoverAll = 314,
+    ChangeExp = 315,
+    ChangeLevel = 316,
     BattleProcessing = 301,
     ShopProcessing = 302,
+    Script = 355,
+    EndBranch = 412,
     // 3D extensions
     SpawnEntity = 500,
     MoveEntity = 501,
     RotateEntity = 502,
-    PlayAnimation = 503
+    PlayAnimation = 503,
+    ShowFloatingDamage = 504, // NEW: damage popup
+    PlayParticle = 505,
+    SetTimeOfDay = 506,
+    SetWeather = 507
 };
 
 struct EventCommand {
@@ -138,6 +150,12 @@ public:
     std::function<void(int gold)> onChangeGold;
     std::function<void(int id, bool value)> onChangeSwitch;
     std::function<void(int id, int value)> onChangeVariable;
+    // NEW: Screen Text callbacks
+    std::function<void(const std::string&, float, float, float, float, float, float)> onShowScreenText;
+    std::function<void(const std::string&, float, float, float, float, float, float, float)> onShowWorldText;
+    std::function<void()> onClearScreenTexts;
+    std::function<void(int itemId, int amount)> onChangeItems;
+    std::function<void(int actorId, int hp)> onChangeActorHP;
 
 private:
     bool ExecuteCommand(const EventCommand& cmd);

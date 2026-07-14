@@ -110,6 +110,14 @@ private:
     void LoadSelectedMap();
     void ResizeCurrentMap(int width, int height);
     void LoadTilesetForMap(int tilesetId);
+    void EraseTileAt(int x, int z);
+    void ClearCurrentMapLayer();
+    void FillCurrentMapLayer(int tileId);
+
+    // Scene Editor Erweiterungen (Player Start, Event an Position)
+    void SetPlayerStartAt(int x, int z);
+    void CreateEventAt(int x, int z, bool asNPC);
+    void SetHoverTile(int x, int z, const Vec3& worldPos);
 
     // Event Editor Funktionen
     void DrawEventCommandList(EventPage& page);
@@ -132,7 +140,7 @@ private:
     bool mLayoutInitialized = false;
     int mSelectedEntity = -1;
     int mSelectedLayer = 0;
-    int mSelectedTile = 0;
+    int mSelectedTile = -1; // -1 = Eraser (Boden entfernen) – Fix für "Boden entfernen fehlt"
     int mPaintX = 0;
     int mPaintZ = 0;
     int mSelectedMapIndex = -1;  // Für Map-Liste
@@ -150,6 +158,14 @@ private:
     float mTimeOfDay = 12.0f;
     float mTimeOfDaySpeed = 1.0f;
     EditorTheme mCurrentTheme = EditorTheme::Dark;
+
+    // Scene Editor Hover / Outline (Fix für Rechtsklick Support + Outline)
+    int mHoverTileX = -1;
+    int mHoverTileZ = -1;
+    bool mHoverTileValid = false;
+    Vec3 mHoverWorldPos{0.0f};
+    Vec2 mLastMouseLocal{0.0f};
+    bool mShowTileOutline = true;
 
     // Gizmo state
     GizmoMode mGizmoMode = GizmoMode::Translate;

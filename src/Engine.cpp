@@ -149,6 +149,10 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     if (std::filesystem::exists("./SampleProject/project.json")) {
         mProject->Load("./SampleProject");
         RPG_LOG_INFO("Loaded SampleProject");
+        // Try to load real database from project
+        if (Database::Get().Load(mProject->GetProjectPath())) {
+            RPG_LOG_INFO("Database loaded from project: " + mProject->GetProjectPath());
+        }
     } else {
         mProject->New("./SampleProject", "Sample RPG 3D");
         RPG_LOG_INFO("Created new SampleProject");
@@ -187,13 +191,16 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     }
     mMap->SetTileset(tileset);
 
-    // Demo-Map
-    for (int z = 0; z < mMap->GetHeight(); ++z) {
-        for (int x = 0; x < mMap->GetWidth(); ++x) {
-            int tile = ((x + z) % 8);
-            mMap->SetTile(0, x, z, tile);
-        }
-    }
+    // Bind GameMap for collision checks
+    Game::Get().Map().BindMap(mMap.get());
+    RPG_LOG_INFO("GameMap bound to editor Map for collision");
+
+    // Neues Projekt: Karte LEER lassen, nicht mit Demo-Tiles fuellen
+    // Früher wurde hier ((x+z)%8) gesetzt, das führte zu grauem Boden + kaputtem Mapping
+    // Jetzt: nur wenn kein Save existiert und Map noch leer ist, KEINE Tiles setzen
+    // Damit neues Projekt wirklich leer ist (Nutzer kann selbst bemalen)
+    // Demo-Tiles nur noch wenn explizit gewünscht via Script
+    // mMap ist bereits mit -1 (empty) initialisiert durch Resize/AddLayer
 
     // Game System – NICHT hier NewGame aufrufen!
     // Game::NewGame() wird vom Player / Editor Play-Mode explizit gestartet,
@@ -589,6 +596,11 @@ void Engine::Update(float dt) {
         }
     }
 
+    // Ensure GameMap always bound to current editor Map (for collision)
+    if (mMap) {
+        Game::Get().Map().BindMap(mMap.get());
+    }
+
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {
         // Pause menu
@@ -742,6 +754,68 @@ void Engine::RenderScene() {
         }
     }
 
+    // === SHADOW PASS (vor normalem Frame) ===
+    // Render depth from directional light perspective into shadow map
+    // BUGFIX: Shadow FBO Bind hat vorher Scene Framebuffer überschrieben und nicht wiederhergestellt,
+    // deshalb war Scene im Editor schwarz/leer (Player.exe ohne Framebuffer ging).
+    // Fix: Nach Shadow-Pass Framebuffer re-binden + Viewport restoren, plus PolygonOffset gegen Light-Leak.
+    if (mRenderer->IsShadowsEnabled() && Lighting::Get().GetShadows().enabled && Lighting::Get().GetDirectionalLight().castShadows) {
+        // Light space matrix based on current lighting/time of day + map bounds
+        float mapW = mMap ? static_cast<float>(mMap->GetWidth()) : 20.0f;
+        float mapH = mMap ? static_cast<float>(mMap->GetHeight()) : 20.0f;
+        float adaptiveOrtho = std::max(mapW, mapH) * 0.6f + 10.0f;
+        float ortho = Lighting::Get().GetShadows().orthoSize;
+        // Wenn ortho viel zu groß für kleine Map, adaptive nehmen um Schattenquali zu verbessern (weniger Light-Leak an Ecken)
+        if (ortho > adaptiveOrtho * 1.5f) ortho = adaptiveOrtho;
+
+        mRenderer->CalculateLightSpaceMatrix(
+            ortho,
+            Lighting::Get().GetShadows().nearPlane,
+            Lighting::Get().GetShadows().farPlane
+        );
+        mRenderer->BeginShadowPass();
+        // Map depth - nur wenn Map sichtbar (Scene System) und nicht zu flach (Boden empfängt nur, wirft aber auch wenn elevation>0)
+        if (mMap && Game::Get().Map().IsVisible()) {
+            mMap->RenderDepth(*mRenderer);
+        }
+        // Entities depth – alle Objekte werfen Schatten (Fix: vorher hat nur ModelRenderer Schatten geworfen,
+        // aber Light-Entity Meshes und Particle etc. nicht. Jetzt auch Bounding und alle.)
+        for (EntityID id : mScene->GetEntities()) {
+            auto* transform = mScene->GetComponent<TransformComponent>(id);
+            if (!transform) continue;
+            auto* model = mScene->GetComponent<ModelRendererComponent>(id);
+            if (model && model->model) {
+                Mat4 mat = transform->transform.GetMatrix();
+                for (int mi = 0; mi < model->model->GetMeshCount(); ++mi) {
+                    mRenderer->DrawMeshDepth(model->model->GetMesh(mi), mat);
+                }
+            } else {
+                // Fallback: Wenn kein Model, aber z.B. nur Transform (Cube erstellt), trotzdem Schatten via kleinem Cube?
+                // Wir können hier nichts tun, aber sicherstellen dass Cube Entities Model haben (tun sie).
+            }
+        }
+        mRenderer->EndShadowPass();
+        // Viewport / FBO restore – CRITICAL FIX für Editor Scene
+        if (mEditorMode && mSceneFramebuffer) {
+            mSceneFramebuffer->Bind();
+            glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
+        } else if (mWindow) {
+            glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
+        }
+
+        // === POINT LIGHT CUBEMAP SHADOWS (falls aktiviert) ===
+        if (mRenderer->IsPointShadowsEnabled()) {
+            mRenderer->RenderPointShadows(*mScene);
+            // Nach Cubemap Shadow Pass wieder Scene FBO binden
+            if (mEditorMode && mSceneFramebuffer) {
+                mSceneFramebuffer->Bind();
+                glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
+            } else if (mWindow) {
+                glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
+            }
+        }
+    }
+
     if (hasActiveCam) {
         mRenderer->BeginFrame(activeCam);
     } else {
@@ -756,8 +830,11 @@ void Engine::RenderScene() {
         mRenderer->DrawGrid(mGridMesh, Mat4(1.0f), Color(0.35f, 0.35f, 0.40f, 0.55f));
     }
 
-    // Map
-    mMap->Render(*mRenderer);
+    // Map - nur wenn sichtbar (Scene System nutzt Map Daten über Script)
+    // In Scene_Title oder Scene_Battle kann Map ausgeblendet sein, damit macht Scene Switch Sinn
+    if (Game::Get().Map().IsVisible()) {
+        mMap->Render(*mRenderer);
+    }
 
     // Entitäten
     for (EntityID id : mScene->GetEntities()) {

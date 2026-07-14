@@ -35,6 +35,7 @@ public:
 
     void BuildGeometry();
     void Render(Renderer& renderer);
+    void RenderDepth(Renderer& renderer); // for shadow pass
 
     void Save(const std::string& path) const;
     bool Load(const std::string& path);

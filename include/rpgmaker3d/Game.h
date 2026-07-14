@@ -121,6 +121,10 @@ private:
     bool mLocked = false;
 };
 
+// == Forward for Map binding ==
+class Map;
+class Tileset;
+
 // == Game Map (Runtime) ==
 class GameMap {
 public:
@@ -128,7 +132,36 @@ public:
     void Update(float dt);
 
     int GetMapId() const { return mMapId; }
+
+    // Bind editor/runtime Map for collision checks
+    void BindMap(const Map* map) { mBoundMap = map; }
+    const Map* GetBoundMap() const { return mBoundMap; }
+
+    // Grid-based passability (0..width-1, 0..height-1)
     bool IsPassable(int x, int z) const;
+    // World-space passability (world coordinates as used by player)
+    bool IsPassableWorld(float worldX, float worldZ) const;
+    bool IsPassableWorld(const Vec3& worldPos) const { return IsPassableWorld(worldPos.x, worldPos.z); }
+    bool IsPassableWithRadius(const Vec3& pos, float radius = 0.35f) const;
+
+    // Convert world position to map grid coordinates
+    bool WorldToMap(float worldX, float worldZ, int& outX, int& outZ) const;
+
+    // Map border handling - strict enforcement based on width/height
+    bool IsInsideMapBounds(const Vec3& pos, float margin = 0.0f) const;
+    bool IsInsideMapBounds(float worldX, float worldZ, float margin = 0.0f) const;
+    Vec3 ClampToBounds(const Vec3& pos, float radius = 0.35f) const;
+    void GetWorldBounds(float& minX, float& maxX, float& minZ, float& maxZ) const;
+    void GetWorldBoundsWithMargin(float& minX, float& maxX, float& minZ, float& maxZ, float radius) const;
+
+    int GetWidth() const;
+    int GetHeight() const;
+
+    // Visibility for Scene system - wenn Scenes switchen, kann Map ausgeblendet werden
+    void SetVisible(bool v) { mVisible = v; }
+    bool IsVisible() const { return mVisible; }
+    // Load map data via script
+    bool LoadFromFile(const std::string& path);
 
     void SetDisplayPos(const Vec3& pos) { mDisplayPos = pos; }
     const Vec3& GetDisplayPos() const { return mDisplayPos; }
@@ -136,6 +169,8 @@ public:
 private:
     int mMapId = 1;
     Vec3 mDisplayPos{0,0,0};
+    const Map* mBoundMap = nullptr;
+    bool mVisible = true;
 };
 
 // == Overall Game ==
