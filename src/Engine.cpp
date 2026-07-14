@@ -780,11 +780,17 @@ void Engine::RenderScene() {
             }
         }
         mRenderer->EndShadowPass();
-        // Viewport restore wird in Render() nach Framebuffer Unbind gemacht, aber hier auch sicher
+        // Viewport restore – critical: shadow pass changed the viewport to shadow map size!
+        // We must restore it to the correct framebuffer size before rendering the scene.
+        // FIX: ShadowMap::Unbind() now restores the previously bound FBO (e.g. the editor's
+        // scene framebuffer), so we are rendering to the correct target. But the viewport
+        // is still at shadow map resolution – fix that here.
         if (mWindow) {
-            // Wenn Editor aktiv mit Scene Framebuffer, wird viewport dort neu gesetzt
-            // Für Player direkt hier
-            if (!(mEditorMode && mSceneFramebuffer)) {
+            if (mEditorMode && mSceneFramebuffer) {
+                // Editor mode: restore viewport to scene framebuffer size
+                glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
+            } else {
+                // Player mode: restore viewport to window size
                 glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
             }
         }

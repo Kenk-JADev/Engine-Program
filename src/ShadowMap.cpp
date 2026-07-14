@@ -58,19 +58,22 @@ void ShadowMap::Delete() {
 }
 
 void ShadowMap::Bind() {
+    // Save previously bound framebuffer so we can restore it in Unbind()
+    // This is critical: without this, the editor's scene framebuffer gets
+    // silently unbound and all subsequent scene rendering goes to the
+    // default framebuffer (screen) instead of the scene framebuffer.
+    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &mPreviousFBO);
     glBindFramebuffer(GL_FRAMEBUFFER, mFBO);
     glViewport(0, 0, mWidth, mHeight);
     glClear(GL_DEPTH_BUFFER_BIT);
-    // For shadow, we want front face culling to reduce peter panning
     glEnable(GL_DEPTH_TEST);
-    // glCullFace(GL_FRONT);
-    // glEnable(GL_CULL_FACE);
 }
 
 void ShadowMap::Unbind() {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // glCullFace(GL_BACK);
-    // glDisable(GL_CULL_FACE);
+    // Restore the previously bound framebuffer instead of unconditionally
+    // binding 0 (the default/screen framebuffer). This ensures the editor's
+    // scene framebuffer is properly restored after the shadow pass.
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(mPreviousFBO));
 }
 
 void ShadowMap::Resize(int width, int height) {
