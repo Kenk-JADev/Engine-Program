@@ -39,6 +39,7 @@ SRC = src/main.cpp \
       src/RubyVM.cpp \
       src/Raycast.cpp \
       src/Lighting.cpp \
+      src/ShadowMap.cpp \
       src/Material.cpp \
       src/ParticleSystem.cpp \
       src/Platform.cpp \

@@ -149,6 +149,10 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     if (std::filesystem::exists("./SampleProject/project.json")) {
         mProject->Load("./SampleProject");
         RPG_LOG_INFO("Loaded SampleProject");
+        // Try to load real database from project
+        if (Database::Get().Load(mProject->GetProjectPath())) {
+            RPG_LOG_INFO("Database loaded from project: " + mProject->GetProjectPath());
+        }
     } else {
         mProject->New("./SampleProject", "Sample RPG 3D");
         RPG_LOG_INFO("Created new SampleProject");
@@ -186,6 +190,10 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
         tileset->Load("assets/textures/tileset_demo.png", 32, 32); // wird checker fallback
     }
     mMap->SetTileset(tileset);
+
+    // Bind GameMap for collision checks
+    Game::Get().Map().BindMap(mMap.get());
+    RPG_LOG_INFO("GameMap bound to editor Map for collision");
 
     // Demo-Map
     for (int z = 0; z < mMap->GetHeight(); ++z) {
@@ -589,6 +597,11 @@ void Engine::Update(float dt) {
         }
     }
 
+    // Ensure GameMap always bound to current editor Map (for collision)
+    if (mMap) {
+        Game::Get().Map().BindMap(mMap.get());
+    }
+
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {
         // Pause menu
@@ -742,6 +755,41 @@ void Engine::RenderScene() {
         }
     }
 
+    // === SHADOW PASS (vor normalem Frame) ===
+    // Render depth from directional light perspective into shadow map
+    if (mRenderer->IsShadowsEnabled() && Lighting::Get().GetShadows().enabled && Lighting::Get().GetDirectionalLight().castShadows) {
+        // Light space matrix based on current lighting/time of day
+        mRenderer->CalculateLightSpaceMatrix(
+            Lighting::Get().GetShadows().orthoSize,
+            Lighting::Get().GetShadows().nearPlane,
+            Lighting::Get().GetShadows().farPlane
+        );
+        mRenderer->BeginShadowPass();
+        // Map depth - nur wenn Map sichtbar (Scene System)
+        if (mMap && Game::Get().Map().IsVisible()) {
+            mMap->RenderDepth(*mRenderer);
+        }
+        // Entities depth
+        for (EntityID id : mScene->GetEntities()) {
+            auto* transform = mScene->GetComponent<TransformComponent>(id);
+            auto* model = mScene->GetComponent<ModelRendererComponent>(id);
+            if (!transform || !model || !model->model) continue;
+            Mat4 mat = transform->transform.GetMatrix();
+            for (int mi = 0; mi < model->model->GetMeshCount(); ++mi) {
+                mRenderer->DrawMeshDepth(model->model->GetMesh(mi), mat);
+            }
+        }
+        mRenderer->EndShadowPass();
+        // Viewport restore wird in Render() nach Framebuffer Unbind gemacht, aber hier auch sicher
+        if (mWindow) {
+            // Wenn Editor aktiv mit Scene Framebuffer, wird viewport dort neu gesetzt
+            // Für Player direkt hier
+            if (!(mEditorMode && mSceneFramebuffer)) {
+                glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
+            }
+        }
+    }
+
     if (hasActiveCam) {
         mRenderer->BeginFrame(activeCam);
     } else {
@@ -756,8 +804,11 @@ void Engine::RenderScene() {
         mRenderer->DrawGrid(mGridMesh, Mat4(1.0f), Color(0.35f, 0.35f, 0.40f, 0.55f));
     }
 
-    // Map
-    mMap->Render(*mRenderer);
+    // Map - nur wenn sichtbar (Scene System nutzt Map Daten über Script)
+    // In Scene_Title oder Scene_Battle kann Map ausgeblendet sein, damit macht Scene Switch Sinn
+    if (Game::Get().Map().IsVisible()) {
+        mMap->Render(*mRenderer);
+    }
 
     // Entitäten
     for (EntityID id : mScene->GetEntities()) {

@@ -4,6 +4,7 @@
 #include "rpgmaker3d/Model.h"
 #include "rpgmaker3d/Lighting.h"
 #include "rpgmaker3d/ParticleSystem.h"
+#include "rpgmaker3d/ShadowMap.h"
 #include <glad/gl.h>
 #include <iostream>
 #include <array>
@@ -24,10 +25,12 @@ out vec3 Normal;
 out vec2 TexCoord;
 out vec4 TintColor;
 out float FogFactor;
+out vec4 FragPosLightSpace;
 
 uniform mat4 uModel;
 uniform mat4 uView;
 uniform mat4 uProjection;
+uniform mat4 uLightSpaceMatrix;
 uniform vec4 uColor;
 uniform float uFogStart;
 uniform float uFogEnd;
@@ -37,9 +40,9 @@ void main() {
     Normal = mat3(transpose(inverse(uModel))) * aNormal;
     TexCoord = aTexCoord;
     TintColor = uColor;
+    FragPosLightSpace = uLightSpaceMatrix * vec4(FragPos, 1.0);
     gl_Position = uProjection * uView * vec4(FragPos, 1.0);
     
-    // Fog factor calculation in vertex shader (per-vertex fog, cheaper)
     float dist = length((uView * vec4(FragPos, 1.0)).xyz);
     FogFactor = clamp((uFogEnd - dist) / (uFogEnd - uFogStart), 0.0, 1.0);
 }
@@ -54,6 +57,7 @@ in vec3 Normal;
 in vec2 TexCoord;
 in vec4 TintColor;
 in float FogFactor;
+in vec4 FragPosLightSpace;
 
 uniform sampler2D uTexture;
 uniform vec3 uLightDir;
@@ -64,28 +68,66 @@ uniform vec3 uAmbientColor;
 uniform vec3 uFogColor;
 uniform bool uFogEnabled;
 
-// Up to 4 dynamic point lights (editor + runtime)
 uniform int uPointLightCount;
 uniform vec3 uPointLightPos[4];
 uniform vec3 uPointLightColor[4];
 uniform float uPointLightIntensity[4];
 uniform float uPointLightRange[4];
 
+// Shadows
+uniform sampler2D uShadowMap;
+uniform bool uShadowsEnabled;
+uniform float uShadowStrength;
+uniform float uShadowBias;
+
+float CalculateShadow(vec4 fragPosLightSpace, vec3 normal, vec3 lightDir) {
+    if (!uShadowsEnabled) return 0.0;
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    if (projCoords.z > 1.0) return 0.0;
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
+
+    float closestDepth = texture(uShadowMap, projCoords.xy).r;
+    float currentDepth = projCoords.z;
+
+    // Bias based on angle to reduce shadow acne
+    float bias = max(uShadowBias * (1.0 - dot(normal, -lightDir)), uShadowBias * 0.1);
+    
+    // PCF - 3x3 kernel for softer shadows
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(uShadowMap, 0);
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(uShadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+        }
+    }
+    shadow /= 9.0;
+    // Keep some light even in shadow
+    shadow *= uShadowStrength;
+    return shadow;
+}
+
 void main() {
     vec4 texColor = texture(uTexture, TexCoord) * TintColor;
     if (texColor.a < 0.05) discard;
 
-    // Two-sided lighting so ground planes (and flipped normals) still receive light
     vec3 norm = normalize(Normal);
     vec3 L = normalize(-uLightDir);
-    float NdotL = abs(dot(norm, L));
+
+    // Two-sided lighting
+    float NdotL = max(dot(norm, L), 0.0);
     float wrap = NdotL * 0.5 + 0.5;
     wrap = wrap * wrap;
 
     vec3 ambient = uAmbientColor * uAmbient;
     vec3 diffuse = uLightColor * uLightIntensity * mix(NdotL, wrap, 0.25);
 
-    // Point lights
+    // Shadow factor
+    float shadow = CalculateShadow(FragPosLightSpace, norm, uLightDir);
+    diffuse *= (1.0 - shadow);
+
+    // Point lights (no shadows for now, could add cubemap shadows later)
     for (int i = 0; i < uPointLightCount; ++i) {
         vec3 toL = uPointLightPos[i] - FragPos;
         float dist = length(toL);
@@ -93,7 +135,7 @@ void main() {
         float atten = clamp(1.0 - dist / range, 0.0, 1.0);
         atten *= atten;
         vec3 ldir = toL / max(dist, 0.001);
-        float nd = abs(dot(norm, ldir));
+        float nd = max(dot(norm, ldir), 0.0);
         diffuse += uPointLightColor[i] * uPointLightIntensity[i] * nd * atten;
     }
 
@@ -104,6 +146,26 @@ void main() {
     }
 
     FragColor = vec4(finalColor, texColor.a);
+}
+)";
+
+// Shadow mapping shaders
+const char* shadowVertexShader = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+
+uniform mat4 uLightSpaceMatrix;
+uniform mat4 uModel;
+
+void main() {
+    gl_Position = uLightSpaceMatrix * uModel * vec4(aPos, 1.0);
+}
+)";
+
+const char* shadowFragmentShader = R"(
+#version 330 core
+void main() {
+    // Depth only, no color output needed
 }
 )";
 
@@ -120,7 +182,7 @@ uniform mat4 uProjection;
 void main() {
     TexCoords = aPos;
     vec4 pos = uProjection * uView * vec4(aPos, 1.0);
-    gl_Position = pos.xyww;  // Skybox trick: set w = z for infinite distance
+    gl_Position = pos.xyww;
 }
 )";
 
@@ -137,7 +199,7 @@ void main() {
 }
 )";
 
-Renderer::Renderer() : mWireframeEnabled(false) {
+Renderer::Renderer() : mWireframeEnabled(false), mShadowsEnabled(true), mShadowMapSize(2048) {
 }
 
 Renderer::~Renderer() {
@@ -151,10 +213,15 @@ bool Renderer::Initialize() {
         return false;
     }
 
-    // Skybox shader
     mSkyboxShader = std::make_unique<Shader>();
     if (!mSkyboxShader->LoadFromSource(skyboxVertexShader, skyboxFragmentShader)) {
         std::cerr << "Failed to load skybox shader" << std::endl;
+    }
+
+    mShadowShader = std::make_unique<Shader>();
+    if (!mShadowShader->LoadFromSource(shadowVertexShader, shadowFragmentShader)) {
+        std::cerr << "Failed to load shadow shader" << std::endl;
+        // Non-fatal, shadows will be disabled
     }
 
     mDefaultTexture = std::make_unique<Texture>();
@@ -163,6 +230,12 @@ bool Renderer::Initialize() {
     mParticleMesh = std::make_unique<Mesh>(MeshFactory::CreateCube(0.1f));
     mBoundingBoxMesh = std::make_unique<Mesh>();
 
+    // Init shadow system
+    if (!InitShadowSystem(mShadowMapSize)) {
+        std::cerr << "Failed to init shadow system, shadows disabled" << std::endl;
+        mShadowsEnabled = false;
+    }
+
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -170,8 +243,10 @@ bool Renderer::Initialize() {
 }
 
 void Renderer::Shutdown() {
+    ShutdownShadowSystem();
     mDefaultShader.reset();
     mSkyboxShader.reset();
+    mShadowShader.reset();
     mDefaultTexture.reset();
     mParticleMesh.reset();
     mBoundingBoxMesh.reset();
@@ -189,17 +264,121 @@ void Renderer::Shutdown() {
     }
 }
 
+bool Renderer::InitShadowSystem(int mapSize) {
+    mShadowMapSize = mapSize;
+    mShadowMap = std::make_unique<ShadowMap>();
+    if (!mShadowMap->Create(mapSize, mapSize)) {
+        return false;
+    }
+    // Initial light space matrix
+    mLightSpaceMatrix = CalculateLightSpaceMatrix();
+    mShadowMap->SetLightSpaceMatrix(mLightSpaceMatrix);
+    return true;
+}
+
+void Renderer::ShutdownShadowSystem() {
+    if (mShadowMap) {
+        mShadowMap->Delete();
+        mShadowMap.reset();
+    }
+}
+
+Mat4 Renderer::CalculateLightSpaceMatrix(float orthoSize, float nearPlane, float farPlane) {
+    Lighting& lighting = Lighting::Get();
+    const auto& dirLight = lighting.GetDirectionalLight();
+    const auto& shadowSettings = lighting.GetShadows();
+
+    // Use shadow settings if provided
+    float size = shadowSettings.enabled ? shadowSettings.orthoSize : orthoSize;
+    float n = shadowSettings.enabled ? shadowSettings.nearPlane : nearPlane;
+    float f = shadowSettings.enabled ? shadowSettings.farPlane : farPlane;
+
+    Vec3 lightDir = glm::normalize(dirLight.direction);
+    // Position the light far away in opposite direction, looking at center
+    Vec3 center(0.0f, 0.0f, 0.0f);
+    Vec3 lightPos = center - lightDir * 20.0f;
+
+    // Avoid singularity when light direction is close to up
+    Vec3 up = Vec3(0.0f, 1.0f, 0.0f);
+    if (abs(glm::dot(lightDir, up)) > 0.99f) {
+        up = Vec3(0.0f, 0.0f, 1.0f);
+    }
+
+    Mat4 lightView = glm::lookAt(lightPos, center, up);
+    Mat4 lightProj = glm::ortho(-size, size, -size, size, n, f);
+    Mat4 lightSpace = lightProj * lightView;
+    mLightSpaceMatrix = lightSpace;
+    if (mShadowMap) {
+        mShadowMap->SetLightSpaceMatrix(lightSpace);
+    }
+    return lightSpace;
+}
+
+void Renderer::BeginShadowPass() {
+    if (!mShadowsEnabled || !mShadowMap || !mShadowMap->IsValid() || !mShadowShader) return;
+    // Recalculate light space matrix each shadow pass (could be cached)
+    CalculateLightSpaceMatrix();
+    mShadowMap->Bind();
+    mShadowShader->Bind();
+    mShadowShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    // Reduce peter panning
+    glCullFace(GL_FRONT);
+    glEnable(GL_CULL_FACE);
+}
+
+void Renderer::EndShadowPass() {
+    if (!mShadowMap) return;
+    glCullFace(GL_BACK);
+    glDisable(GL_CULL_FACE);
+    mShadowMap->Unbind();
+    if (mShadowShader) mShadowShader->Unbind();
+    // Restore viewport - will be set again in BeginFrame
+    // Note: Engine's Render will set viewport via Framebuffer etc.
+}
+
+void Renderer::DrawMeshDepth(const Mesh& mesh, const Mat4& transform) {
+    if (!mShadowShader || !mShadowMap) return;
+    mShadowShader->Bind();
+    mShadowShader->SetMat4("uModel", transform);
+    // uLightSpaceMatrix already set in BeginShadowPass, but set again for safety
+    mShadowShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
+    mesh.Draw();
+}
+
+void Renderer::DrawModelDepth(const Model& model, const Mat4& transform) {
+    if (!mShadowShader) return;
+    // Need to ensure shader bound
+    mShadowShader->Bind();
+    mShadowShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
+    mShadowShader->SetMat4("uModel", transform);
+    model.Draw();
+}
+
+unsigned int Renderer::GetShadowMapTexture() const {
+    if (mShadowMap) return mShadowMap->GetDepthTextureID();
+    return 0;
+}
+
 void Renderer::BeginFrame(const Camera& camera) {
-    // Always clear with scene clear color (not fog) – fog is only applied in the shader.
-    // Using fog color as clear made the whole viewport look washed-out grey.
+    // Shadow pass should be done before this in Engine::RenderScene if enabled
+    // But we also need to ensure light space matrix is up to date
+    if (mShadowsEnabled) {
+        // Keep light space matrix fresh based on current time of day etc.
+        CalculateLightSpaceMatrix();
+    }
+
     glClearColor(mClearColor.r, mClearColor.g, mClearColor.b, mClearColor.a);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     mDefaultShader->Bind();
     mDefaultShader->SetMat4("uView", camera.GetViewMatrix());
     mDefaultShader->SetMat4("uProjection", camera.GetProjectionMatrix());
+    mDefaultShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
     UpdateLighting();
     UpdateFogUniforms();
+    UpdateShadowUniforms();
     mDefaultTexture->Bind(0);
 }
 
@@ -221,12 +400,20 @@ void Renderer::DrawMesh(const Mesh& mesh, const Mat4& transform, Texture* textur
     mDefaultShader->Bind();
     mDefaultShader->SetMat4("uModel", transform);
     mDefaultShader->SetVec4("uColor", color);
+    mDefaultShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
     if (texture) {
         texture->Bind(0);
         mDefaultShader->SetInt("uTexture", 0);
     } else {
         mDefaultTexture->Bind(0);
         mDefaultShader->SetInt("uTexture", 0);
+    }
+    // Bind shadow map to texture unit 1
+    if (mShadowsEnabled && mShadowMap && mShadowMap->IsValid()) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mShadowMap->GetDepthTextureID());
+        mDefaultShader->SetInt("uShadowMap", 1);
+        glActiveTexture(GL_TEXTURE0);
     }
     mesh.Draw();
 }
@@ -235,12 +422,19 @@ void Renderer::DrawModel(const Model& model, const Mat4& transform, Texture* tex
     mDefaultShader->Bind();
     mDefaultShader->SetMat4("uModel", transform);
     mDefaultShader->SetVec4("uColor", Color(1.0f));
+    mDefaultShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
     if (texture) {
         texture->Bind(0);
         mDefaultShader->SetInt("uTexture", 0);
     } else {
         mDefaultTexture->Bind(0);
         mDefaultShader->SetInt("uTexture", 0);
+    }
+    if (mShadowsEnabled && mShadowMap && mShadowMap->IsValid()) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mShadowMap->GetDepthTextureID());
+        mDefaultShader->SetInt("uShadowMap", 1);
+        glActiveTexture(GL_TEXTURE0);
     }
     model.Draw();
 }
@@ -284,7 +478,6 @@ void Renderer::UpdateLighting() {
     mDefaultShader->SetFloat("uAmbient", amb.intensity);
     mDefaultShader->SetVec3("uAmbientColor", Vec3(amb.color.r, amb.color.g, amb.color.b));
 
-    // Upload up to 4 enabled point lights
     int count = 0;
     for (size_t i = 0; i < light.GetPointLightCount() && count < 4; ++i) {
         const auto& pl = light.GetPointLight(i);
@@ -297,6 +490,23 @@ void Renderer::UpdateLighting() {
         ++count;
     }
     mDefaultShader->SetInt("uPointLightCount", count);
+}
+
+void Renderer::UpdateShadowUniforms() const {
+    if (!mDefaultShader) return;
+    Lighting& lighting = Lighting::Get();
+    const auto& dir = lighting.GetDirectionalLight();
+    const auto& shadow = lighting.GetShadows();
+
+    bool enabled = mShadowsEnabled && shadow.enabled && dir.castShadows && dir.enabled;
+    mDefaultShader->SetBool("uShadowsEnabled", enabled);
+    mDefaultShader->SetFloat("uShadowStrength", shadow.enabled ? shadow.strength : dir.shadowStrength);
+    mDefaultShader->SetFloat("uShadowBias", shadow.enabled ? shadow.bias : dir.shadowBias);
+    mDefaultShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
+    if (enabled && mShadowMap && mShadowMap->IsValid()) {
+        // Texture binding is done in DrawMesh/DrawModel, but set uniform here as well
+        mDefaultShader->SetInt("uShadowMap", 1);
+    }
 }
 
 void Renderer::SetLightDir(const Vec3& dir) {
@@ -316,19 +526,18 @@ void Renderer::DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, con
         EnableWireframe(true);
     }
 
-    // Blending state tracking – default renderer state is BLEND ON
     GLboolean blendWasEnabled = glIsEnabled(GL_BLEND);
     if (material.transparent) {
         if (!blendWasEnabled) glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     } else {
-        // Opaque material: disable blending temporarily for correct depth
         if (blendWasEnabled) glDisable(GL_BLEND);
     }
 
     mDefaultShader->Bind();
     mDefaultShader->SetMat4("uModel", transform);
     mDefaultShader->SetVec4("uColor", material.diffuse);
+    mDefaultShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
     if (material.texture) {
         material.texture->Bind(0);
         mDefaultShader->SetInt("uTexture", 0);
@@ -336,21 +545,24 @@ void Renderer::DrawMeshWithMaterial(const Mesh& mesh, const Mat4& transform, con
         mDefaultTexture->Bind(0);
         mDefaultShader->SetInt("uTexture", 0);
     }
+    if (mShadowsEnabled && mShadowMap && mShadowMap->IsValid()) {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, mShadowMap->GetDepthTextureID());
+        mDefaultShader->SetInt("uShadowMap", 1);
+        glActiveTexture(GL_TEXTURE0);
+    }
     mesh.Draw();
 
     if (material.wireframe && !wasWireframe) {
         EnableWireframe(false);
     }
-    // Restore blend state to renderer default (ON)
     if (blendWasEnabled) glEnable(GL_BLEND);
     else glDisable(GL_BLEND);
-    // Ensure default blend func is restored
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void Renderer::DrawParticles(const std::vector<Particle>& particles) {
     if (!mParticleMesh || particles.empty()) return;
-    // Additive-ish soft particles look better for VFX
     GLboolean depthMask;
     glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
     glDepthMask(GL_FALSE);
@@ -364,23 +576,26 @@ void Renderer::DrawParticles(const std::vector<Particle>& particles) {
 }
 
 void Renderer::DrawGrid(const Mesh& mesh, const Mat4& transform, const Color& color) {
-    // Line rendering – never fill grid as triangles (was causing colored floor strips)
     mDefaultShader->Bind();
     mDefaultShader->SetMat4("uModel", transform);
     mDefaultShader->SetVec4("uColor", color);
+    mDefaultShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
+    // Grid should not receive shadows (optional, but looks cleaner)
+    mDefaultShader->SetBool("uShadowsEnabled", false);
     mDefaultTexture->Bind(0);
     mDefaultShader->SetInt("uTexture", 0);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE); // grid does not occlude objects
+    glDepthMask(GL_FALSE);
     mesh.DrawLines();
     glDepthMask(GL_TRUE);
+    // Restore shadow enabled state
+    UpdateShadowUniforms();
 }
 
 void Renderer::DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& transform, const Color& color) {
     if (!mBoundingBoxMesh) return;
 
-    // Static cache – rebuild only if bounds changed
     static Vec3 lastMin(9999.0f), lastMax(-9999.0f);
     bool boundsChanged = (min != lastMin) || (max != lastMax);
     
@@ -408,11 +623,10 @@ void Renderer::DrawBoundingBox(const Vec3& min, const Vec3& max, const Mat4& tra
         lastMax = max;
     }
 
-    // Draw as lines
     GLint oldPolygonMode[2];
     glGetIntegerv(GL_POLYGON_MODE, oldPolygonMode);
     glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    glDisable(GL_DEPTH_TEST); // always on top in editor
+    glDisable(GL_DEPTH_TEST);
     DrawMesh(*mBoundingBoxMesh, transform, nullptr, color);
     glEnable(GL_DEPTH_TEST);
     glPolygonMode(GL_FRONT_AND_BACK, oldPolygonMode[0]);
@@ -436,12 +650,11 @@ Skybox::~Skybox() {
 }
 
 bool Skybox::Load(const std::array<std::string, 6>& faces) {
-    // Create cubemap texture
     glGenTextures(1, &mTextureID);
     glBindTexture(GL_TEXTURE_CUBE_MAP, mTextureID);
     
     int width, height, channels;
-    stbi_set_flip_vertically_on_load(false);  // Cubemaps shouldn't be flipped
+    stbi_set_flip_vertically_on_load(false);
     
     for (unsigned int i = 0; i < 6; i++) {
         unsigned char* data = stbi_load(faces.at(i).c_str(), &width, &height, &channels, 0);
@@ -462,9 +675,7 @@ bool Skybox::Load(const std::array<std::string, 6>& faces) {
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     
-    // Create VAO for skybox cube
     float skyboxVertices[] = {
-        // positions          
         -1.0f,  1.0f, -1.0f,
         -1.0f, -1.0f, -1.0f,
          1.0f, -1.0f, -1.0f,
@@ -520,8 +731,6 @@ bool Skybox::Load(const std::array<std::string, 6>& faces) {
 }
 
 bool Skybox::LoadFromEquirectangular(const std::string& path) {
-    // TODO: Implement HDR panorama to cubemap conversion
-    // For now, just return false
     (void)path;
     return false;
 }
@@ -529,16 +738,13 @@ bool Skybox::LoadFromEquirectangular(const std::string& path) {
 void Skybox::Draw(const Camera& camera, Shader& shader) {
     if (!mTextureID) return;
     
-    // Disable depth writing for skybox
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
     
     shader.Bind();
     
-    // Create view matrix without translation (skybox stays centered)
-    Mat4 view = Mat4(glm::mat3(camera.GetViewMatrix()));  // Remove translation
+    Mat4 view = Mat4(glm::mat3(camera.GetViewMatrix()));
     
-    // Apply rotation if needed
     if (glm::length(mRotation) > 0.001f) {
         Mat4 rot = glm::rotate(Mat4(1.0f), mRotation.y, Vec3(0,1,0));
         rot = glm::rotate(rot, mRotation.x, Vec3(1,0,0));
@@ -557,7 +763,6 @@ void Skybox::Draw(const Camera& camera, Shader& shader) {
     glDrawArrays(GL_TRIANGLES, 0, 36);
     glBindVertexArray(0);
     
-    // Restore depth settings
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
 }

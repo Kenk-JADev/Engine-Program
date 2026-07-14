@@ -127,11 +127,16 @@ void Editor::BeginFrame() {
 void Editor::DrawUI() {
     // Apply editor theme
     EditorStyle::ApplyTheme(mCurrentTheme);
-    // Optional day/night animation
-    if (mTimeOfDaySpeed > 0.0f && !mEngine.IsPlaying()) {
+    // Tageszeit läuft NUR im Playtest (Spielzeit), nicht im Editor-Idle
+    // Damit Editor nicht ablenkt und Performance spart, und Spiel zeitabhängiges Lighting hat
+    if (mTimeOfDaySpeed > 0.0f && mEngine.IsPlaying()) {
         Lighting::Get().UpdateTimeOfDay(mEngine.GetDeltaTime(), mTimeOfDaySpeed);
         mTimeOfDay = Lighting::Get().GetTimeOfDay();
     }
+
+    // Im Playtest soll Editor nicht nutzbar sein - nur noch Scene + HUD
+    // Alle Edit-Operationen werden geblockt (s. HandleSceneViewPicking/Camera/Shortcuts)
+    // Wir zeigen trotzdem DockSpace, aber kennzeichnen Play-Modus prominent
 
     // Handle global shortcuts
     HandleShortcuts();
@@ -141,8 +146,8 @@ void Editor::DrawUI() {
 
     DrawMenuBar();
 
-    // Compact main toolbar under menu bar
-    if (mToolbar) mToolbar->Draw();
+    // Toolbar nur im Editor-Modus, nicht im Playtest (verhindert dass UI durch Scene geht)
+    if (!mEngine.IsPlaying() && mToolbar) mToolbar->Draw();
 
     ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -432,13 +437,15 @@ void Editor::DrawSceneView() {
         mSceneViewHovered = ImGui::IsItemHovered();
         mSceneViewFocused = ImGui::IsWindowFocused();
 
-        // Gizmo tools bar overlaid on scene view (top-center)
-        {
+        // Gizmo tools bar overlaid on scene view (top-center) - NUR im Editor-Modus, nicht im Playtest
+        // Fix: Im Playtest ausgeblendet, damit Buttons nicht durch UI gehen und nicht nutzbar sind
+        if (!mEngine.IsPlaying()) {
             ImGui::SetCursorScreenPos(ImVec2(pos.x + 8.0f, pos.y + 8.0f));
             ImGui::BeginChild("##SceneGizmoBar", ImVec2(size.x - 16.0f, 32.0f), false,
-                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar);
+                ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoMove);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0.35f));
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.22f, 0.27f, 0.85f));
 
             auto modeBtn = [&](const char* label, GizmoMode mode) {
                 bool active = (mGizmoMode == mode);
@@ -463,6 +470,7 @@ void Editor::DrawSceneView() {
                 ImGui::DragFloat("##snapv", &mGizmoSnapValue, 0.05f, 0.05f, 5.0f, "%.2f");
             }
 
+            ImGui::PopStyleColor();
             ImGui::PopStyleColor();
             ImGui::PopStyleVar();
             ImGui::EndChild();
@@ -753,6 +761,15 @@ void Editor::PaintTileAt(int x, int z) {
 }
 
 void Editor::DrawHierarchy() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Hierarchy");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        ImGui::Text("PLAYTEST AKTIV");
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Editor deaktiviert - F5 zum Stoppen");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Hierarchy");
     Scene& scene = mEngine.GetScene();
 
@@ -838,6 +855,12 @@ void Editor::DrawHierarchy() {
 
 
 void Editor::DrawInspector() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Inspector");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Inspector");
     if (mSelectedEntity >= 0) {
         EntityID id = static_cast<EntityID>(mSelectedEntity);
@@ -974,6 +997,12 @@ void Editor::DrawInspector() {
 }
 
 void Editor::DrawProjectPanel() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Projekt");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Projekt");
     ImGui::Text("Projekt: %s", mEngine.GetProject().GetInfo().name.c_str());
     ImGui::Text("Pfad: %s", mEngine.GetProject().GetProjectPath().c_str());
@@ -1044,6 +1073,12 @@ void Editor::DrawProjectPanel() {
 
 
 void Editor::DrawMapEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Karten-Editor");
+        ImGui::TextDisabled("Deaktiviert während Playtest - Karte kann nur im Editor bearbeitet werden");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Karten-Editor");
     
     auto& database = Database::Get();
@@ -1340,6 +1375,13 @@ void Editor::DrawMapEditor() {
 // ==================== Event Editor ====================
 
 void Editor::DrawEventEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
+        ImGui::Begin("Event-Editor");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::SetNextWindowSize(ImVec2(720, 520), ImGuiCond_FirstUseEver);
     ImGui::Begin("Event-Editor");
     
@@ -1982,7 +2024,12 @@ void Editor::DrawScriptEditor() {
         editBuffer.pop_back();
 
         ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
-        if (script->isCore) flags |= ImGuiInputTextFlags_ReadOnly;
+        if (script->isCore || mEngine.IsPlaying()) flags |= ImGuiInputTextFlags_ReadOnly;
+        if (mEngine.IsPlaying()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.9f, 0.4f, 1.0f));
+            ImGui::Text("PLAYTEST - Script System läuft live (schreibgeschützt)");
+            ImGui::PopStyleColor();
+        }
         ImVec2 avail = ImGui::GetContentRegionAvail();
         if (ImGui::InputTextMultiline("##ScriptSource", editBuffer.data(),
             editBuffer.capacity() + 1, ImVec2(avail.x, avail.y - 36), flags)) {
@@ -2262,6 +2309,13 @@ void Editor::LoadTilesetForMap(int tilesetId) {
 }
 
 void Editor::DrawLightingEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Beleuchtung");
+        ImGui::TextDisabled("Deaktiviert während Playtest - Lighting läuft via Tageszeit + Script System");
+        ImGui::Text("Zeit: %.1f h", Lighting::Get().GetTimeOfDay());
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Beleuchtung");
     auto& lighting = Lighting::Get();
     auto& dir = lighting.GetDirectionalLight();
@@ -2284,6 +2338,31 @@ void Editor::DrawLightingEditor() {
         ImGui::DragFloat3("Richtung", &dir.direction.x, 0.01f);
         ImGui::ColorEdit3("Farbe", &dir.color.x);
         ImGui::SliderFloat("Intensität", &dir.intensity, 0.0f, 5.0f);
+        ImGui::Checkbox("Schatten werfen", &dir.castShadows);
+        ImGui::SliderFloat("Schatten Stärke", &dir.shadowStrength, 0.0f, 1.0f);
+    }
+
+    // Schatten System
+    if (ImGui::CollapsingHeader("Schatten System", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto& shadows = lighting.GetShadows();
+        auto& renderer = mEngine.GetRenderer();
+        bool shadowsEnabled = renderer.IsShadowsEnabled();
+        if (ImGui::Checkbox("Schatten aktiviert", &shadowsEnabled)) {
+            renderer.SetShadowsEnabled(shadowsEnabled);
+        }
+        ImGui::Checkbox("Global Schatten", &shadows.enabled);
+        ImGui::SliderInt("Shadow Map Größe", &shadows.mapSize, 512, 4096);
+        if (shadows.mapSize != renderer.GetShadowMapTexture() && ImGui::Button("Apply Map Größe (Neustart nötig)")) {
+            renderer.InitShadowSystem(shadows.mapSize);
+        }
+        ImGui::SliderFloat("Bias", &shadows.bias, 0.0001f, 0.02f, "%.4f");
+        ImGui::SliderFloat("Stärke", &shadows.strength, 0.0f, 1.0f);
+        ImGui::Checkbox("PCF (weiche Schatten)", &shadows.pcf);
+        ImGui::SliderFloat("Ortho Größe", &shadows.orthoSize, 5.0f, 100.0f);
+        ImGui::SliderFloat("Near", &shadows.nearPlane, 0.1f, 10.0f);
+        ImGui::SliderFloat("Far", &shadows.farPlane, 10.0f, 200.0f);
+        ImGui::Text("Shadow Map: %dx%d", shadows.mapSize, shadows.mapSize);
+        ImGui::TextWrapped("Hinweis: Schatten werden nur von direktem Sonnenlicht geworfen. Punktlichter werfen aktuell keine Schatten (Cubemap Shadows TODO).");
     }
 
     if (ImGui::CollapsingHeader("Umgebungslicht", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2338,6 +2417,12 @@ void Editor::DrawLightingEditor() {
 }
 
 void Editor::DrawEnvironmentEditor() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Umgebung");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Umgebung");
     
     auto& renderer = mEngine.GetRenderer();
@@ -2420,6 +2505,12 @@ void Editor::DrawEnvironmentEditor() {
 }
 
 void Editor::DrawPrefabBrowser() {
+    if (mEngine.IsPlaying()) {
+        ImGui::Begin("Prefab Browser");
+        ImGui::TextDisabled("Deaktiviert während Playtest");
+        ImGui::End();
+        return;
+    }
     ImGui::Begin("Prefab Browser");
 
     std::string dir = Prefab::GetPrefabDirectory();
@@ -2818,6 +2909,16 @@ void Editor::ShowCrashDialog() {
 
 void Editor::HandleShortcuts() {
     ImGuiIO& io = ImGui::GetIO();
+
+    // Play/Stop immer erlauben, auch im Playtest
+    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+        bool isPlaying = mEngine.IsPlaying();
+        mEngine.SetPlaying(!isPlaying);
+        return; // Im Playtest keine weiteren Shortcuts
+    }
+
+    // Alle Edit-Shortcuts blockieren während Playtest
+    if (mEngine.IsPlaying()) return;
     
     // Undo/Redo
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
@@ -2834,12 +2935,6 @@ void Editor::HandleShortcuts() {
     // Delete
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && !io.WantTextInput) {
         DeleteSelectedEntity();
-    }
-    
-    // Play/Stop
-    if (ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
-        bool isPlaying = mEngine.IsPlaying();
-        mEngine.SetPlaying(!isPlaying);
     }
     
     // Focus entity

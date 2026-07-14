@@ -13,6 +13,7 @@ class Shader;
 class Texture;
 class Model;
 class Mesh;
+class ShadowMap;
 
 struct RenderCommand {
     Mesh* mesh = nullptr;
@@ -109,18 +110,38 @@ public:
     const Skybox& GetSkybox() const { return mSkybox; }
     void DrawSkybox(const Camera& camera);
 
+    // Shadows
+    bool InitShadowSystem(int mapSize = 2048);
+    void ShutdownShadowSystem();
+    void BeginShadowPass();
+    void EndShadowPass();
+    void DrawMeshDepth(const Mesh& mesh, const Mat4& transform);
+    void DrawModelDepth(const Model& model, const Mat4& transform);
+    Mat4 CalculateLightSpaceMatrix(float orthoSize = 30.0f, float nearPlane = 1.0f, float farPlane = 60.0f);
+    unsigned int GetShadowMapTexture() const;
+    const Mat4& GetLightSpaceMatrix() const { return mLightSpaceMatrix; }
+    bool IsShadowsEnabled() const { return mShadowsEnabled; }
+    void SetShadowsEnabled(bool enabled) { mShadowsEnabled = enabled; }
+    Shader* GetShadowShader() { return mShadowShader.get(); }
+
 private:
     void UpdateFogUniforms() const;
+    void UpdateShadowUniforms() const;
 
     Camera mCamera;
     std::unique_ptr<Shader> mDefaultShader;
     std::unique_ptr<Shader> mSkyboxShader;
+    std::unique_ptr<Shader> mShadowShader;
     std::unique_ptr<Texture> mDefaultTexture;
     std::unique_ptr<Mesh> mParticleMesh;
     std::unique_ptr<Mesh> mBoundingBoxMesh;
+    std::unique_ptr<ShadowMap> mShadowMap;
     std::vector<RenderCommand> mCommandQueue;
     Color mClearColor{0.12f, 0.13f, 0.16f, 1.0f};
     bool mWireframeEnabled = false;
+    Mat4 mLightSpaceMatrix{1.0f};
+    bool mShadowsEnabled = true;
+    int mShadowMapSize = 2048;
     
     FogSettings mFog;
     Skybox mSkybox;
