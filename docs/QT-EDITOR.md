@@ -102,7 +102,7 @@ Fertig (Slice 2 – benutzbare Basisfunktionen):
 
 Offen (Portierung aus `Editor.cpp`):
 - [ ] Map-Editor-Panel + Tileset-Auswahl als Qt-Docks
-- [ ] 3D-Klick-Selektion im Game-View (Raycast) + Auswahl-Highlight im Renderer
+- [x] 3D-Klick-Selektion im Game-View (Raycast) + Auswahl-Highlight im Renderer
 - [ ] Database-Editor (QTableView-Modelle)
 - [ ] RmlUi-Input-Bruecke im Qt-Modus (RmlUi bekommt aktuell keine Events)
 - [ ] Undo/Redo evtl. zusaetzlich an QUndoStack spiegeln (Command-Property-Edits)

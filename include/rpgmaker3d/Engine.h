@@ -100,6 +100,12 @@ public:
     void SetGridVisible(bool visible) { mShowGrid = visible; }
     void ToggleGrid() { mShowGrid = !mShowGrid; }
 
+    // Generische Editor-Selektion (ID der selektierten Entity, -1 = keine).
+    // Wird fuer das Auswahl-Highlight in RenderScene genutzt, wenn kein
+    // ImGui-Editor aktiv ist (z.B. Qt-Editor / externer Host).
+    void SetSelectedEntity(int id) { mSelectedEntity = id; }
+    int GetSelectedEntity() const { return mSelectedEntity; }
+
 private:
     bool InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow);
     std::unique_ptr<Window> mWindow;
@@ -131,6 +137,7 @@ private:
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
     EntityID mActiveCameraEntity = INVALID_ENTITY;
+    int mSelectedEntity = -1; // Editor-Selektion (externer Host, z.B. Qt-Editor)
     float mDeltaTime = 0.0f;
     float mTime = 0.0f;
     int mFPS = 0;

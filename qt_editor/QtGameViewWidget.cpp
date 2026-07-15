@@ -4,6 +4,10 @@
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Window.h"
 #include "rpgmaker3d/Input.h"
+#include "rpgmaker3d/Scene.h"
+#include "rpgmaker3d/Renderer.h"
+#include "rpgmaker3d/Camera.h"
+#include "rpgmaker3d/Raycast.h"
 
 #include <glad/gl.h>
 
@@ -92,6 +96,18 @@ void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
     else if (event->button() == Qt::MiddleButton) b = rpg::MouseButton::Middle;
     if (b != rpg::MouseButton::Count)
         mEngine->GetInput().OnMouseChanged(b, true);
+
+    // 3D-Klick-Selektion (Linksklick, nicht waehrend Playtest):
+    // Ray aus der Editor-Kamera durch den Klickpunkt, naechste Entity gewinnt.
+    if (b == rpg::MouseButton::Left && !mEngine->IsPlaying()) {
+        rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
+        const QPointF p = event->position();
+        const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
+            rpg::Vec2(static_cast<float>(p.x()), static_cast<float>(p.y())),
+            rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
+        const rpg::RaycastHit hit = rpg::Raycast::PickEntity(ray, mEngine->GetScene(), 2000.0f);
+        emit entityPicked(hit.hit ? static_cast<int>(hit.entity) : -1);
+    }
 }
 
 void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {

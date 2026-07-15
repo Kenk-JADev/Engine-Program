@@ -20,6 +20,9 @@ public:
 signals:
     void engineInitFailed(QString message);
     void engineReady();
+    // 3D-Klick-Selektion: Linksklick im View hat eine Entity getroffen
+    // (id >= 0) bzw. ins Leere gegriffen (id == -1 -> Selektion aufheben).
+    void entityPicked(int id);
 
 protected:
     void initializeGL() override;

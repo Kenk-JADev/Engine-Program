@@ -943,9 +943,10 @@ void Engine::RenderScene() {
     }
 
     // Auswahl-BoundingBox im Editor
+    // Selektionsquelle: ImGui-Editor, sonst Engine-API (Qt-Editor/externer Host)
 #ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mEditorMode && mEditor && !mPlayMode) {
-        int selected = mEditor->GetSelectedEntity();
+    if (mEditorMode && !mPlayMode) {
+        const int selected = mEditor ? mEditor->GetSelectedEntity() : mSelectedEntity;
         if (selected >= 0) {
             auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(selected));
             if (transform) {

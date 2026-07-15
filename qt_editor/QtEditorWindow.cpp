@@ -72,9 +72,11 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
 
     connect(mView, &QtGameViewWidget::engineReady, this, [this]() {
         log("Engine initialisiert (Embedded-Modus, Qt GL-Kontext).");
-        statusBar()->showMessage("Bereit. F9 toggelt das RmlUi-HUD (Game-Kontext).");
-        refreshHierarchy();
-        rebuildProperties();
+        statusBar()->showMessage("Bereit. Linksklick im View = Objekt auswaehlen, F9 = RmlUi-HUD.");
+        setSelectedEntity(-1); // baut Hierarchie + Eigenschaften initial auf
+    });
+    connect(mView, &QtGameViewWidget::entityPicked, this, [this](int id) {
+        setSelectedEntity(id); // auch -1: Klick ins Leere deselektiert
     });
     connect(mView, &QtGameViewWidget::engineInitFailed, this, [this](QString msg) {
         log("FEHLER: " + msg);
@@ -277,10 +279,8 @@ void QtEditorWindow::onUiTick() {
     mDeleteAction->setEnabled(mSelectedEntity >= 0 && selectedEntityExists());
 
     // Selektierte Entity kann durch Undo/Delete verschwunden sein
-    if (mSelectedEntity >= 0 && !selectedEntityExists()) {
-        mSelectedEntity = -1;
-        rebuildProperties();
-    }
+    if (mSelectedEntity >= 0 && !selectedEntityExists())
+        setSelectedEntity(-1);
 
     refreshHierarchy();
     syncPropertyValues();
@@ -373,9 +373,7 @@ void QtEditorWindow::actionLoadSceneFrom() {
         this, "Szene laden", QString(), "JSON-Dateien (*.json)");
     if (path.isEmpty()) return;
     if (mEngine->LoadScene(path.toStdString())) {
-        mSelectedEntity = -1;
-        refreshHierarchy();
-        rebuildProperties();
+        setSelectedEntity(-1);
         log("Szene geladen: " + path);
     } else {
         QMessageBox::warning(this, "Szene laden", "Laden fehlgeschlagen:\n" + path);
@@ -396,7 +394,7 @@ void QtEditorWindow::loadScenePackage() {
     } else {
         log("Szene geladen: " + QString::fromStdString(scenePath));
     }
-    mSelectedEntity = -1;
+    // Selektions-Reset uebernimmt afterProjectChanged() (ruft setSelectedEntity(-1))
 }
 
 void QtEditorWindow::saveScenePackage() {
@@ -410,9 +408,7 @@ void QtEditorWindow::saveScenePackage() {
 }
 
 void QtEditorWindow::afterProjectChanged() {
-    mSelectedEntity = -1;
-    refreshHierarchy();
-    rebuildProperties();
+    setSelectedEntity(-1); // inkl. Hierarchie-/Properties-Refresh + Highlight-Aus
     setWindowTitle(QString("RPG Maker 3D - Qt Editor  [%1]")
         .arg(QString::fromStdString(mEngine->GetProject().GetInfo().name)));
 }
@@ -486,9 +482,7 @@ void QtEditorWindow::deleteSelected() {
     auto cmd = std::make_shared<rpg::DeleteEntityCommand>(id, scene.GetEntityName(id), t);
     mEngine->GetCommandHistory().Execute(*mEngine, cmd);
     log(QString("Geloescht: ID %1").arg(mSelectedEntity));
-    mSelectedEntity = -1;
-    refreshHierarchy();
-    rebuildProperties();
+    setSelectedEntity(-1);
 }
 
 // ---------------------------------------------------------------------------
@@ -530,14 +524,15 @@ void QtEditorWindow::refreshHierarchy() {
 void QtEditorWindow::onHierarchySelectionChanged() {
     QTreeWidgetItem* item = mHierarchy->currentItem();
     const int id = item ? item->data(0, kIdRole).toInt() : -1;
-    if (id != mSelectedEntity) {
-        mSelectedEntity = id;
-        rebuildProperties();
-    }
+    if (id != mSelectedEntity)
+        setSelectedEntity(id);
 }
 
 void QtEditorWindow::setSelectedEntity(int id) {
     mSelectedEntity = id;
+    // Highlight im 3D-View (generische Engine-API; RenderScene zeichnet die Box)
+    if (mView && mView->IsEngineReady())
+        mEngine->SetSelectedEntity(id);
     refreshHierarchy();
     mHierarchy->blockSignals(true);
     for (int i = 0; i < mHierarchy->topLevelItemCount(); ++i) {
