@@ -51,6 +51,15 @@ Engine::Engine() = default;
 Engine::~Engine() { Shutdown(); }
 
 bool Engine::Initialize(const std::string& title, int width, int height, bool editorMode) {
+    return InitializeInternal(title, width, height, editorMode, true);
+}
+
+bool Engine::InitializeEmbedded(int width, int height, bool editorMode) {
+    // Aufrufer (z.B. Qt QOpenGLWidget) stellt GL-Kontext + glad bereits bereit.
+    return InitializeInternal("RPG Maker 3D (Embedded)", width, height, editorMode, false);
+}
+
+bool Engine::InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow) {
     mEditorMode = editorMode;
 
     // Logger
@@ -66,9 +75,12 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     RPG_LOG_INFO("Windows Version: " + Platform::GetWindowsVersion());
 #endif
 
-    // Fenster
+    // Fenster (echtes OS-Fenster via SDL oder eingebetteter Host-Kontext)
     mWindow = std::make_unique<Window>();
-    if (!mWindow->Create(title, width, height, editorMode)) {
+    bool windowOk = createOsWindow
+        ? mWindow->Create(title, width, height, editorMode)
+        : mWindow->CreateForeign(width, height);
+    if (!windowOk) {
         RPG_LOG_ERROR("Failed to create window");
         return false;
     }
@@ -116,9 +128,10 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     mMap = std::make_unique<Map>();
     mResources = std::make_unique<ResourceManager>();
 
-#ifdef RPGMAKER3D_BUILD_EDITOR
+#if defined(RPGMAKER3D_BUILD_EDITOR) && !defined(RPGMAKER3D_EDITOR_QT)
     // ImGui früh initialisieren – auch für Player UI (GameUI nutzt ImGui)
     // Muss nach Window/GL Context, vor allen UI-Systemen passieren
+    // (Im Qt-Editor ausgelassen: kein SDL-Fenster, Qt nutzt eigene Widgets)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -148,6 +161,8 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
     ImGui_ImplOpenGL3_Init("#version 330");
     mImGuiInitialized = true;
     RPG_LOG_INFO("ImGui initialized");
+#elif defined(RPGMAKER3D_EDITOR_QT)
+    RPG_LOG_INFO("Qt editor host: ImGui init skipped (native Qt windows)");
 #endif
 
     // Datenbank laden / Defaults
@@ -222,13 +237,15 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
 
     // Editor
     if (editorMode) {
-#ifdef RPGMAKER3D_BUILD_EDITOR
+#if defined(RPGMAKER3D_BUILD_EDITOR) && !defined(RPGMAKER3D_EDITOR_QT)
         mEditor = std::make_unique<Editor>(*this);
         if (!mEditor->Initialize(*mWindow)) {
             RPG_LOG_ERROR("Failed to initialize editor");
             return false;
         }
         RPG_LOG_INFO("Editor initialized");
+#elif defined(RPGMAKER3D_EDITOR_QT)
+        RPG_LOG_INFO("Qt editor host active - ImGui Editor disabled");
 #else
         RPG_LOG_WARN("Editor mode requested but not compiled in");
 #endif
@@ -471,6 +488,10 @@ static Key MapSDLKey(SDL_Scancode code) {
 void Engine::Update(float dt) {
     mInput->Update();
 
+#ifdef RPGMAKER3D_EDITOR_QT
+    // Im Qt-Editor gibt es kein SDL-Fenster: Input kommt vom Qt-Widget
+    // (ruft OnKeyChanged/OnMouseMoved direkt), RmlUi-Input ist hier (noch) nicht angeschlossen.
+#else
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
 #ifdef RPGMAKER3D_BUILD_EDITOR
@@ -510,6 +531,7 @@ void Engine::Update(float dt) {
                 break;
         }
     }
+#endif // !RPGMAKER3D_EDITOR_QT
 
     // Global Shortcuts auch außerhalb Editor
     if (mInput->IsKeyPressed(Key::Escape) && !mEditorMode) {

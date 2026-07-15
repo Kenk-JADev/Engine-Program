@@ -114,7 +114,31 @@ bool Window::Create(const std::string& title, int width, int height, bool editor
     return true;
 }
 
+bool Window::CreateForeign(int width, int height) {
+    // Kein SDL-Window, kein GL-Kontext - der Host (z.B. QOpenGLWidget im
+    // Qt-Editor) besitzt Kontext & Swapping. Wir halten nur die Groesse.
+    mWidth = width;
+    mHeight = height;
+    mForeign = true;
+    RPG_LOG_INFO("Foreign window handle created: " + std::to_string(mWidth) + "x" + std::to_string(mHeight));
+    return true;
+}
+
+void Window::SetForeignSize(int width, int height) {
+    if (!mForeign) return;
+    mWidth = width;
+    mHeight = height;
+}
+
 void Window::Destroy() {
+    if (mForeign) {
+        // Host besitzt Fenster/Kontext - hier nichts zerstoeren.
+        mForeign = false;
+        mWidth = 0;
+        mHeight = 0;
+        RPG_LOG_INFO("Foreign window handle released");
+        return;
+    }
     if (mContext) {
         SDL_GL_DeleteContext(mContext);
         mContext = nullptr;
@@ -128,10 +152,12 @@ void Window::Destroy() {
 }
 
 void Window::SwapBuffers() {
+    if (mForeign) return; // Host (Qt) swapped selbst
     SDL_GL_SwapWindow(mWindow);
 }
 
 void Window::PollEvents() {
+    if (mForeign) return;
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {

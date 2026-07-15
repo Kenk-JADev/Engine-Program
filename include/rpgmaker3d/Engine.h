@@ -30,6 +30,10 @@ public:
     ~Engine();
 
     bool Initialize(const std::string& title, int width, int height, bool editorMode = true);
+    // Eingebetteter Modus (Qt-Editor): kein SDL-Fenster; GL-Kontext + glad
+    // muessen VOR dem Aufruf bereits current sein. Update(dt)/Render() werden
+    // dann vom Host getrieben (kein Run()).
+    bool InitializeEmbedded(int width, int height, bool editorMode = true);
     void Shutdown();
 
     void Run();
@@ -97,6 +101,7 @@ public:
     void ToggleGrid() { mShowGrid = !mShowGrid; }
 
 private:
+    bool InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow);
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
     std::unique_ptr<Input> mInput;

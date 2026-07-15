@@ -318,7 +318,8 @@ bool RmlUiSystem::Initialize(Engine* engine) {
         RPG_LOG_INFO("[RmlUi] PoC initialisiert: 2 Kontexte (editor/game), F9 toggelt Sichtbarkeit");
     }
 
-    SDL_StartTextInput();
+    // TextInput nur wenn SDL-Video existiert (im Qt-Editor nicht der Fall)
+    if (SDL_WasInit(SDL_INIT_VIDEO)) SDL_StartTextInput();
     m->initialized = true;
     return true;
 }

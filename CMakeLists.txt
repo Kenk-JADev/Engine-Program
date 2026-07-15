@@ -11,6 +11,14 @@ option(RPGMAKER3D_BUILD_EDITOR "Build integrated editor (ImGui)" ON)
 option(RPGMAKER3D_BUILD_PLAYER "Build standalone game player" ON)
 option(RPGMAKER3D_ENABLE_CONSOLE "Keep console window on Windows (for debugging)" ON)
 option(RPGMAKER3D_ENABLE_RMLUI "Enable RmlUi UI system (ImGui successor, PoC)" ON)
+option(RPGMAKER3D_EDITOR_QT "Build Qt-based editor (native windows, QOpenGLWidget game view)" OFF)
+
+if(RPGMAKER3D_EDITOR_QT AND MSVC AND VCPKG_TARGET_TRIPLET MATCHES ".*-static")
+    message(WARNING
+        "RPGMAKER3D_EDITOR_QT: Qt-DLLs sind /MD, das '${VCPKG_TARGET_TRIPLET}'-Triplet"
+        " liefert /MT-Static-Libs -> CRT-Mix. Bitte Triplet 'x64-windows' verwenden"
+        " (siehe docs/QT-EDITOR.md).")
+endif()
 
 # ==================== RmlUi + FreeType (vendored, statisch) ====================
 # Ziel: ImGui langfristig ersetzen. Alles aus third_party, keine neuen System-Deps.
@@ -142,6 +150,21 @@ if(RPGMAKER3D_BUILD_EDITOR)
         third_party/imgui/imgui_widgets.cpp
         third_party/imgui/backends/imgui_impl_sdl2.cpp
         third_party/imgui/backends/imgui_impl_opengl3.cpp
+    )
+endif()
+
+if(RPGMAKER3D_EDITOR_QT)
+    # Qt-Editor ersetzt den SDL/ImGui-Main-Loop durch eine native Qt-App.
+    if(NOT RPGMAKER3D_BUILD_EDITOR)
+        message(FATAL_ERROR "RPGMAKER3D_EDITOR_QT benoetigt RPGMAKER3D_BUILD_EDITOR=ON")
+    endif()
+    find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
+    message(STATUS "Qt-Editor: Qt ${Qt6_VERSION} (${Qt6_DIR})")
+    list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
+    list(APPEND CORE_SOURCES
+        qt_editor/QtMain.cpp
+        qt_editor/QtEditorWindow.cpp
+        qt_editor/QtGameViewWidget.cpp
     )
 endif()
 
@@ -289,6 +312,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 if(RPGMAKER3D_ENABLE_RMLUI)
     target_link_libraries(${PROJECT_NAME} PRIVATE rmlui_core)
     target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_ENABLE_RMLUI)
+endif()
+
+if(RPGMAKER3D_EDITOR_QT)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::OpenGLWidgets)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_EDITOR_QT)
+    set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON)
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE /Zc:__cplusplus)
+    endif()
 endif()
 
 if(TARGET SDL2::SDL2)
