@@ -395,6 +395,59 @@ bool RmlUiSystem::ProcessEvent(const SDL_Event& e) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SDL-freie Injection (Qt-Editor / externe Hosts)
+// ---------------------------------------------------------------------------
+bool RmlUiSystem::InjectMouseMove(int x, int y, int rmlKeyMods) {
+    if (!m || !m->initialized || !m->visible) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return c->ProcessMouseMove(x, y, rmlKeyMods);
+    });
+}
+
+bool RmlUiSystem::InjectMouseButton(int rmlButton, bool down, int rmlKeyMods) {
+    if (!m || !m->initialized || !m->visible) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return down ? c->ProcessMouseButtonDown(rmlButton, rmlKeyMods)
+                    : c->ProcessMouseButtonUp(rmlButton, rmlKeyMods);
+    });
+}
+
+bool RmlUiSystem::InjectMouseWheel(float delta, int rmlKeyMods) {
+    if (!m || !m->initialized || !m->visible) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return c->ProcessMouseWheel(delta, rmlKeyMods);
+    });
+}
+
+bool RmlUiSystem::InjectKey(int rmlKeyId, bool down, int rmlKeyMods) {
+    if (!m || !m->initialized) return false;
+    // F9 toggelt die RmlUi-Oberflaeche (gleiches Verhalten wie SDL-Pfad)
+    if (down && rmlKeyId == static_cast<int>(Rml::Input::KI_F9)) {
+        ToggleVisible();
+        return true;
+    }
+    if (!m->visible) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return down ? c->ProcessKeyDown(static_cast<Rml::Input::KeyIdentifier>(rmlKeyId), rmlKeyMods)
+                    : c->ProcessKeyUp(static_cast<Rml::Input::KeyIdentifier>(rmlKeyId), rmlKeyMods);
+    });
+}
+
+bool RmlUiSystem::InjectText(const char* utf8) {
+    if (!m || !m->initialized || !m->visible || !utf8 || !*utf8) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return c->ProcessTextInput(Rml::String(utf8));
+    });
+}
+
+void RmlUiSystem::SetContextSize(int width, int height) {
+    if (!m || !m->initialized || width <= 0 || height <= 0) return;
+    m->renderInterface->SetViewport(width, height);
+    if (m->editorContext) m->editorContext->SetDimensions(Rml::Vector2i(width, height));
+    if (m->gameContext) m->gameContext->SetDimensions(Rml::Vector2i(width, height));
+}
+
 void RmlUiSystem::Update(float dt) {
     if (!m || !m->initialized) return;
 

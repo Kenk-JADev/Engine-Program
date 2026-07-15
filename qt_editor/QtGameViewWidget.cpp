@@ -8,6 +8,11 @@
 #include "rpgmaker3d/Renderer.h"
 #include "rpgmaker3d/Camera.h"
 #include "rpgmaker3d/Raycast.h"
+#include "rpgmaker3d/RmlUiSystem.h"
+
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+#include <RmlUi/Core/Input.h>
+#endif
 
 #include <glad/gl.h>
 
@@ -19,6 +24,51 @@
 #include <cmath>
 
 namespace qt_editor {
+
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+// Qt-Modifier -> Rml::Input::KeyModifier-Bitmasken
+static int QtModsToRml(Qt::KeyboardModifiers mods) {
+    int r = 0;
+    if (mods & Qt::ShiftModifier)   r |= Rml::Input::KM_SHIFT;
+    if (mods & Qt::ControlModifier) r |= Rml::Input::KM_CTRL;
+    if (mods & Qt::AltModifier)     r |= Rml::Input::KM_ALT;
+    if (mods & Qt::MetaModifier)    r |= Rml::Input::KM_META;
+    return r;
+}
+
+// Qt::Key -> Rml::Input::KeyIdentifier (0 = nicht gemappt)
+static int QtKeyToRmlKey(int qtKey) {
+    namespace RI = Rml::Input;
+    if (qtKey >= Qt::Key_A && qtKey <= Qt::Key_Z) return RI::KI_A + (qtKey - Qt::Key_A);
+    if (qtKey >= Qt::Key_0 && qtKey <= Qt::Key_9) return RI::KI_0 + (qtKey - Qt::Key_0);
+    if (qtKey >= Qt::Key_F1 && qtKey <= Qt::Key_F12) return RI::KI_F1 + (qtKey - Qt::Key_F1);
+    switch (qtKey) {
+        case Qt::Key_Escape: return RI::KI_ESCAPE;
+        case Qt::Key_Space: return RI::KI_SPACE;
+        case Qt::Key_Return:
+        case Qt::Key_Enter: return RI::KI_RETURN;
+        case Qt::Key_Tab: return RI::KI_TAB;
+        case Qt::Key_Backspace: return RI::KI_BACK;
+        case Qt::Key_Delete: return RI::KI_DELETE;
+        case Qt::Key_Left: return RI::KI_LEFT;
+        case Qt::Key_Right: return RI::KI_RIGHT;
+        case Qt::Key_Up: return RI::KI_UP;
+        case Qt::Key_Down: return RI::KI_DOWN;
+        case Qt::Key_Shift: return RI::KI_LSHIFT;
+        case Qt::Key_Control: return RI::KI_LCONTROL;
+        case Qt::Key_Alt: return RI::KI_LMENU;
+        default: return 0;
+    }
+}
+
+// RmlUi-Button-Reihenfolge (wie im SDL-Pfad): 0=Links 1=Mitte 2=Rechts
+static int QtButtonToRml(Qt::MouseButton b) {
+    if (b == Qt::LeftButton) return 0;
+    if (b == Qt::MiddleButton) return 1;
+    if (b == Qt::RightButton) return 2;
+    return -1;
+}
+#endif // RPGMAKER3D_ENABLE_RMLUI
 
 // glad-Loader ueber den aktuellen Qt-Kontext.
 // Hinweis: GLADloadfunc erwartet GLADapiproc (fn-ptr) als Rueckgabetyp;
@@ -66,6 +116,10 @@ void QtGameViewWidget::paintGL() {
 void QtGameViewWidget::resizeGL(int w, int h) {
     if (mEngineReady) {
         mEngine->GetWindow().SetForeignSize(w, h);
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+        if (auto* ui = mEngine->GetRmlUi())
+            ui->SetContextSize(w, h); // Kontext-Dimensionen + Viewport nachziehen
+#endif
     }
 }
 
@@ -75,18 +129,45 @@ void QtGameViewWidget::resizeGL(int w, int h) {
 void QtGameViewWidget::keyPressEvent(QKeyEvent* event) {
     if (!mEngineReady) return;
     if (event->isAutoRepeat()) return;
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (auto* ui = mEngine->GetRmlUi()) {
+        const int rmlKey = QtKeyToRmlKey(event->key());
+        bool captured = false;
+        if (rmlKey != 0)
+            captured = ui->InjectKey(rmlKey, true, QtModsToRml(event->modifiers()));
+        const std::string text = event->text().toStdString();
+        if (!text.empty())
+            captured = ui->InjectText(text.c_str()) || captured;
+        if (captured) return; // UI hat die Taste verarbeitet (z.B. F9-Toggle)
+    }
+#endif
     mEngine->GetInput().OnKeyChanged(MapQtKey(event->key()), true);
 }
 
 void QtGameViewWidget::keyReleaseEvent(QKeyEvent* event) {
     if (!mEngineReady) return;
     if (event->isAutoRepeat()) return;
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (auto* ui = mEngine->GetRmlUi()) {
+        const int rmlKey = QtKeyToRmlKey(event->key());
+        if (rmlKey != 0 &&
+            ui->InjectKey(rmlKey, false, QtModsToRml(event->modifiers())))
+            return;
+    }
+#endif
     mEngine->GetInput().OnKeyChanged(MapQtKey(event->key()), false);
 }
 
 void QtGameViewWidget::mouseMoveEvent(QMouseEvent* event) {
     if (!mEngineReady) return;
     const QPointF p = event->position();
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (auto* ui = mEngine->GetRmlUi()) {
+        if (ui->InjectMouseMove(static_cast<int>(p.x()), static_cast<int>(p.y()),
+                                QtModsToRml(event->modifiers())))
+            return; // Kamera/3D-Interaktion unter dem HUD pausieren
+    }
+#endif
     mEngine->GetInput().OnMouseMoved(static_cast<float>(p.x()), static_cast<float>(p.y()));
 
     // Drag-Malen: linke Taste gehalten + Paint/Erase-Modus (nicht im Playtest)
@@ -98,6 +179,13 @@ void QtGameViewWidget::mouseMoveEvent(QMouseEvent* event) {
 
 void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
     if (!mEngineReady) return;
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (auto* ui = mEngine->GetRmlUi()) {
+        const int rb = QtButtonToRml(event->button());
+        if (rb >= 0 && ui->InjectMouseButton(rb, true, QtModsToRml(event->modifiers())))
+            return; // Klick landete auf dem HUD -> nicht in die 3D-Welt
+    }
+#endif
     rpg::MouseButton b = rpg::MouseButton::Count;
     if (event->button() == Qt::LeftButton) b = rpg::MouseButton::Left;
     else if (event->button() == Qt::RightButton) b = rpg::MouseButton::Right;
@@ -142,6 +230,13 @@ void QtGameViewWidget::emitGroundHit(const QPointF& pos) {
 
 void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (!mEngineReady) return;
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (auto* ui = mEngine->GetRmlUi()) {
+        const int rb = QtButtonToRml(event->button());
+        if (rb >= 0 && ui->InjectMouseButton(rb, false, QtModsToRml(event->modifiers())))
+            return;
+    }
+#endif
     rpg::MouseButton b = rpg::MouseButton::Count;
     if (event->button() == Qt::LeftButton) b = rpg::MouseButton::Left;
     else if (event->button() == Qt::RightButton) b = rpg::MouseButton::Right;
@@ -173,6 +268,13 @@ void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {
 
 void QtGameViewWidget::wheelEvent(QWheelEvent* event) {
     if (!mEngineReady) return;
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (auto* ui = mEngine->GetRmlUi()) {
+        const float delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
+        if (ui->InjectMouseWheel(delta, QtModsToRml(event->modifiers())))
+            return;
+    }
+#endif
     const float delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
     mEngine->GetInput().OnMouseWheel(delta);
 }

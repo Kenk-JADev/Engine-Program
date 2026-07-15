@@ -63,6 +63,7 @@ public:
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
     ScriptManager& GetScriptManager() { return *mScriptManager; }
+    RmlUiSystem* GetRmlUi() { return mRmlUi.get(); } // nullptr wenn deaktiviert/fehlgeschlagen
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }

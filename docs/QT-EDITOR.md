@@ -106,7 +106,7 @@ Offen (Portierung aus `Editor.cpp`):
 - [x] Map-Kontextmenue im 3D-View (Rechtsklick: Player-Start/Event/NPC/Boden entfernen)
 - [x] 3D-Klick-Selektion im Game-View (Raycast) + Auswahl-Highlight im Renderer
 - [ ] Database-Editor (QTableView-Modelle)
-- [ ] RmlUi-Input-Bruecke im Qt-Modus (RmlUi bekommt aktuell keine Events)
+- [x] RmlUi-Input-Bruecke im Qt-Modus (Inject-API, Capture-Semantik, F9-Toggle)
 - [ ] Undo/Redo evtl. zusaetzlich an QUndoStack spiegeln (Command-Property-Edits)
 
 ## Lizenz-Hinweis

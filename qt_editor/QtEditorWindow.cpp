@@ -13,6 +13,7 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/CommandHistory.h"
+#include "rpgmaker3d/RmlUiSystem.h"
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -164,6 +165,12 @@ void QtEditorWindow::buildMenus() {
     mViewMenu->addAction(mDockTileset->toggleViewAction());
     mViewMenu->addAction(mDockProperties->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
+    mViewMenu->addSeparator();
+    mViewMenu->addAction("RmlUi-HUD ein/aus (F9)", this, [this]() {
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+        if (auto* ui = mEngine->GetRmlUi()) ui->ToggleVisible();
+#endif
+    });
 
     QMenu* mPlay = menuBar()->addMenu("&Playtest");
     mPlayAction = mPlay->addAction("Playtest starten/stoppen");

@@ -24,6 +24,19 @@ public:
     // SDL-Events einspeisen; Rueckgabe: true, wenn die UI das Event konsumiert hat.
     bool ProcessEvent(const SDL_Event& e);
 
+    // SDL-freie Eingabe-Injection (Qt-Editor / externe Hosts ohne SDL-Event-Loop).
+    // Rueckgabe: true, wenn die UI das Event konsumiert hat (Host sollte es dann
+    // NICHT mehr in die 3D-Welt geben - wie ImGui WantCaptureMouse).
+    // rmlKeyMods: Bitmaske aus Rml::Input::KeyModifier (KM_CTRL/KM_SHIFT/...).
+    // rmlButton: Reihenfolge wie RmlUi/SDL: 0=Links, 1=Mitte, 2=Rechts.
+    bool InjectMouseMove(int x, int y, int rmlKeyMods = 0);
+    bool InjectMouseButton(int rmlButton, bool down, int rmlKeyMods = 0);
+    bool InjectMouseWheel(float delta, int rmlKeyMods = 0);
+    bool InjectKey(int rmlKeyId, bool down, int rmlKeyMods = 0);
+    bool InjectText(const char* utf8);
+    // Fenstergroesse nachziehen (View wurde resized; Kontext-Dimensionen+Viewport)
+    void SetContextSize(int width, int height);
+
     void Update(float dt);
     void Render();
 
