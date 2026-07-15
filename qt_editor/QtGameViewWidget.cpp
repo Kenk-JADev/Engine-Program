@@ -86,6 +86,12 @@ void QtGameViewWidget::mouseMoveEvent(QMouseEvent* event) {
     if (!mEngineReady) return;
     const QPointF p = event->position();
     mEngine->GetInput().OnMouseMoved(static_cast<float>(p.x()), static_cast<float>(p.y()));
+
+    // Drag-Malen: linke Taste gehalten + Paint/Erase-Modus (nicht im Playtest)
+    if (mViewMode != ViewMode::Select && !mEngine->IsPlaying() &&
+        (event->buttons() & Qt::LeftButton)) {
+        emitGroundHit(p);
+    }
 }
 
 void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
@@ -97,17 +103,35 @@ void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
     if (b != rpg::MouseButton::Count)
         mEngine->GetInput().OnMouseChanged(b, true);
 
-    // 3D-Klick-Selektion (Linksklick, nicht waehrend Playtest):
-    // Ray aus der Editor-Kamera durch den Klickpunkt, naechste Entity gewinnt.
+    // Linksklick (nicht waehrend Playtest): je nach Modus Entity-Pick
+    // (Select) oder Boden-Treffer fuer Tile-Malen/Radieren (Paint/Erase).
     if (b == rpg::MouseButton::Left && !mEngine->IsPlaying()) {
-        rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
         const QPointF p = event->position();
-        const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
-            rpg::Vec2(static_cast<float>(p.x()), static_cast<float>(p.y())),
-            rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
-        const rpg::RaycastHit hit = rpg::Raycast::PickEntity(ray, mEngine->GetScene(), 2000.0f);
-        emit entityPicked(hit.hit ? static_cast<int>(hit.entity) : -1);
+        if (mViewMode == ViewMode::Select) {
+            // Ray aus der Editor-Kamera durch den Klickpunkt, naechste Entity
+            rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
+            const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
+                rpg::Vec2(static_cast<float>(p.x()), static_cast<float>(p.y())),
+                rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
+            const rpg::RaycastHit hit = rpg::Raycast::PickEntity(ray, mEngine->GetScene(), 2000.0f);
+            emit entityPicked(hit.hit ? static_cast<int>(hit.entity) : -1);
+        } else {
+            emitGroundHit(p);
+        }
     }
+}
+
+// Drag-Malen: mouseMoveEvent ruft dies bei gedrueckter linker Taste
+void QtGameViewWidget::emitGroundHit(const QPointF& pos) {
+    rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
+    const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
+        rpg::Vec2(static_cast<float>(pos.x()), static_cast<float>(pos.y())),
+        rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
+    // Bodenebene y=0 (wie Editor::HandleSceneViewPicking)
+    const rpg::RaycastHit plane = rpg::Raycast::IntersectPlane(ray,
+        rpg::Vec3(0, 1, 0), rpg::Vec3(0, 0, 0));
+    if (plane.hit)
+        emit groundClicked(plane.point.x, plane.point.z);
 }
 
 void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {

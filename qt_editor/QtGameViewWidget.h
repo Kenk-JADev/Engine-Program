@@ -10,12 +10,18 @@ namespace rpg { class Engine; }
 
 namespace qt_editor {
 
+// Interaktionsmodus des Game-Views: 3D-Selektion oder Tile-Malen/Radieren
+// (radieren entspricht ImGui-Editor: mSelectedTile == -1 = Radiergummi)
+enum class ViewMode { Select, Paint, Erase };
+
 class QtGameViewWidget : public QOpenGLWidget {
     Q_OBJECT
 public:
     explicit QtGameViewWidget(rpg::Engine* engine, QWidget* parent = nullptr);
 
     bool IsEngineReady() const { return mEngineReady; }
+    void SetViewMode(ViewMode mode) { mViewMode = mode; }
+    ViewMode GetViewMode() const { return mViewMode; }
 
 signals:
     void engineInitFailed(QString message);
@@ -23,6 +29,9 @@ signals:
     // 3D-Klick-Selektion: Linksklick im View hat eine Entity getroffen
     // (id >= 0) bzw. ins Leere gegriffen (id == -1 -> Selektion aufheben).
     void entityPicked(int id);
+    // Tile-Modus (Paint/Erase): Linksklick oder Drag traf den Boden (y=0)
+    // an Weltposition (wx, wz). Umrechnung in Map-Kacheln macht das Fenster.
+    void groundClicked(float wx, float wz);
 
 protected:
     void initializeGL() override;
@@ -38,9 +47,12 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
+    void emitGroundHit(const QPointF& pos); // Ray -> Bodenebene -> Signal
+
     rpg::Engine* mEngine = nullptr; // nicht owned (QtEditorWindow besitzt)
     bool mGladLoaded = false;
     bool mEngineReady = false;
+    ViewMode mViewMode = ViewMode::Select;
 };
 
 } // namespace qt_editor

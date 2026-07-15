@@ -30,6 +30,7 @@ namespace rpg { class Engine; }
 namespace qt_editor {
 
 class QtGameViewWidget;
+class QtTilesetPanel;
 
 class QtEditorWindow : public QMainWindow {
     Q_OBJECT
@@ -71,7 +72,9 @@ private:
     // Engine-Aktionen (Spiegel der ImGui-Editor-Logik)
     void loadScenePackage();     // Editor::LoadMap-Aequivalent
     void saveScenePackage();     // Editor::SaveMap-Aequivalent
+    void loadTilesetForCurrentProject(); // Editor::LoadTilesetForMap-Aequivalent
     void createSimpleEntity(int kind); // 0=Cube 1=Plane 2=Light
+    void onGroundClicked(float wx, float wz); // Tile-Malen/Radieren (SetTileCommand)
 
     // Selektion & UI-Sync
     void afterProjectChanged();
@@ -87,9 +90,11 @@ private:
 
     // Docks
     QDockWidget* mDockHierarchy = nullptr;
+    QDockWidget* mDockTileset = nullptr;
     QDockWidget* mDockProperties = nullptr;
     QDockWidget* mDockConsole = nullptr;
     QTreeWidget* mHierarchy = nullptr;
+    QtTilesetPanel* mTilesetPanel = nullptr;
     QWidget* mPropsWidget = nullptr;
     QPlainTextEdit* mConsole = nullptr;
 

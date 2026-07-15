@@ -1,11 +1,13 @@
 #include "QtEditorWindow.h"
 #include "QtGameViewWidget.h"
+#include "QtTilesetPanel.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Scene.h"
 #include "rpgmaker3d/Project.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Model.h"
+#include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/ParticleSystem.h" // kompletter Typ fuer GetComponent<ParticleEmitterComponent>
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/Command.h"
@@ -34,6 +36,9 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
+
+#include <algorithm>
+#include <cmath>
 
 namespace qt_editor {
 
@@ -72,11 +77,27 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
 
     connect(mView, &QtGameViewWidget::engineReady, this, [this]() {
         log("Engine initialisiert (Embedded-Modus, Qt GL-Kontext).");
-        statusBar()->showMessage("Bereit. Linksklick im View = Objekt auswaehlen, F9 = RmlUi-HUD.");
+        statusBar()->showMessage("Bereit. Linksklick = auswaehlen; im Tileset-Panel Kachel waehlen und malen.");
         setSelectedEntity(-1); // baut Hierarchie + Eigenschaften initial auf
+        loadTilesetForCurrentProject();
     });
     connect(mView, &QtGameViewWidget::entityPicked, this, [this](int id) {
         setSelectedEntity(id); // auch -1: Klick ins Leere deselektiert
+    });
+    connect(mView, &QtGameViewWidget::groundClicked, this,
+            [this](float wx, float wz) { onGroundClicked(wx, wz); });
+
+    // Tileset-Panel -> View-Modus
+    connect(mTilesetPanel, &QtTilesetPanel::modeChanged, this, [this]() {
+        mView->SetViewMode(mTilesetPanel->CurrentMode());
+        const char* names[] = {"Auswahl", "Malen", "Radierer"};
+        const int m = static_cast<int>(mTilesetPanel->CurrentMode());
+        statusBar()->showMessage(QString("Werkzeug: %1 - Linksklick im 3D-View").arg(names[m]), 3000);
+    });
+    connect(mTilesetPanel, &QtTilesetPanel::tileChanged, this, [this]() {
+        statusBar()->showMessage(
+            QString("Kachel %1 gewaehlt - Linksklick/Drag im 3D-View malt.")
+                .arg(mTilesetPanel->SelectedTileId()), 3000);
     });
     connect(mView, &QtGameViewWidget::engineInitFailed, this, [this](QString msg) {
         log("FEHLER: " + msg);
@@ -137,6 +158,7 @@ void QtEditorWindow::buildMenus() {
 
     QMenu* mViewMenu = menuBar()->addMenu("&Ansicht");
     mViewMenu->addAction(mDockHierarchy->toggleViewAction());
+    mViewMenu->addAction(mDockTileset->toggleViewAction());
     mViewMenu->addAction(mDockProperties->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
 
@@ -188,6 +210,14 @@ void QtEditorWindow::buildDocks() {
     addDockWidget(Qt::LeftDockWidgetArea, mDockHierarchy);
     connect(mHierarchy, &QTreeWidget::itemSelectionChanged,
             this, [this]() { onHierarchySelectionChanged(); });
+
+    // Tileset: getabbt mit der Hierarchie (zeigt die Staerke nativer Fenster)
+    mDockTileset = new QDockWidget("Tileset", this);
+    mTilesetPanel = new QtTilesetPanel(mDockTileset);
+    mDockTileset->setWidget(mTilesetPanel);
+    addDockWidget(Qt::LeftDockWidgetArea, mDockTileset);
+    tabifyDockWidget(mDockHierarchy, mDockTileset);
+    mDockTileset->raise();
 
     // Eigenschaften: Container, Inhalt wird bei Selektionswechsel neu gebaut
     mDockProperties = new QDockWidget("Eigenschaften", this);
@@ -409,8 +439,73 @@ void QtEditorWindow::saveScenePackage() {
 
 void QtEditorWindow::afterProjectChanged() {
     setSelectedEntity(-1); // inkl. Hierarchie-/Properties-Refresh + Highlight-Aus
+    loadTilesetForCurrentProject();
     setWindowTitle(QString("RPG Maker 3D - Qt Editor  [%1]")
         .arg(QString::fromStdString(mEngine->GetProject().GetInfo().name)));
+}
+
+void QtEditorWindow::loadTilesetForCurrentProject() {
+    // Port von Editor::LoadTilesetForMap: Tileset passend zur Start-Map
+    // (System().startMapId -> MapInfo.tilesetId -> TilesetData.tilesetName)
+    if (!mView->IsEngineReady()) return;
+    auto& db = rpg::Database::Get();
+    auto& proj = mEngine->GetProject();
+
+    int tsId = 1;
+    auto& infos = db.MapInfos();
+    auto it = std::find_if(infos.begin(), infos.end(),
+        [&](const rpg::MapInfo& mi) { return mi.id == db.System().startMapId; });
+    if (it != infos.end()) tsId = it->tilesetId;
+    else if (!infos.empty()) tsId = infos.front().tilesetId;
+
+    std::string texName = "tileset_demo.png";
+    for (const auto& ts : db.Tilesets())
+        if (ts.id == tsId) { texName = ts.tilesetName; break; }
+
+    std::string path = proj.GetProjectPath().empty()
+        ? ("./assets/textures/" + texName)
+        : proj.GetAssetPath("textures/" + texName);
+
+    auto tileset = std::make_shared<rpg::Tileset>();
+    if (!tileset->Load(path, 32, 32)) {
+        path = "./assets/textures/tileset_demo.png"; // Fallback wie ImGui-Editor
+        tileset->Load(path, 32, 32);
+    }
+    mEngine->GetMap().SetTileset(tileset);
+    log("Tileset geladen: " + QString::fromStdString(path));
+    mTilesetPanel->Reload(QString::fromStdString(path),
+                          tileset->GetTileWidth(), tileset->GetTileHeight());
+
+    // Layer-Combo aus der Map (Default-Map hat u.U. noch keinen Layer)
+    auto& map = mEngine->GetMap();
+    if (map.GetLayers().empty()) map.AddLayer("Ebene 1");
+    QStringList names;
+    for (const auto& l : map.GetLayers()) names << QString::fromStdString(l.name);
+    mTilesetPanel->SetLayers(names);
+}
+
+void QtEditorWindow::onGroundClicked(float wx, float wz) {
+    // Welt -> Kachel (wie Editor::HandleSceneViewPicking)
+    if (!mView->IsEngineReady() || !mTilesetPanel) return;
+    auto& map = mEngine->GetMap();
+    if (map.GetLayers().empty()) return;
+
+    const int layer = mTilesetPanel->SelectedLayer();
+    if (layer < 0 || layer >= static_cast<int>(map.GetLayers().size())) return;
+
+    const float halfW = map.GetWidth() * 0.5f;
+    const float halfH = map.GetHeight() * 0.5f;
+    const int x = static_cast<int>(std::floor(wx + halfW));
+    const int z = static_cast<int>(std::floor(wz + halfH));
+    if (x < 0 || x >= map.GetWidth() || z < 0 || z >= map.GetHeight()) return;
+
+    const bool erase = (mTilesetPanel->CurrentMode() == ViewMode::Erase);
+    const int newTile = erase ? -1 : mTilesetPanel->SelectedTileId();
+    const int oldTile = map.GetTile(layer, x, z);
+    if (oldTile == newTile) return; // wichtig gegen Command-Spam beim Drag
+
+    auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, newTile);
+    mEngine->GetCommandHistory().Execute(*mEngine, cmd); // undo-bar
 }
 
 // ---------------------------------------------------------------------------

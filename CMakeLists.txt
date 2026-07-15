@@ -165,6 +165,7 @@ if(RPGMAKER3D_EDITOR_QT)
         qt_editor/QtMain.cpp
         qt_editor/QtEditorWindow.cpp
         qt_editor/QtGameViewWidget.cpp
+        qt_editor/QtTilesetPanel.cpp
     )
 endif()
 
