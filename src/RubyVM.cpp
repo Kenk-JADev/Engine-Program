@@ -11,27 +11,27 @@
 #include "rpgmaker3d/Game.h"
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers
+// MSVC does not have ssize_t in <cstddef>, define it via intptr_t
 #include <cstddef>
+#include <cstdint>
+#include <type_traits>
 #ifdef _WIN32
-#include <BaseTsd.h>
+// Prefer Windows native SSIZE_T if available, fallback to intptr_t
 #ifndef _SSIZE_T_DEFINED
-typedef SSIZE_T ssize_t;
+  #ifdef _BASETSD_H_
+    typedef SSIZE_T ssize_t;
+  #else
+    // BaseTsd.h may not be included yet or SSIZE_T not defined, use portable definition
+    typedef std::intptr_t ssize_t;
+  #endif
 #define _SSIZE_T_DEFINED
 #endif
-// mruby 4.0.0 compatibility: mrb_int_p may be missing, define fallback
-#ifndef mrb_int_p
-#define mrb_int_p(o) (mrb_type(o) == MRB_TT_INTEGER)
-#endif
-#ifndef mrb_integer_p
-#define mrb_integer_p(o) (mrb_type(o) == MRB_TT_INTEGER)
-#endif
+// DO NOT define mrb_int_p / mrb_integer_p here to avoid macro redefinition warnings
+// They will be defined after mruby includes as fallback
 #else
-#ifndef mrb_int_p
-#ifdef mrb_integer_p
-#define mrb_int_p(o) mrb_integer_p(o)
-#else
-#define mrb_int_p(o) (mrb_type(o) == MRB_TT_INTEGER)
-#endif
+// Linux/Mac: ssize_t already available via <unistd.h> or <sys/types.h> typically, but ensure
+#ifndef _SSIZE_T_DEFINED
+#include <unistd.h>
 #endif
 #endif
 
@@ -46,6 +46,18 @@ typedef SSIZE_T ssize_t;
 #include <mruby/variable.h>
 #include <mruby/error.h>
 #include <mruby/hash.h>
+
+// mruby 4.0.0 compatibility fallbacks – define AFTER includes to avoid redefinition warnings
+#ifndef mrb_int_p
+  #ifdef mrb_integer_p
+    #define mrb_int_p(o) mrb_integer_p(o)
+  #else
+    #define mrb_int_p(o) (mrb_type(o) == MRB_TT_INTEGER)
+  #endif
+#endif
+#ifndef mrb_integer_p
+  #define mrb_integer_p(o) (mrb_type(o) == MRB_TT_INTEGER)
+#endif
 
 #include <cstdio>
 #include <iostream>
