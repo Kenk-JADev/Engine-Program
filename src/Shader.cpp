@@ -1,4 +1,5 @@
 #include "rpgmaker3d/Shader.h"
+#include "rpgmaker3d/Logger.h"
 #include <glad/gl.h>
 #include <fstream>
 #include <sstream>
@@ -41,7 +42,9 @@ bool Shader::LoadFromSource(const std::string& vertexSource, const std::string& 
     if (!success) {
         char log[512];
         glGetProgramInfoLog(mProgramID, 512, nullptr, log);
-        std::cerr << "Shader link error: " << log << std::endl;
+        std::string err = std::string("Shader link error: ") + log;
+        std::cerr << err << std::endl;
+        RPG_LOG_ERROR(err);
         return false;
     }
 
@@ -61,7 +64,10 @@ bool Shader::CompileStage(GLuint& stage, GLuint type, const std::string& source)
     if (!success) {
         char log[512];
         glGetShaderInfoLog(stage, 512, nullptr, log);
-        std::cerr << "Shader compile error (" << (type == GL_VERTEX_SHADER ? "vertex" : "fragment") << "): " << log << std::endl;
+        std::string err = std::string("Shader compile error (") +
+            (type == GL_VERTEX_SHADER ? "vertex" : "fragment") + "): " + log;
+        std::cerr << err << std::endl;
+        RPG_LOG_ERROR(err);
         return false;
     }
     return true;
@@ -113,6 +119,10 @@ void Shader::SetVec4(const std::string& name, const Vec4& value) {
 
 void Shader::SetMat4(const std::string& name, const Mat4& value) {
     glUniformMatrix4fv(GetUniformLocation(name), 1, GL_FALSE, glm::value_ptr(value));
+}
+
+void Shader::SetBool(const std::string& name, bool value) {
+    glUniform1i(GetUniformLocation(name), value ? 1 : 0);
 }
 
 } // namespace rpg

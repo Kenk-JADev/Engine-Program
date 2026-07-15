@@ -1,5 +1,6 @@
 #include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/Texture.h"
+#include <glad/gl.h>
 
 namespace rpg {
 
@@ -11,6 +12,18 @@ bool Tileset::Load(const std::string& texturePath, int tileWidth, int tileHeight
     mTexture = std::make_unique<Texture>();
     if (!mTexture->LoadFromFile(texturePath)) {
         mTexture->CreateCheckerboard();
+    } else {
+        // Fix: Tileset soll NEAREST filtering nutzen, kein Mipmap Bleeding, sonst grauer Boden + Farb-Tiles vermischen
+        // Setze Texture Parameter direkt via GL, da Texture::Load linear + mipmap setzt
+        if (mTexture->GetID() != 0) {
+            glBindTexture(GL_TEXTURE_2D, mTexture->GetID());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            // Kein Mipmap für Tileset – verhindert Farbvermischung über Tile-Grenzen
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
     }
 
     mTileWidth = tileWidth;
@@ -29,6 +42,10 @@ bool Tileset::Load(const std::string& texturePath, int tileWidth, int tileHeight
         mTiles[i].id = i;
         mTiles[i].tileX = i % mColumns;
         mTiles[i].tileY = i / mColumns;
+        // Heuristik: Markiere Tiles als solid wenn sie nicht Boden sind?
+        // Für jetzt: Alle als nicht-solid, es sei denn TileId >= 8 (z.B. Wände) – kann via DB überschrieben werden
+        // Nutzer will leeres neues Projekt, also keine festen Wände per Default.
+        mTiles[i].solid = false;
     }
     return true;
 }
@@ -48,15 +65,24 @@ Vec4 Tileset::GetTileUV(int tileId) const {
     int tx = tileId % mColumns;
     int ty = tileId / mColumns;
 
-    float tw = static_cast<float>(mTileWidth) / static_cast<float>(mTexture->GetWidth());
-    float th = static_cast<float>(mTileHeight) / static_cast<float>(mTexture->GetHeight());
-    float sx = static_cast<float>(mSpacing) / static_cast<float>(mTexture->GetWidth());
-    float sy = static_cast<float>(mSpacing) / static_cast<float>(mTexture->GetHeight());
+    float texW = static_cast<float>(mTexture->GetWidth());
+    float texH = static_cast<float>(mTexture->GetHeight());
+    
+    float tw = static_cast<float>(mTileWidth) / texW;
+    float th = static_cast<float>(mTileHeight) / texH;
+    float sx = static_cast<float>(mSpacing) / texW;
+    float sy = static_cast<float>(mSpacing) / texH;
+    float mx = static_cast<float>(mMargin) / texW;
+    float my = static_cast<float>(mMargin) / texH;
 
-    float u = (tx * (tw + sx)) + (static_cast<float>(mMargin) / mTexture->GetWidth());
-    float v = (ty * (th + sy)) + (static_cast<float>(mMargin) / mTexture->GetHeight());
+    float u = (tx * (tw + sx)) + mx;
+    float v = (ty * (th + sy)) + my;
 
-    return Vec4(u, v, u + tw, v + th);
+    // Add small padding to prevent texture bleeding (0.5 pixel inset)
+    float paddingU = 0.5f / texW;
+    float paddingV = 0.5f / texH;
+    
+    return Vec4(u + paddingU, v + paddingV, u + tw - paddingU, v + th - paddingV);
 }
 
 const TileInfo* Tileset::GetTileInfo(int tileId) const {

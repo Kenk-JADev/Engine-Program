@@ -109,6 +109,7 @@ public:
     EntityID CreateEntity(const std::string& name = "Entity");
     void DestroyEntity(EntityID id);
     const std::string& GetEntityName(EntityID id) const;
+    void SetEntityName(EntityID id, const std::string& name) { mNames[id] = name; }
 
     template<typename T>
     T* AddComponent(EntityID id) {

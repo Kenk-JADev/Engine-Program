@@ -3,6 +3,7 @@
 #include <iostream>
 #include <filesystem>
 #include <sstream>
+#include <cctype>
 
 namespace rpg {
 
@@ -129,6 +130,23 @@ bool Project::Save() const {
     file << "  \"vsync\": " << (mInfo.vsync ? "true" : "false") << "\n";
     file << "}\n";
     return true;
+}
+
+bool Project::SaveAs(const std::string& path) {
+    if (path.empty()) return false;
+
+    // Create destination structure and update project path
+    mProjectPath = path;
+    std::filesystem::create_directories(path);
+    std::filesystem::create_directories(path + "/assets/textures");
+    std::filesystem::create_directories(path + "/assets/models");
+    std::filesystem::create_directories(path + "/assets/audio");
+    std::filesystem::create_directories(path + "/assets/shaders");
+    std::filesystem::create_directories(path + "/maps");
+    std::filesystem::create_directories(path + "/scripts");
+    std::filesystem::create_directories(path + "/prefabs");
+
+    return Save();
 }
 
 std::string Project::GetAssetPath(const std::string& subPath) const {

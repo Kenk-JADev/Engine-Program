@@ -1,0 +1,4 @@
+[
+  {"id": 1, "name": "Potion", "type": "Regular", "price": 50, "hpRecovery": 100},
+  {"id": 2, "name": "Ether", "type": "Regular", "price": 100, "mpRecovery": 50}
+]

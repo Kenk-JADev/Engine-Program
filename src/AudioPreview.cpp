@@ -12,19 +12,21 @@ AudioPreview::AudioPreview(AudioManager& audio) : mAudio(audio) {
 void AudioPreview::LoadAndPlay(const std::string& path, bool loop) {
     mSelectedAudio = path;
     mAudio.SetMasterVolume(mVolume);
-    mAudio.LoadSound("preview", path);
-    mAudio.PlaySound("preview", loop);
+    mAudio.PlaySE(path, loop, mVolume);
     RPG_LOG_INFO("Playing sound: " + path);
 }
 
 void AudioPreview::DrawUI() {
-    ImGui::Begin("Audio Preview");
+    ImGui::SetNextWindowSize(ImVec2(380, 460), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Audio Vorschau");
 
-    ImGui::SliderFloat("Volume", &mVolume, 0.0f, 1.0f);
+    ImGui::SliderFloat("Lautstärke", &mVolume, 0.0f, 1.0f);
     ImGui::Checkbox("Loop", &mLoop);
+    ImGui::SliderFloat("Pitch", &mPitch, 0.5f, 2.0f);
+    ImGui::SliderFloat("Pan", &mPan, -1.0f, 1.0f);
 
     ImGui::Separator();
-    ImGui::Text("Audio Files");
+    ImGui::Text("Audio-Dateien");
 
     try {
         if (std::filesystem::exists("./assets/audio")) {
@@ -36,33 +38,43 @@ void AudioPreview::DrawUI() {
                 }
             }
         } else {
-            ImGui::Text("No assets/audio folder found.");
+            ImGui::Text("Kein assets/audio Ordner gefunden.");
         }
     } catch (...) {
-        ImGui::Text("Could not read audio folder.");
+        ImGui::Text("Audio-Ordner konnte nicht gelesen werden.");
     }
 
     ImGui::Separator();
 
     if (!mSelectedAudio.empty()) {
-        ImGui::Text("Selected: %s", mSelectedAudio.c_str());
+        ImGui::Text("Ausgewählt: %s", mSelectedAudio.c_str());
 
-        if (ImGui::Button("Play Sound")) {
+        if (ImGui::Button("Als SE abspielen")) {
             mAudio.SetMasterVolume(mVolume);
-            mAudio.LoadSound("preview", mSelectedAudio);
-            mAudio.PlaySound("preview", mLoop);
-            RPG_LOG_INFO("Playing sound: " + mSelectedAudio);
+            mAudio.PlaySE(mSelectedAudio, mLoop, mVolume, mPitch);
+            RPG_LOG_INFO("Spiele SE: " + mSelectedAudio);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Play Music")) {
+        if (ImGui::Button("Als BGM abspielen")) {
             mAudio.SetMasterVolume(mVolume);
-            mAudio.PlayMusic(mSelectedAudio, mLoop);
-            RPG_LOG_INFO("Playing music: " + mSelectedAudio);
+            mAudio.PlayBGM(mSelectedAudio, mLoop, mVolume, mPitch);
+            RPG_LOG_INFO("Spiele BGM: " + mSelectedAudio);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Stop")) {
-            mAudio.StopMusic();
-            mAudio.StopSound("preview");
+        if (ImGui::Button("Als BGS abspielen")) {
+            mAudio.SetMasterVolume(mVolume);
+            mAudio.PlayBGS(mSelectedAudio, mLoop, mVolume, mPitch);
+            RPG_LOG_INFO("Spiele BGS: " + mSelectedAudio);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Als ME abspielen")) {
+            mAudio.SetMasterVolume(mVolume);
+            mAudio.PlayME(mSelectedAudio, mLoop, mVolume, mPitch);
+            RPG_LOG_INFO("Spiele ME: " + mSelectedAudio);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Alles stoppen")) {
+            mAudio.FadeOutAll(0.5f);
         }
     }
 

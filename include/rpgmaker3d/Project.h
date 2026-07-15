@@ -26,6 +26,7 @@ public:
     bool New(const std::string& path, const std::string& name);
     bool Load(const std::string& path);
     bool Save() const;
+    bool SaveAs(const std::string& path);
 
     const std::string& GetProjectPath() const { return mProjectPath; }
     ProjectInfo& GetInfo() { return mInfo; }

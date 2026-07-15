@@ -102,6 +102,13 @@ void Map::Render(Renderer& renderer) {
     }
 }
 
+void Map::RenderDepth(Renderer& renderer) {
+    if (mDirty) BuildGeometry();
+    if (mMesh && !mMesh->vertices.empty()) {
+        renderer.DrawMeshDepth(*mMesh, Mat4(1.0f));
+    }
+}
+
 void Map::Save(const std::string& path) const {
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) return;

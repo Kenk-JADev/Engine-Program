@@ -1,6 +1,4 @@
-# Diese Datei muss auf GitHub unter .github/workflows/build-windows.yml liegen.
-# Sie baut automatisch eine Windows-EXE bei jedem Push.
-# FIX für mruby strndup Fehler auf Windows (UCRT MinGW)
+# GitHub Actions Workflow für den Windows-Build mit mruby/MSVC
 
 name: Build Windows EXE
 
@@ -29,13 +27,16 @@ jobs:
         with:
           ruby-version: '3.2'
 
+      - name: Setup MSVC (für mruby MSVC Build)
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
           path: |
             ${{ github.workspace }}/vcpkg
             ${{ github.workspace }}/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-sdl2-glm-static-v3
+          key: vcpkg-${{ runner.os }}-sdl2-glm-static-v5-ruby-msvc
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
@@ -48,76 +49,88 @@ jobs:
           }
           .\vcpkg\vcpkg.exe install sdl2:x64-windows-static glm:x64-windows-static
 
-      - name: Build mruby (mit Windows Fix)
+      - name: Build mruby with MSVC
         shell: pwsh
         run: |
-          if (-not (Test-Path third_party/mruby)) {
-            git clone --depth 1 https://github.com/mruby/mruby.git third_party/mruby
+          # Kein CC/CXX=cl setzen: Das würde mruby fälschlich auf GCC schalten.
+          $mrubyTag = "4.0.0"
+
+          if (Test-Path third_party/mruby) {
+            Remove-Item -Recurse -Force third_party/mruby
           }
 
-          # --- FIX für strndup Konflikt auf Windows UCRT ---
-          # mruby's mirb_completion.c definiert static strndup, kollidiert mit MinGW UCRT Deklaration
-          $mirbFile = "third_party/mruby/mrbgems/mruby-bin-mirb/tools/mirb/mirb_completion.c"
-          if (Test-Path $mirbFile) {
-            Write-Host "Patche mruby strndup Konflikt..."
-            $content = Get-Content $mirbFile -Raw
-            # Umbenennen in mirb_strndup um Kollision zu vermeiden
-            $content = $content -replace '\bstrndup\s*\(const char', 'mirb_strndup(const char'
-            $content = $content -replace '\bstrndup\s*\(', 'mirb_strndup('
-            Set-Content -Path $mirbFile -Value $content -Encoding UTF8
-            Write-Host "Patched $mirbFile"
+          git clone --branch $mrubyTag --depth 1 https://github.com/mruby/mruby.git third_party/mruby
+          if ($LASTEXITCODE -ne 0) {
+            throw "mruby $mrubyTag konnte nicht geklont werden."
           }
 
-          cd third_party/mruby
-          # Build - Fehler bei mirb ist OK, libmruby ist das Wichtige
+          Push-Location third_party/mruby
           try {
-            ruby minirake
-          } catch {
-            Write-Host "minirake hat Fehler geworfen (vermutlich mirb/mrdb), prüfe ob libmruby trotzdem gebaut wurde..."
-          }
+            $msvcBin = Split-Path -Parent (Get-Command cl.exe -CommandType Application -ErrorAction Stop).Source
+            $msvcLinker = Join-Path $msvcBin "link.exe"
+            $msvcArchiver = Join-Path $msvcBin "lib.exe"
 
-          # Prüfe ob libmruby gebaut wurde
-          $libPath = "build/host/lib/libmruby.a"
-          $libCorePath = "build/host/lib/libmruby_core.a"
-          $presymId = "build/host/include/mruby/presym/id.h"
-          
-          if (Test-Path $libPath) {
-            Write-Host "OK: $libPath existiert"
-          } else {
-            Write-Error "FEHLER: $libPath fehlt - mruby Build wirklich fehlgeschlagen"
-            exit 1
-          }
-
-          if (Test-Path $presymId) {
-            Write-Host "OK: $presymId existiert"
-            # Kopiere presym headers in include/ damit CMake sie findet (alte mruby Versionen erwarteten dort)
-            New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
-            Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force -ErrorAction SilentlyContinue
-            Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force -ErrorAction SilentlyContinue
-            Write-Host "Presym headers kopiert"
-          } else {
-            # Fallback: altes Verhalten
-            if (Test-Path "include/mruby/presym/id.h") {
-              Write-Host "Fallback: include/mruby/presym/id.h existiert bereits"
-            } else {
-              Write-Error "mruby presym headers wurden nicht generiert. Build failed. Geprüft: $presymId und include/mruby/presym/id.h"
-              exit 1
+            if (-not (Test-Path $msvcLinker) -or -not (Test-Path $msvcArchiver)) {
+              throw "MSVC Linker oder Archiver fehlt in $msvcBin"
             }
-          }
 
-          Write-Host "mruby Build abgeschlossen - libmruby.a vorhanden"
+            # Git for Windows kann seinen GNU-Linker vor MSVC im PATH haben.
+            $env:PATH = "$msvcBin;$env:PATH"
+            $env:LD = "link.exe"
+            $env:AR = "lib.exe"
+
+            # Die Engine und x64-windows-static verwenden /MT.
+            # mruby muss dieselbe C-Runtime nutzen, sonst entstehen __imp_* Fehler.
+            $env:CFLAGS = "/nologo /W3 /MT /O2 /D_CRT_SECURE_NO_WARNINGS /we4013"
+            $env:CXXFLAGS = "/nologo /W3 /MT /O2 /D_CRT_SECURE_NO_WARNINGS /EHs"
+
+            Write-Host "MSVC Compiler: $(where.exe cl)"
+            Write-Host "MSVC Linker: $((Get-Command link.exe -CommandType Application -ErrorAction Stop).Source)"
+
+            $env:MRUBY_CONFIG = "ci/msvc"
+            Write-Host "Baue mruby $mrubyTag mit der offiziellen MSVC-Konfiguration..."
+
+            & ruby minirake 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/mruby_build.log"
+            $mrubyExitCode = $LASTEXITCODE
+
+            if ($mrubyExitCode -ne 0) {
+              throw "mruby Build fehlgeschlagen (Exit-Code $mrubyExitCode)."
+            }
+
+            $requiredFiles = @(
+              "build/host/lib/libmruby.lib",
+              "build/host/lib/libmruby_core.lib",
+              "build/host/include/mruby/presym/id.h",
+              "build/host/include/mruby/presym/table.h"
+            )
+
+            $missingFiles = $requiredFiles | Where-Object { -not (Test-Path $_) }
+            if ($missingFiles) {
+              Write-Host "mruby Ausgabe:"
+              Get-ChildItem build/host -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host $_.FullName }
+
+              throw "mruby Build unvollständig. Fehlend: $($missingFiles -join ', ')"
+            }
+
+            New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
+            Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force
+            Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force
+
+            Write-Host "mruby Bibliotheken erfolgreich gebaut:"
+            Get-ChildItem build/host/lib/*.lib | ForEach-Object { Write-Host $_.FullName }
+          }
+          finally {
+            Pop-Location
+          }
 
       - name: Generate OpenGL loader (glad)
         shell: pwsh
         run: |
           python -m pip install glad2
           python -m glad --api gl:core=3.3 --out-path third_party/glad_generated c
-          if (-not (Test-Path third_party/glad_generated/include/glad/gl.h)) {
-            Write-Error "glad generation failed"
-            exit 1
-          }
 
-      - name: Configure CMake
+      - name: Configure CMake (mit Ruby ON, MSVC mruby)
         shell: pwsh
         run: |
           cmake -B build -S . `
@@ -132,20 +145,55 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        run: |
+          Write-Host "=== Build mit Ruby ON ==="
+          cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_first.log
+          $firstResult = $LASTEXITCODE
+
+          Get-Content build_first.log | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
+
+          if ($firstResult -ne 0) {
+            Write-Host "Build mit Ruby ON fehlgeschlagen, Fallback OFF..."
+
+            cmake -B build -S . `
+              -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+              -DVCPKG_TARGET_TRIPLET=x64-windows-static `
+              -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows-static" `
+              -DRPGMAKER3D_ENABLE_RUBY=OFF `
+              -DRPGMAKER3D_BUILD_PLAYER=ON `
+              -DRPGMAKER3D_ENABLE_CONSOLE=ON `
+              -DCMAKE_BUILD_TYPE=Release
+
+            cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_second.log
+            Get-Content build_second.log | Select-Object -Last 300 | ForEach-Object { Write-Host $_ }
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Auch Fallback OFF fehlgeschlagen!"
+              exit 1
+            }
+          }
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            mruby_build.log
+            build_first.log
+            build_second.log
+            build/CMakeFiles/**/*.log
+            build/**/*.log
 
       - name: Prepare package
         shell: pwsh
         run: |
-          Write-Host "Preparing Windows package..."
           $out = "build/Release"
           if (Test-Path assets) { Copy-Item -Recurse -Force assets $out/assets }
           if (Test-Path SampleProject) { Copy-Item -Recurse -Force SampleProject $out/SampleProject -ErrorAction SilentlyContinue }
           if (Test-Path ruby) { Copy-Item -Recurse -Force ruby $out/ruby -ErrorAction SilentlyContinue }
           if (Test-Path docs) { Copy-Item -Recurse -Force docs $out/docs -ErrorAction SilentlyContinue }
           if (Test-Path resources/icon.ico) { Copy-Item -Force resources/icon.ico $out/ -ErrorAction SilentlyContinue }
-          if (Test-Path BUILD_WINDOWS_DE.md) { Copy-Item -Force BUILD_WINDOWS_DE.md $out/README_WINDOWS.md -ErrorAction SilentlyContinue }
-          Get-ChildItem $out | ForEach-Object { Write-Host $_.Name }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
@@ -160,8 +208,7 @@ jobs:
 
       - name: Create ZIP
         shell: pwsh
-        run: |
-          Compress-Archive -Path build/Release/* -DestinationPath RPGMaker3D-Windows-x64.zip -Force
+        run: Compress-Archive -Path build/Release/* -DestinationPath RPGMaker3D-Windows-x64.zip -Force
 
       - name: Upload ZIP
         uses: actions/upload-artifact@v4

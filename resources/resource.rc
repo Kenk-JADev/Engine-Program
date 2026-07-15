@@ -1,0 +1,48 @@
+#include <windows.h>
+
+// Icon
+IDI_ICON1 ICON "icon.ico"
+
+// Version Information
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,2,0,0
+PRODUCTVERSION 0,2,0,0
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x4L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040704B0" // Deutsch + Unicode
+        BEGIN
+            VALUE "CompanyName", "RPG Maker 3D Team"
+            VALUE "FileDescription", "RPG Maker 3D Engine - 3D RPG Editor und Runtime"
+            VALUE "FileVersion", "0.2.0"
+            VALUE "InternalName", "RPGMaker3D"
+            VALUE "LegalCopyright", "MIT License"
+            VALUE "OriginalFilename", "RPGMaker3D.exe"
+            VALUE "ProductName", "RPG Maker 3D Engine"
+            VALUE "ProductVersion", "0.2.0"
+        END
+        BLOCK "040904B0" // English US
+        BEGIN
+            VALUE "CompanyName", "RPG Maker 3D Team"
+            VALUE "FileDescription", "RPG Maker 3D Engine - 3D RPG Editor and Runtime"
+            VALUE "FileVersion", "0.2.0"
+            VALUE "InternalName", "RPGMaker3D"
+            VALUE "LegalCopyright", "MIT License"
+            VALUE "OriginalFilename", "RPGMaker3D.exe"
+            VALUE "ProductName", "RPG Maker 3D Engine"
+            VALUE "ProductVersion", "0.2.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x407, 1200, 0x409, 1200
+    END
+END
+
+// Manifest für Windows 10+ DPI Awareness und Visual Styles
+1 24 "app.manifest"

@@ -16,6 +16,12 @@ public:
     ~Window();
 
     bool Create(const std::string& title, int width, int height, bool editorMode = true);
+
+    // "Eingebetteter" Modus: kein eigenes OS-Fenster/GL-Kontext.
+    // Fuer Hosts wie den Qt-Editor (QOpenGLWidget stellt den Kontext).
+    bool CreateForeign(int width, int height);
+    bool IsForeign() const { return mForeign; }
+    void SetForeignSize(int width, int height);
     void Destroy();
     void SwapBuffers();
     void PollEvents();
@@ -40,6 +46,7 @@ private:
     int mHeight = 720;
     bool mShouldClose = false;
     bool mEditorMode = true;
+    bool mForeign = false;
 };
 
 } // namespace rpg

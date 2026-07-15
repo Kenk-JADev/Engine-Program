@@ -19,6 +19,8 @@ class Editor;
 class Framebuffer;
 class CommandHistory;
 class RubyVM;
+class ScriptManager;
+class RmlUiSystem;
 
 class MeshFactory;
 
@@ -28,6 +30,10 @@ public:
     ~Engine();
 
     bool Initialize(const std::string& title, int width, int height, bool editorMode = true);
+    // Eingebetteter Modus (Qt-Editor): kein SDL-Fenster; GL-Kontext + glad
+    // muessen VOR dem Aufruf bereits current sein. Update(dt)/Render() werden
+    // dann vom Host getrieben (kein Run()).
+    bool InitializeEmbedded(int width, int height, bool editorMode = true);
     void Shutdown();
 
     void Run();
@@ -56,6 +62,7 @@ public:
 
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
+    ScriptManager& GetScriptManager() { return *mScriptManager; }
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }
@@ -74,7 +81,9 @@ public:
     Vec2 GetSceneViewSize() const { return mSceneViewSize; }
 
     bool IsPlaying() const { return mPlayMode; }
-    void SetPlaying(bool playing) { mPlayMode = playing; }
+    void SetPlaying(bool playing);
+    bool IsPlayModeFollowPlayer() const { return mPlayModeFollowPlayer; }
+    void SetPlayModeFollowPlayer(bool follow) { mPlayModeFollowPlayer = follow; }
 
     void SaveScene(const std::string& path) const;
     bool LoadScene(const std::string& path);
@@ -87,7 +96,18 @@ public:
         return mActiveCameraEntity;
     }
 
+    bool IsGridVisible() const { return mShowGrid; }
+    void SetGridVisible(bool visible) { mShowGrid = visible; }
+    void ToggleGrid() { mShowGrid = !mShowGrid; }
+
+    // Generische Editor-Selektion (ID der selektierten Entity, -1 = keine).
+    // Wird fuer das Auswahl-Highlight in RenderScene genutzt, wenn kein
+    // ImGui-Editor aktiv ist (z.B. Qt-Editor / externer Host).
+    void SetSelectedEntity(int id) { mSelectedEntity = id; }
+    int GetSelectedEntity() const { return mSelectedEntity; }
+
 private:
+    bool InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow);
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
     std::unique_ptr<Input> mInput;
@@ -104,14 +124,20 @@ private:
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
+    std::unique_ptr<RmlUiSystem> mRmlUi;   // RmlUi UI-System (PoC: ImGui-Nachfolger)
+    std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 
     bool mRunning = false;
     bool mEditorMode = true;
     bool mPlayMode = false;
+    bool mImGuiInitialized = false;
+    bool mPlayModeFollowPlayer = true;
+    bool mShowGrid = true;
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
     EntityID mActiveCameraEntity = INVALID_ENTITY;
+    int mSelectedEntity = -1; // Editor-Selektion (externer Host, z.B. Qt-Editor)
     float mDeltaTime = 0.0f;
     float mTime = 0.0f;
     int mFPS = 0;
