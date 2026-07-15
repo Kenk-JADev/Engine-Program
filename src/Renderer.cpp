@@ -158,15 +158,12 @@ float CalculatePointShadow(int idx, vec3 fragPos, vec3 lightPos, vec3 normal, ve
     if (!uPointShadowsEnabled) return 0.0;
     if (idx >= uPointShadowCount) return 0.0;
 
-    samplerCube shadowCube;
-    float farPlane;
-    if (idx == 0) {
-        shadowCube = uPointShadowMap0;
-        farPlane = uPointShadowFar0;
-    } else {
-        shadowCube = uPointShadowMap1;
-        farPlane = uPointShadowFar1;
-    }
+    // GLSL 330 forbids local sampler variables and sampler assignment
+    // (opaque types may only be uniforms). Select via plain floats instead;
+    // the correct uniform cubemap is sampled directly below. Intel drivers
+    // strictly enforce this - the old "samplerCube shadowCube = ..." code
+    // failed to compile on Intel GPUs and aborted renderer initialization.
+    float farPlane = (idx == 0) ? uPointShadowFar0 : uPointShadowFar1;
 
     vec3 fragToLight = fragPos - lightPos;
     float currentDepth = length(fragToLight);
@@ -184,7 +181,13 @@ float CalculatePointShadow(int idx, vec3 fragPos, vec3 lightPos, vec3 normal, ve
     float viewDistance = length(FragPos);
     float diskRadius = (1.0 + (viewDistance / farPlane)) / 25.0;
     for (int i = 0; i < samples; ++i) {
-        float closestDepth = texture(shadowCube, fragToLight + gridSamplingDisk[i] * diskRadius).r;
+        vec3 sampleDir = fragToLight + gridSamplingDisk[i] * diskRadius;
+        // Sample the correct uniform cubemap directly (see note above).
+        float closestDepth;
+        if (idx == 0)
+            closestDepth = texture(uPointShadowMap0, sampleDir).r;
+        else
+            closestDepth = texture(uPointShadowMap1, sampleDir).r;
         closestDepth *= farPlane;
         if (currentDepth - bias > closestDepth)
             shadow += 1.0;
