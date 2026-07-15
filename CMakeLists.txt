@@ -113,6 +113,11 @@ set(CORE_LIB_SOURCES
     src/UI.cpp
 )
 
+if(RPGMAKER3D_ENABLE_RMLUI)
+    # WICHTIG: muss vor set(CORE_SOURCES ...) stehen (Listen sind Snapshots)
+    list(APPEND CORE_LIB_SOURCES src/RmlUiSystem.cpp)
+endif()
+
 set(CORE_SOURCES
     src/main.cpp
     ${CORE_LIB_SOURCES}
@@ -124,7 +129,6 @@ set(THIRDPARTY_SOURCES
 )
 
 if(RPGMAKER3D_ENABLE_RMLUI)
-    list(APPEND CORE_LIB_SOURCES src/RmlUiSystem.cpp)
     list(APPEND THIRDPARTY_SOURCES third_party/rmlui_glue/RmlUiRenderGL3.cpp)
 endif()
 
