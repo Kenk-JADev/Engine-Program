@@ -87,19 +87,25 @@ siehe Hinweis oben bzgl. /MD vs. /MT).
 ## Status / Roadmap
 
 Fertig (PoC):
-- [x] Native Qt-Fenster mit Docks (Projekt, Eigenschaften, Konsole), Menues, Toolbar
+- [x] Native Qt-Fenster mit Docks (Hierarchie, Eigenschaften, Konsole), Menues, Toolbar
 - [x] Engine embedded in QOpenGLWidget, eigener GL-Kontext, glad via Qt
 - [x] QTimer-Game-Loop, FPS in Statuszeile, Playtest-Toggle (`Engine::SetPlaying`)
 - [x] Eingaben (Tastatur/Maus/Wheel) vom Qt-Widget in `rpg::Input`
 - [x] Ingame-UI (RmlUi) rendert weiter im Game-View
 
+Fertig (Slice 2 – benutzbare Basisfunktionen):
+- [x] Datei-Menue komplett: Projekt neu/oeffnen/speichern, Szene laden/speichern (QFileDialog)
+- [x] Erstellen: Wuerfel/Ebene/Licht (undo-bar via `CreateEntityCommand`)
+- [x] Undo/Redo/Loeschen ueber die `CommandHistory` der Engine (Kommando-Name im Menue-Text)
+- [x] Szenen-Hierarchie-Dock (QTreeWidget, live, Live-Selektion)
+- [x] Eigenschaften-Dock: Name (`Scene::SetEntityName`) + Transform editierbar, 2-Hz-Sync
+
 Offen (Portierung aus `Editor.cpp`):
 - [ ] Map-Editor-Panel + Tileset-Auswahl als Qt-Docks
-- [ ] Szenen-Hierarchie (QTreeView an `Scene`-Entities)
+- [ ] 3D-Klick-Selektion im Game-View (Raycast) + Auswahl-Highlight im Renderer
 - [ ] Database-Editor (QTableView-Modelle)
-- [ ] Projekt-Laden/Speichern-Dialoge (QFileDialog)
-- [ ] Undo/Redo (CommandHistory an QUndoStack spiegeln)
 - [ ] RmlUi-Input-Bruecke im Qt-Modus (RmlUi bekommt aktuell keine Events)
+- [ ] Undo/Redo evtl. zusaetzlich an QUndoStack spiegeln (Command-Property-Edits)
 
 ## Lizenz-Hinweis
 
