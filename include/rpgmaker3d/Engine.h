@@ -20,6 +20,7 @@ class Framebuffer;
 class CommandHistory;
 class RubyVM;
 class ScriptManager;
+class RmlUiSystem;
 
 class MeshFactory;
 
@@ -112,6 +113,7 @@ private:
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
+    std::unique_ptr<RmlUiSystem> mRmlUi;   // RmlUi UI-System (PoC: ImGui-Nachfolger)
     std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 

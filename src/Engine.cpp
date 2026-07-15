@@ -9,6 +9,9 @@
 #include "rpgmaker3d/ResourceManager.h"
 #include "rpgmaker3d/Editor.h"
 #include "rpgmaker3d/Camera.h"
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+#include "rpgmaker3d/RmlUiSystem.h"
+#endif
 #include "rpgmaker3d/Model.h"
 #include "rpgmaker3d/Framebuffer.h"
 #include "rpgmaker3d/Logger.h"
@@ -83,6 +86,16 @@ bool Engine::Initialize(const std::string& title, int width, int height, bool ed
         RPG_LOG_ERROR("Failed to create scene framebuffer");
         return false;
     }
+
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    // RmlUi UI-System (PoC: laeuft parallel zu ImGui, F9 toggelt Sichtbarkeit,
+    // getrennte Kontexte "editor" und "game" fuer Editor- bzw. Playtest-UI)
+    mRmlUi = std::make_unique<RmlUiSystem>();
+    if (!mRmlUi->Initialize(this)) {
+        RPG_LOG_WARN("RmlUi initialization failed - continuing without RmlUi");
+        mRmlUi.reset();
+    }
+#endif
 
     // Core Systeme
     mInput = std::make_unique<Input>();
@@ -341,6 +354,9 @@ void Engine::Shutdown() {
     }
 #endif
     mGridMesh.Delete();
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (mRmlUi) { mRmlUi->Shutdown(); mRmlUi.reset(); }
+#endif
     if (mResources) mResources.reset();
     if (mMap) mMap.reset();
     if (mProject) mProject.reset();
@@ -459,6 +475,9 @@ void Engine::Update(float dt) {
     while (SDL_PollEvent(&e)) {
 #ifdef RPGMAKER3D_BUILD_EDITOR
         if (mImGuiInitialized) ImGui_ImplSDL2_ProcessEvent(&e);
+#endif
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+        if (mRmlUi) mRmlUi->ProcessEvent(e);
 #endif
         switch (e.type) {
             case SDL_QUIT:
@@ -633,6 +652,10 @@ void Engine::Update(float dt) {
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode
     GameUI::Get().Update(dt);
 
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (mRmlUi) mRmlUi->Update(dt);
+#endif
+
     // Push scene LightComponents into the global lighting system (point lights)
     // so floors/objects actually receive per-object light in the editor & play mode.
     {
@@ -733,6 +756,11 @@ void Engine::Render() {
             }
         }
     }
+#endif
+
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    // RmlUi UI zuletzt zeichnen (overlayt 3D-Scene + ImGui)
+    if (mRmlUi) mRmlUi->Render();
 #endif
 }
 
