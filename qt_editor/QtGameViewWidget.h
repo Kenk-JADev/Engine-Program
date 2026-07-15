@@ -32,6 +32,9 @@ signals:
     // Tile-Modus (Paint/Erase): Linksklick oder Drag traf den Boden (y=0)
     // an Weltposition (wx, wz). Umrechnung in Map-Kacheln macht das Fenster.
     void groundClicked(float wx, float wz);
+    // Rechtsklick OHNE Ziehen auf den Boden (Drag bleibt Kamera-Orbit):
+    // Kontextmenue an (globalX, globalY), Bodentreffer bei (wx, wz).
+    void groundContextMenu(int globalX, int globalY, float wx, float wz);
 
 protected:
     void initializeGL() override;
@@ -53,6 +56,7 @@ private:
     bool mGladLoaded = false;
     bool mEngineReady = false;
     ViewMode mViewMode = ViewMode::Select;
+    QPointF mRightPressPos{-1.0, -1.0}; // fuer Klick-vs-Drag-Erkennung (Rechts)
 };
 
 } // namespace qt_editor

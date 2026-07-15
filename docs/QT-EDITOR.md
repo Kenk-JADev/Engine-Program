@@ -103,7 +103,7 @@ Fertig (Slice 2 – benutzbare Basisfunktionen):
 Offen (Portierung aus `Editor.cpp`):
 - [x] Map-Malen: Tileset-Dock (Palette, Layer, Werkzeuge Auswahl/Malen/Radierer),
       Klick+Drag malt undo-bar (SetTileCommand) - getabbt mit Hierarchie-Dock
-- [ ] Map-Kontextmenue im 3D-View (Rechtsklick: Player-Start/Event/Boden entfernen)
+- [x] Map-Kontextmenue im 3D-View (Rechtsklick: Player-Start/Event/NPC/Boden entfernen)
 - [x] 3D-Klick-Selektion im Game-View (Raycast) + Auswahl-Highlight im Renderer
 - [ ] Database-Editor (QTableView-Modelle)
 - [ ] RmlUi-Input-Bruecke im Qt-Modus (RmlUi bekommt aktuell keine Events)

@@ -75,6 +75,9 @@ private:
     void loadTilesetForCurrentProject(); // Editor::LoadTilesetForMap-Aequivalent
     void createSimpleEntity(int kind); // 0=Cube 1=Plane 2=Light
     void onGroundClicked(float wx, float wz); // Tile-Malen/Radieren (SetTileCommand)
+    void onGroundContextMenu(int gx, int gy, float wx, float wz); // Rechtsklick-Menue
+    bool worldToTile(float wx, float wz, int& outX, int& outZ) const; // gemeinsame Umrechnung
+    void createEventAt(int x, int z, bool asNPC); // Port von Editor::CreateEventAt
 
     // Selektion & UI-Sync
     void afterProjectChanged();

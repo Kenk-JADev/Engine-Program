@@ -10,6 +10,7 @@
 #include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/ParticleSystem.h" // kompletter Typ fuer GetComponent<ParticleEmitterComponent>
 #include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/CommandHistory.h"
 
@@ -86,6 +87,8 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
     });
     connect(mView, &QtGameViewWidget::groundClicked, this,
             [this](float wx, float wz) { onGroundClicked(wx, wz); });
+    connect(mView, &QtGameViewWidget::groundContextMenu, this,
+            [this](int gx, int gy, float wx, float wz) { onGroundContextMenu(gx, gy, wx, wz); });
 
     // Tileset-Panel -> View-Modus
     connect(mTilesetPanel, &QtTilesetPanel::modeChanged, this, [this]() {
@@ -484,8 +487,20 @@ void QtEditorWindow::loadTilesetForCurrentProject() {
     mTilesetPanel->SetLayers(names);
 }
 
-void QtEditorWindow::onGroundClicked(float wx, float wz) {
+bool QtEditorWindow::worldToTile(float wx, float wz, int& outX, int& outZ) const {
     // Welt -> Kachel (wie Editor::HandleSceneViewPicking)
+    auto& map = mEngine->GetMap();
+    const float halfW = map.GetWidth() * 0.5f;
+    const float halfH = map.GetHeight() * 0.5f;
+    const int x = static_cast<int>(std::floor(wx + halfW));
+    const int z = static_cast<int>(std::floor(wz + halfH));
+    if (x < 0 || x >= map.GetWidth() || z < 0 || z >= map.GetHeight()) return false;
+    outX = x;
+    outZ = z;
+    return true;
+}
+
+void QtEditorWindow::onGroundClicked(float wx, float wz) {
     if (!mView->IsEngineReady() || !mTilesetPanel) return;
     auto& map = mEngine->GetMap();
     if (map.GetLayers().empty()) return;
@@ -493,11 +508,8 @@ void QtEditorWindow::onGroundClicked(float wx, float wz) {
     const int layer = mTilesetPanel->SelectedLayer();
     if (layer < 0 || layer >= static_cast<int>(map.GetLayers().size())) return;
 
-    const float halfW = map.GetWidth() * 0.5f;
-    const float halfH = map.GetHeight() * 0.5f;
-    const int x = static_cast<int>(std::floor(wx + halfW));
-    const int z = static_cast<int>(std::floor(wz + halfH));
-    if (x < 0 || x >= map.GetWidth() || z < 0 || z >= map.GetHeight()) return;
+    int x = 0, z = 0;
+    if (!worldToTile(wx, wz, x, z)) return;
 
     const bool erase = (mTilesetPanel->CurrentMode() == ViewMode::Erase);
     const int newTile = erase ? -1 : mTilesetPanel->SelectedTileId();
@@ -506,6 +518,69 @@ void QtEditorWindow::onGroundClicked(float wx, float wz) {
 
     auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, newTile);
     mEngine->GetCommandHistory().Execute(*mEngine, cmd); // undo-bar
+}
+
+void QtEditorWindow::onGroundContextMenu(int gx, int gy, float wx, float wz) {
+    // Rechtsklick-Menue auf einer Bodenkachel (Port des ImGui-Kontextmenues):
+    // Player-Start setzen, Event/NPC erstellen, Boden entfernen
+    if (!mView->IsEngineReady()) return;
+    int x = 0, z = 0;
+    if (!worldToTile(wx, wz, x, z)) return;
+
+    QMenu menu(this);
+    QAction* aStart = menu.addAction(QString("Player-Start hier setzen (%1,%2)").arg(x).arg(z));
+    QAction* aEvent = menu.addAction("Event erstellen");
+    QAction* aNPC = menu.addAction("NPC erstellen");
+    menu.addSeparator();
+    QAction* aErase = menu.addAction("Boden entfernen");
+
+    QAction* chosen = menu.exec(QPoint(gx, gy));
+    if (chosen == aStart) {
+        auto& sys = rpg::Database::Get().System();
+        sys.startX = x;
+        sys.startY = z;
+        log(QString("Player-Start gesetzt: Map %1 X=%2 Y=%3")
+            .arg(sys.startMapId).arg(x).arg(z));
+    } else if (chosen == aEvent) {
+        createEventAt(x, z, false);
+    } else if (chosen == aNPC) {
+        createEventAt(x, z, true);
+    } else if (chosen == aErase) {
+        auto& map = mEngine->GetMap();
+        const int layer = mTilesetPanel->SelectedLayer();
+        if (layer >= 0 && layer < static_cast<int>(map.GetLayers().size())) {
+            const int oldTile = map.GetTile(layer, x, z);
+            if (oldTile != -1) {
+                auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, -1);
+                mEngine->GetCommandHistory().Execute(*mEngine, cmd);
+            }
+        }
+    }
+}
+
+void QtEditorWindow::createEventAt(int x, int z, bool asNPC) {
+    // Port von Editor::CreateEventAt
+    auto& eventSystem = rpg::EventSystem::Get();
+    auto& events = eventSystem.GetEvents();
+    rpg::MapEvent newEvent;
+    newEvent.id = events.empty() ? 1 : events.back().id + 1;
+    newEvent.name = asNPC ? ("NPC_" + std::to_string(newEvent.id))
+                          : ("EV" + std::to_string(newEvent.id));
+    newEvent.x = x;
+    newEvent.y = z;
+    newEvent.z = 0;
+    rpg::EventPage page;
+    page.id = 1;
+    page.trigger = rpg::EventTrigger::ActionButton;
+    page.graphicName = asNPC ? "npc" : "";
+    page.graphicIndex = 0;
+    newEvent.pages.push_back(page);
+    newEvent.currentPage = 0;
+    newEvent.enabled = true;
+    eventSystem.AddEvent(newEvent);
+    log(QString("%1 erstellt bei (%2,%3) Name=%4")
+        .arg(asNPC ? "NPC" : "Event").arg(x).arg(z)
+        .arg(QString::fromStdString(newEvent.name)));
 }
 
 // ---------------------------------------------------------------------------

@@ -16,6 +16,8 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 
+#include <cmath>
+
 namespace qt_editor {
 
 // glad-Loader ueber den aktuellen Qt-Kontext.
@@ -103,6 +105,10 @@ void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
     if (b != rpg::MouseButton::Count)
         mEngine->GetInput().OnMouseChanged(b, true);
 
+    // Rechtsklick: Startposition merken (Klick-vs-Drag fuer Kontextmenue)
+    if (event->button() == Qt::RightButton)
+        mRightPressPos = event->position();
+
     // Linksklick (nicht waehrend Playtest): je nach Modus Entity-Pick
     // (Select) oder Boden-Treffer fuer Tile-Malen/Radieren (Paint/Erase).
     if (b == rpg::MouseButton::Left && !mEngine->IsPlaying()) {
@@ -142,6 +148,27 @@ void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {
     else if (event->button() == Qt::MiddleButton) b = rpg::MouseButton::Middle;
     if (b != rpg::MouseButton::Count)
         mEngine->GetInput().OnMouseChanged(b, false);
+
+    // Rechts-Klick (kein Drag, < 6px) auf den Boden -> Kontextmenue-Signal.
+    // Rechts-DRAG bleibt Kamera-Orbit (unveraendert in Engine::Update).
+    if (event->button() == Qt::RightButton && !mEngine->IsPlaying() &&
+        mRightPressPos.x() >= 0.0) {
+        const QPointF d = event->position() - mRightPressPos;
+        mRightPressPos = QPointF(-1.0, -1.0);
+        if (std::abs(d.x()) < 6.0 && std::abs(d.y()) < 6.0) {
+            rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
+            const QPointF p = event->position();
+            const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
+                rpg::Vec2(static_cast<float>(p.x()), static_cast<float>(p.y())),
+                rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
+            const rpg::RaycastHit plane = rpg::Raycast::IntersectPlane(ray,
+                rpg::Vec3(0, 1, 0), rpg::Vec3(0, 0, 0));
+            if (plane.hit) {
+                const QPoint g = event->globalPosition().toPoint();
+                emit groundContextMenu(g.x(), g.y(), plane.point.x, plane.point.z);
+            }
+        }
+    }
 }
 
 void QtGameViewWidget::wheelEvent(QWheelEvent* event) {
