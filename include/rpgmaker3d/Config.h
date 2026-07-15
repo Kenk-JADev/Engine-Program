@@ -4,6 +4,19 @@
 
 #include <string>
 
+// Windows-Header MUSS im globalen Scope inkludiert werden - NIEMALS innerhalb
+// eines namespace! Ein #include <windows.h> innerhalb von namespace rpg wuerde
+// alle Win32-Deklarationen (HWND, SSIZE_T, DWORD, ...) nach rpg:: verschieben
+// und gleichzeitig die Include-Guards (_WINDOWS_, _BASETSD_H_, ...) setzen.
+// Ein spaeteres #include <windows.h> im globalen Scope waere dann wirkungslos
+// und ::SSIZE_T & Co. waeren unbekannt (hat den MSVC-Build gebrochen).
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace rpg {
 
 struct EngineConfig {
@@ -46,14 +59,6 @@ struct EngineConfig {
 #define RPG_PLATFORM_NAME "Linux"
 #else
 #define RPG_PLATFORM_NAME "Unknown"
-#endif
-#endif
-
-// Windows-spezifische Helpers
-#ifdef _WIN32
-#include <windows.h>
-#ifndef NOMINMAX
-#define NOMINMAX
 #endif
 #endif
 

@@ -10,20 +10,18 @@
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Game.h"
 
-// Fix ssize_t for MSVC mruby build - must be before mruby headers
-// MSVC does not have ssize_t in <cstddef>, define it via intptr_t
+// Fix ssize_t for MSVC mruby build - must be before mruby headers.
+// mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
+// provide anywhere. Define it unconditionally from std::intptr_t (same width
+// as Windows SSIZE_T on both x86 and x64).
+// NOTE: Do NOT try to detect SSIZE_T via _BASETSD_H_ here. If <windows.h> is
+// pulled in inside a namespace (include-order bug), _BASETSD_H_ may be defined
+// while ::SSIZE_T is not - exactly that combination broke the MSVC build.
 #include <cstddef>
 #include <cstdint>
-#include <type_traits>
 #ifdef _WIN32
-// Prefer Windows native SSIZE_T if available, fallback to intptr_t
 #ifndef _SSIZE_T_DEFINED
-  #ifdef _BASETSD_H_
-    typedef SSIZE_T ssize_t;
-  #else
-    // BaseTsd.h may not be included yet or SSIZE_T not defined, use portable definition
-    typedef std::intptr_t ssize_t;
-  #endif
+typedef std::intptr_t ssize_t;
 #define _SSIZE_T_DEFINED
 #endif
 // DO NOT define mrb_int_p / mrb_integer_p here to avoid macro redefinition warnings
