@@ -82,10 +82,14 @@ Fertig:
 - [x] **Syntax-Highlighting** (Ruby + C++ via QSyntaxHighlighter)
 - [x] **RmlUi-Input-Bruecke** im Qt-Modus (Maus/Tastatur/Text, F9, Viewport)
 
+- [x] **Map-Editor**: echte Tileset-Texturen, Pinsel + Rechteck
+- [x] **Event-Editor-Dock**: Events / Seiten / Befehle
+- [x] **Database**: Skills / Weapons / Classes
+- [x] **Code**: Suche, Hot-Reload, Ruby-Fehleranzeige
+
 Offen (spaeter):
-- [ ] Tile-Palette mit echten Tileset-Texturen (OpenGL->QImage)
 - [ ] Gizmo-Transform im Game View
-- [ ] Event-Editor als Qt-Dock
+- [ ] Asset-Browser
 
 ## Legacy
 
