@@ -3,10 +3,15 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Logger.h"
+// ImGui-Editor ist entfernt. GameUI-Overlay war historisch ImGui-basiert;
+// ohne RPGMAKER3D_ENABLE_IMGUI sind Draw()-Pfade No-Ops (RmlUi/Logic bleibt).
+#ifdef RPGMAKER3D_ENABLE_IMGUI
 #include <imgui.h>
+#endif
 #include <algorithm>
 #include <unordered_map>
 #include <filesystem>
+#include <cmath>
 
 namespace rpg {
 
@@ -51,6 +56,7 @@ void MessageWindow::Update(float dt) {
 }
 void MessageWindow::Draw() {
     if (!mVisible) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiIO& io = ImGui::GetIO();
     float w = io.DisplaySize.x * 0.72f;
     float h = 160.0f;
@@ -88,6 +94,10 @@ void MessageWindow::Draw() {
     }
     ImGui::End();
     ImGui::PopStyleColor();
+#else
+    // Ohne ImGui: Fortschritt laeuft ueber AdvanceInput() (Engine-Input E/Enter/Space).
+    (void)mDisplayed;
+#endif
 }
 
 // --- TitleScreen ---
@@ -95,6 +105,7 @@ void TitleScreen::Show() { mVisible = true; }
 void TitleScreen::Update(float dt) { (void)dt; }
 void TitleScreen::Draw() {
     if (!mVisible) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGui::SetNextWindowPos(ImVec2(0,0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
     ImGui::Begin("Title", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
@@ -114,12 +125,16 @@ void TitleScreen::Draw() {
         if (onExit) onExit();
     }
     ImGui::End();
+#else
+    // Title-Overlay ohne ImGui: RmlUi / Playtest uebernimmt UI.
+#endif
 }
 
 // --- PauseMenu ---
 void PauseMenu::Show() { mVisible = true; mSelected=0; }
 void PauseMenu::Draw() {
     if (!mVisible) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGui::Begin("Pause");
     const char* options[] = {"Resume", "Save", "Exit to Title"};
     for (int i=0;i<3;++i) {
@@ -132,6 +147,9 @@ void PauseMenu::Draw() {
         }
     }
     ImGui::End();
+#else
+    (void)mSelected;
+#endif
 }
 
 // --- GameUI ---
@@ -165,6 +183,7 @@ void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>
 
 void GameUI::DrawPlayHud(bool playtest) {
     if (mTitle.IsVisible() || mPause.IsVisible()) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(12, 12));
     ImGui::SetNextWindowBgAlpha(0.55f);
@@ -180,7 +199,6 @@ void GameUI::DrawPlayHud(bool playtest) {
     int hp = 0, maxhp = 0;
     if (!party.Members().empty()) {
         hp = party.Members()[0].hp;
-        // rough max from current if no max stored
         maxhp = std::max(hp, 100);
     }
     ImGui::Text("HP %d  |  Gold %d", hp, party.GetGold());
@@ -193,6 +211,10 @@ void GameUI::DrawPlayHud(bool playtest) {
     }
     ImGui::End();
     (void)io;
+    (void)maxhp;
+#else
+    (void)playtest;
+#endif
 }
 
 // === Screen Text System ===
@@ -307,6 +329,7 @@ void GameUI::TweenScreenText(int id, Vec2 targetPos, float targetScale, float du
 
 void GameUI::DrawScreenTexts() {
     if (mScreenTexts.empty()) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiIO& io = ImGui::GetIO();
 
     for (const auto& st : mScreenTexts) {
@@ -345,6 +368,7 @@ void GameUI::DrawScreenTexts() {
         ImGui::End();
         ImGui::PopStyleColor(2);
     }
+#endif
 }
 
 // === Picture / Screen Sprite System ===
@@ -634,6 +658,7 @@ void GameUI::UpdatePictures(float dt) {
 
 void GameUI::DrawPictures() {
     if (mPictures.empty()) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiIO& io = ImGui::GetIO();
     ImDrawList* fg = ImGui::GetForegroundDrawList();
 
@@ -655,7 +680,6 @@ void GameUI::DrawPictures() {
         }
 
         if (std::abs(pic.rotation) < 0.01f) {
-            // No rotation - fast path with window
             std::string windowName = "##Picture_" + std::to_string(pic.id);
             ImGui::SetNextWindowPos(center, ImGuiCond_Always, pic.centered ? ImVec2(0.5f, 0.5f) : ImVec2(0,0));
             ImGui::SetNextWindowBgAlpha(0.0f);
@@ -669,13 +693,11 @@ void GameUI::DrawPictures() {
             ImGui::End();
             ImGui::PopStyleVar();
         } else {
-            // Rotation - use AddImageQuad with rotated corners
             float rad = pic.rotation * 3.14159265f / 180.0f;
             float c = std::cos(rad);
             float s = std::sin(rad);
             ImVec2 half(size.x * 0.5f, size.y * 0.5f);
             ImVec2 corners[4];
-            // Local corners
             ImVec2 local[4] = {
                 ImVec2(-half.x, -half.y),
                 ImVec2(half.x, -half.y),
@@ -695,6 +717,7 @@ void GameUI::DrawPictures() {
                 ImGui::GetColorU32(ImVec4(1,1,1,alpha)));
         }
     }
+#endif
 }
 
 } // namespace rpg

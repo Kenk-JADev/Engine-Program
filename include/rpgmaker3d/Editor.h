@@ -1,4 +1,7 @@
 #pragma once
+// LEGACY: Dear-ImGui-Editor – NICHT MEHR IM BUILD.
+// Der aktive Editor ist qt_editor/ (Qt). Siehe docs/QT-EDITOR.md.
+// Diese Datei bleibt nur als Referenz / fuer optionale Alt-Branches.
 
 #include <memory>
 #include <string>

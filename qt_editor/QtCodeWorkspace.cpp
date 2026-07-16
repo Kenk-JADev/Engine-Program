@@ -1,0 +1,731 @@
+#include "QtCodeWorkspace.h"
+
+#include "rpgmaker3d/Engine.h"
+#include "rpgmaker3d/ScriptManager.h"
+#include "rpgmaker3d/RubyVM.h"
+#include "rpgmaker3d/Project.h"
+
+#include <QHBoxLayout>
+#include <QVBoxLayout>
+#include <QListWidget>
+#include <QPlainTextEdit>
+#include <QLabel>
+#include <QComboBox>
+#include <QSplitter>
+#include <QToolBar>
+#include <QAction>
+#include <QMessageBox>
+#include <QInputDialog>
+#include <QLineEdit>
+#include <QFileDialog>
+#include <QFont>
+#include <QFontDatabase>
+#include <QProcess>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QFileInfo>
+#include <QDir>
+
+namespace qt_editor {
+
+namespace {
+
+const char* kRubySnippets[][2] = {
+    {"Scene_Base Stub",
+     "class Scene_MyScene < Scene_Base\n"
+     "  def start\n"
+     "    super\n"
+     "    # setup\n"
+     "  end\n"
+     "  def update\n"
+     "    # per-frame\n"
+     "  end\n"
+     "end\n"},
+    {"Screen Text HUD",
+     "UI.show_screen_text(\"Hello\", 0.5, 0.1, 1.0, 1.0, 1.0, 0.0)\n"},
+    {"Input Check",
+     "if Input.key_down?(:return)\n"
+     "  # Enter gedrueckt\n"
+     "end\n"},
+    {"Scene Switch",
+     "SceneManager.goto(Scene_Map)\n"},
+    {"Audio BGM",
+     "Audio.bgm_play(\"town.ogg\")\n"},
+};
+
+const char* kCppSnippets[][2] = {
+    {"Create Entity",
+     "// C++ Engine API\n"
+     "auto& scene = engine.GetScene();\n"
+     "rpg::EntityID id = scene.CreateEntity(\"MyObject\");\n"
+     "auto* t = scene.AddComponent<rpg::TransformComponent>(id);\n"
+     "t->transform.position = rpg::Vec3(0, 1, 0);\n"},
+    {"Load Project",
+     "engine.GetProject().Load(\"./MyGame\");\n"
+     "engine.LoadScene(engine.GetProject().GetProjectPath() + \"/scene.json\");\n"},
+    {"Playtest",
+     "engine.SetPlaying(true);  // startet Game + Ruby-Scripts\n"
+     "// ...\n"
+     "engine.SetPlaying(false); // restore editor scene\n"},
+    {"Script Execute",
+     "engine.GetScriptManager().ExecuteAllScripts();\n"
+     "engine.GetRubyVM().ExecuteString(\"puts 'hello from C++'\");\n"},
+};
+
+} // namespace
+
+QtCodeWorkspace::QtCodeWorkspace(rpg::Engine* engine, QWidget* parent)
+    : QWidget(parent), mEngine(engine) {
+    buildUi();
+    ensureCppDocs();
+    refresh();
+}
+
+void QtCodeWorkspace::buildUi() {
+    auto* root = new QVBoxLayout(this);
+    root->setContentsMargins(0, 0, 0, 0);
+    root->setSpacing(0);
+
+    auto* tb = new QToolBar(this);
+    tb->setMovable(false);
+
+    mLangCombo = new QComboBox(tb);
+    mLangCombo->addItem("Ruby (Spiellogik)");
+    mLangCombo->addItem("C++ (Engine API)");
+    connect(mLangCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &QtCodeWorkspace::setLanguage);
+    tb->addWidget(new QLabel("  Sprache: ", tb));
+    tb->addWidget(mLangCombo);
+    tb->addSeparator();
+
+    mNewAction = tb->addAction("Neu", this, &QtCodeWorkspace::onNewRubyScript);
+    mSaveAction = tb->addAction("Speichern", this, [this]() { saveCurrent(); });
+    tb->addAction("Alle speichern", this, [this]() { saveAll(); });
+    mDeleteAction = tb->addAction("Loeschen", this, &QtCodeWorkspace::onDeleteRubyScript);
+    tb->addAction("Neu laden", this, &QtCodeWorkspace::onReloadFromDisk);
+    tb->addSeparator();
+    mRunAction = tb->addAction("Ausfuehren", this, &QtCodeWorkspace::runCurrent);
+    tb->addAction("Alle ausfuehren", this, &QtCodeWorkspace::runAll);
+    tb->addSeparator();
+    tb->addAction("Extern oeffnen", this, &QtCodeWorkspace::onOpenExternal);
+
+    tb->addSeparator();
+    tb->addWidget(new QLabel(" Snippet: ", tb));
+    mSnippetCombo = new QComboBox(tb);
+    mSnippetCombo->setMinimumWidth(160);
+    connect(mSnippetCombo, QOverload<int>::of(&QComboBox::activated),
+            this, &QtCodeWorkspace::onInsertSnippet);
+    tb->addWidget(mSnippetCombo);
+
+    root->addWidget(tb);
+
+    auto* split = new QSplitter(Qt::Horizontal, this);
+
+    mFileList = new QListWidget(split);
+    mFileList->setMinimumWidth(200);
+    mFileList->setMaximumWidth(360);
+    connect(mFileList, &QListWidget::currentRowChanged, this, [this](int) {
+        onFileSelected();
+    });
+
+    auto* right = new QWidget(split);
+    auto* rightLay = new QVBoxLayout(right);
+    rightLay->setContentsMargins(4, 4, 4, 4);
+
+    auto* meta = new QHBoxLayout();
+    mPathLabel = new QLabel("(keine Datei)", right);
+    mPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    mDirtyLabel = new QLabel(right);
+    mDirtyLabel->setStyleSheet("color: #e0a000; font-weight: bold;");
+    meta->addWidget(mPathLabel, 1);
+    meta->addWidget(mDirtyLabel, 0);
+    rightLay->addLayout(meta);
+
+    mEditor = new QPlainTextEdit(right);
+    mEditor->setLineWrapMode(QPlainTextEdit::NoWrap);
+    mEditor->setTabStopDistance(4 * mEditor->fontMetrics().horizontalAdvance(' '));
+    applyEditorFont();
+    connect(mEditor, &QPlainTextEdit::textChanged, this, &QtCodeWorkspace::onTextChanged);
+    rightLay->addWidget(mEditor, 1);
+
+    split->addWidget(mFileList);
+    split->addWidget(right);
+    split->setStretchFactor(0, 0);
+    split->setStretchFactor(1, 1);
+    split->setSizes({240, 800});
+
+    root->addWidget(split, 1);
+
+    // Snippets initial (Ruby)
+    mSnippetCombo->clear();
+    mSnippetCombo->addItem("(Snippet einfuegen...)");
+    for (auto& s : kRubySnippets) mSnippetCombo->addItem(s[0]);
+}
+
+void QtCodeWorkspace::applyEditorFont() {
+    QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    mono.setPointSize(11);
+    mono.setStyleHint(QFont::Monospace);
+    mEditor->setFont(mono);
+    mFileList->setFont(mono);
+}
+
+void QtCodeWorkspace::ensureCppDocs() {
+    if (!mCppDocs.empty()) return;
+
+    mCppDocs.push_back({
+        "Engine.h – Haupt-API",
+        "include/rpgmaker3d/Engine.h",
+        R"CPP(// RPG Maker 3D – Engine C++ API (Referenz)
+// Diese Dateien liegen im Repo unter include/rpgmaker3d/
+// Der Qt-Editor oeffnet sie read-only als Schnellreferenz.
+// Zum echten C++-Entwickeln: IDE (VS/CLion) + CMake.
+
+#pragma once
+// Kernklasse: rpg::Engine
+
+namespace rpg {
+
+class Engine {
+public:
+    // Lebenszyklus
+    bool Initialize(const std::string& title, int w, int h, bool editorMode = true);
+    bool InitializeEmbedded(int w, int h, bool editorMode = true); // Qt/QOpenGLWidget
+    void Shutdown();
+    void Run();                 // SDL-Hauptschleife (Player)
+    void Update(float dt);      // Host-getriebener Tick (Qt)
+    void Render();              // Host-getriebener Frame (Qt)
+
+    // Subsysteme
+    Window&          GetWindow();
+    Renderer&        GetRenderer();
+    Input&           GetInput();
+    AudioManager&    GetAudio();
+    Scene&           GetScene();
+    Project&         GetProject();
+    Map&             GetMap();
+    ResourceManager& GetResources();
+    CommandHistory&  GetCommandHistory();
+    RubyVM&          GetRubyVM();
+    ScriptManager&   GetScriptManager();
+
+    // Playtest
+    void SetPlaying(bool playing);
+    bool IsPlaying() const;
+
+    // Szene I/O
+    void SaveScene(const std::string& path) const;
+    bool LoadScene(const std::string& path);
+
+    // Editor-Selektion (Qt-Host)
+    void SetSelectedEntity(int id);
+    int  GetSelectedEntity() const;
+};
+
+} // namespace rpg
+)CPP"
+    });
+
+    mCppDocs.push_back({
+        "Scene.h – Entities / Komponenten",
+        "include/rpgmaker3d/Scene.h",
+        R"CPP(// rpg::Scene – Entity-Component Container
+
+namespace rpg {
+
+// Wichtige Komponenten (Types.h / Scene.h):
+//   TransformComponent       position/rotation/scale
+//   ModelRendererComponent   shared_ptr<Model>
+//   MaterialComponent        Material (diffuse, metallic, ...)
+//   LightComponent           color, intensity, range
+//   CameraComponent          fov, near, far, isMain
+//   ScriptComponent          Ruby/C++ script binding
+//   SpriteComponent          Billboard / 2D
+//   ParticleEmitterComponent Partikel
+
+class Scene {
+public:
+    EntityID CreateEntity(const std::string& name = "Entity");
+    void     DestroyEntity(EntityID id);
+    void     Clear();
+
+    const std::vector<EntityID>& GetEntities() const;
+    std::string GetEntityName(EntityID id) const;
+    void        SetEntityName(EntityID id, const std::string& name);
+
+    template<typename T> T* AddComponent(EntityID id);
+    template<typename T> T* GetComponent(EntityID id);
+};
+
+// Beispiel: Wuerfel erzeugen
+//   EntityID id = scene.CreateEntity("Cube");
+//   auto* t = scene.AddComponent<TransformComponent>(id);
+//   t->transform.position = Vec3(0, 0.5f, 0);
+//   auto* m = scene.AddComponent<ModelRendererComponent>(id);
+//   m->model = std::make_shared<Model>();
+//   m->model->AddMesh(MeshFactory::CreateCube(1.0f));
+
+} // namespace rpg
+)CPP"
+    });
+
+    mCppDocs.push_back({
+        "ScriptManager + RubyVM",
+        "include/rpgmaker3d/ScriptManager.h",
+        R"CPP(// Ruby-Scripting aus C++ steuern
+
+namespace rpg {
+
+class ScriptManager {
+public:
+    struct Script {
+        std::string name;     // z.B. "06_Scene_Map.rb"
+        std::string path;     // voller Pfad
+        std::string content;  // Quelltext
+        bool modified = false;
+        bool isCore = false;
+    };
+
+    void LoadProjectScripts(const std::string& projectPath);
+    void CreateDefaultScripts(const std::string& projectPath);
+    const std::vector<std::shared_ptr<Script>>& GetScripts() const;
+
+    std::shared_ptr<Script> CreateScript(const std::string& name);
+    void DeleteScript(const std::string& name);
+    bool SaveScript(std::shared_ptr<Script> script);
+    void SaveAllScripts();
+    void ReloadFromDisk();
+    void ExecuteAllScripts(); // in Load-Order (Dateiname sortiert)
+};
+
+class RubyVM {
+public:
+    bool Initialize(Engine* engine);
+    bool ExecuteString(const std::string& code);
+    bool ExecuteFile(const std::string& path);
+    bool Update(float deltaTime);
+};
+
+// Typischer Playtest-Ablauf (Engine::SetPlaying):
+//   1. Scene-Backup speichern
+//   2. Game::NewGameAt(spawn)
+//   3. EventSystem laden
+//   4. ScriptManager::ExecuteAllScripts()
+//   5. RubyVM::Update(dt) pro Frame
+
+} // namespace rpg
+)CPP"
+    });
+
+    mCppDocs.push_back({
+        "Qt-Editor Einbindung",
+        "qt_editor/QtEditorWindow.cpp",
+        R"CPP(// So ist der Qt-Editor an die Engine angebunden:
+
+// 1) QApplication + GL 3.3 Core Surface (QtMain.cpp)
+// 2) QtEditorWindow besitzt rpg::Engine
+// 3) QtGameViewWidget (QOpenGLWidget):
+//      initializeGL() -> gladLoadGL + Engine::InitializeEmbedded()
+//      paintGL()      -> Engine::Render()
+// 4) QTimer ~60 Hz:
+//      Engine::Update(dt); view->update();
+// 5) QtCodeWorkspace (dieser Panel):
+//      Ruby-Scripts via ScriptManager editieren
+//      C++ API-Referenz read-only
+// 6) Hierarchie/Eigenschaften-Docks fuer Scene-Entities
+
+// Build:
+//   cmake -B build -S . -DRPGMAKER3D_EDITOR_QT=ON -DRPGMAKER3D_BUILD_EDITOR=ON
+//   cmake --build build --config Release
+
+// Hinweis: ImGui-Editor ist entfernt. Einziger Editor-Host ist Qt.
+)CPP"
+    });
+
+    mCppDocs.push_back({
+        "Input / Camera (Runtime)",
+        "include/rpgmaker3d/Input.h",
+        R"CPP(// Input & Kamera aus C++
+
+// Input (rpg::Input):
+//   bool IsKeyDown(Key k) / IsKeyPressed(Key k)
+//   bool IsMouseDown(MouseButton b)
+//   Vec2 GetMousePosition() / GetMouseDelta()
+//   float GetMouseWheel()
+//
+// Im Qt-Editor: QtGameViewWidget mappt Qt-Events -> Input::OnKeyChanged / OnMouse*
+
+// Kamera (Renderer::GetCamera()):
+//   SetPosition / GetPosition
+//   SetRotation / GetRotation   (Euler, Grad)
+//   SetPerspective(fov, aspect, near, far)
+//   GetForward / GetRight / GetUp
+//
+// Playtest-Follow:
+//   engine.SetPlayModeFollowPlayer(true);
+//   -> Kamera folgt Game::Get().Player()
+
+// Raycast-Picking (Qt Linksklick):
+//   Ray ray = Raycast::ScreenPointToRay(cam, mouse, viewSize);
+//   RaycastHit hit = Raycast::PickEntity(ray, scene, 2000.f);
+)CPP"
+    });
+}
+
+void QtCodeWorkspace::setLanguage(int index) {
+    if (mDirty && mLanguage == CodeLanguage::Ruby) {
+        flushCurrentToManager();
+    }
+    mLanguage = (index == 1) ? CodeLanguage::Cpp : CodeLanguage::Ruby;
+    mCurrentIndex = -1;
+    mDirty = false;
+    mEditor->setReadOnly(mLanguage == CodeLanguage::Cpp);
+
+    mNewAction->setEnabled(mLanguage == CodeLanguage::Ruby);
+    mDeleteAction->setEnabled(mLanguage == CodeLanguage::Ruby);
+    mSaveAction->setEnabled(mLanguage == CodeLanguage::Ruby);
+    mRunAction->setEnabled(mLanguage == CodeLanguage::Ruby);
+
+    mSnippetCombo->blockSignals(true);
+    mSnippetCombo->clear();
+    mSnippetCombo->addItem("(Snippet einfuegen...)");
+    if (mLanguage == CodeLanguage::Ruby) {
+        for (auto& s : kRubySnippets) mSnippetCombo->addItem(s[0]);
+    } else {
+        for (auto& s : kCppSnippets) mSnippetCombo->addItem(s[0]);
+    }
+    mSnippetCombo->blockSignals(false);
+
+    refresh();
+}
+
+void QtCodeWorkspace::refresh() {
+    if (mLanguage == CodeLanguage::Ruby) populateRubyList();
+    else populateCppList();
+    updateDirtyLabel();
+}
+
+void QtCodeWorkspace::populateRubyList() {
+    mFileList->blockSignals(true);
+    mFileList->clear();
+    if (!mEngine) {
+        mFileList->blockSignals(false);
+        return;
+    }
+    auto& scripts = mEngine->GetScriptManager().GetScripts();
+    int select = mCurrentIndex;
+    for (size_t i = 0; i < scripts.size(); ++i) {
+        const auto& s = scripts[i];
+        QString label = QString::fromStdString(s->name);
+        if (s->modified) label += " *";
+        if (s->isCore) label += "  [core]";
+        mFileList->addItem(label);
+    }
+    if (scripts.empty()) {
+        mFileList->addItem("(keine Scripts – Projekt oeffnen oder Neu)");
+    }
+    mFileList->blockSignals(false);
+
+    if (select < 0 || select >= mFileList->count()) select = scripts.empty() ? -1 : 0;
+    if (select >= 0) {
+        mFileList->setCurrentRow(select);
+        loadRubyFile(select);
+    } else {
+        mLoading = true;
+        mEditor->setPlainText(
+            "# Ruby Code Workspace\n"
+            "#\n"
+            "# Oeffne ein Projekt (Datei -> Projekt oeffnen)\n"
+            "# oder lege ein neues Script an (Neu).\n"
+            "# Scripts liegen unter <Projekt>/scripts/*.rb\n"
+            "# und werden beim Playtest in Dateiname-Reihenfolge geladen.\n");
+        mLoading = false;
+        mPathLabel->setText("(kein Script)");
+        mCurrentIndex = -1;
+        mDirty = false;
+        updateDirtyLabel();
+    }
+}
+
+void QtCodeWorkspace::populateCppList() {
+    ensureCppDocs();
+    mFileList->blockSignals(true);
+    mFileList->clear();
+    for (const auto& d : mCppDocs) {
+        mFileList->addItem(d.name);
+    }
+    mFileList->blockSignals(false);
+    int select = mCurrentIndex >= 0 ? mCurrentIndex : 0;
+    if (!mCppDocs.empty()) {
+        mFileList->setCurrentRow(select);
+        loadCppReference(select);
+    }
+}
+
+void QtCodeWorkspace::onFileSelected() {
+    const int row = mFileList->currentRow();
+    if (row < 0) return;
+    if (mLanguage == CodeLanguage::Ruby) {
+        if (mDirty) flushCurrentToManager();
+        loadRubyFile(row);
+    } else {
+        loadCppReference(row);
+    }
+}
+
+void QtCodeWorkspace::loadRubyFile(int index) {
+    if (!mEngine) return;
+    auto& scripts = mEngine->GetScriptManager().GetScripts();
+    if (index < 0 || index >= static_cast<int>(scripts.size())) return;
+
+    mLoading = true;
+    mCurrentIndex = index;
+    auto& s = scripts[static_cast<size_t>(index)];
+    mCurrentName = QString::fromStdString(s->name);
+    mCurrentPath = QString::fromStdString(s->path);
+    mCurrentBuffer = QString::fromStdString(s->content);
+    mEditor->setPlainText(mCurrentBuffer);
+    mEditor->setReadOnly(mEngine->IsPlaying()); // waehrend Playtest schreibgeschuetzt
+    mPathLabel->setText(mCurrentPath);
+    mDirty = s->modified;
+    mLoading = false;
+    updateDirtyLabel();
+}
+
+void QtCodeWorkspace::loadCppReference(int index) {
+    ensureCppDocs();
+    if (index < 0 || index >= static_cast<int>(mCppDocs.size())) return;
+    mLoading = true;
+    mCurrentIndex = index;
+    const auto& d = mCppDocs[static_cast<size_t>(index)];
+    mCurrentName = d.name;
+    mCurrentPath = d.pathHint;
+    mCurrentBuffer = d.content;
+    mEditor->setPlainText(d.content);
+    mEditor->setReadOnly(true);
+    mPathLabel->setText(d.pathHint + "  (Referenz, read-only)");
+    mDirty = false;
+    mLoading = false;
+    updateDirtyLabel();
+}
+
+void QtCodeWorkspace::onTextChanged() {
+    if (mLoading) return;
+    if (mLanguage != CodeLanguage::Ruby) return;
+    if (mEngine && mEngine->IsPlaying()) return;
+    mCurrentBuffer = mEditor->toPlainText();
+    mDirty = true;
+    // live in ScriptManager spiegeln
+    flushCurrentToManager();
+    updateDirtyLabel();
+    // Liste-Sternchen
+    if (mCurrentIndex >= 0 && mCurrentIndex < mFileList->count()) {
+        auto* item = mFileList->item(mCurrentIndex);
+        QString label = mCurrentName + " *";
+        if (mEngine) {
+            auto& scripts = mEngine->GetScriptManager().GetScripts();
+            if (mCurrentIndex < static_cast<int>(scripts.size()) && scripts[mCurrentIndex]->isCore)
+                label += "  [core]";
+        }
+        item->setText(label);
+    }
+}
+
+void QtCodeWorkspace::flushCurrentToManager() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
+    auto& scripts = mEngine->GetScriptManager().GetScripts();
+    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
+    auto& s = scripts[static_cast<size_t>(mCurrentIndex)];
+    s->content = mCurrentBuffer.toStdString();
+    s->modified = true;
+}
+
+void QtCodeWorkspace::updateDirtyLabel() {
+    if (mLanguage == CodeLanguage::Cpp) {
+        mDirtyLabel->setText("C++ Referenz");
+        return;
+    }
+    if (mEngine && mEngine->IsPlaying()) {
+        mDirtyLabel->setText("PLAYTEST (read-only)");
+        return;
+    }
+    mDirtyLabel->setText(mDirty ? "geaendert *" : "");
+}
+
+bool QtCodeWorkspace::hasUnsavedChanges() const {
+    if (mLanguage != CodeLanguage::Ruby || !mEngine) return false;
+    for (const auto& s : mEngine->GetScriptManager().GetScripts()) {
+        if (s->modified) return true;
+    }
+    return mDirty;
+}
+
+bool QtCodeWorkspace::saveCurrent() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return false;
+    flushCurrentToManager();
+    auto& sm = mEngine->GetScriptManager();
+    auto& scripts = sm.GetScripts();
+    if (mCurrentIndex >= static_cast<int>(scripts.size())) return false;
+    if (scripts[mCurrentIndex]->isCore) {
+        // core darf trotzdem auf Disk – CreateDefaultScripts schreibt sie auch
+    }
+    const bool ok = sm.SaveScript(scripts[mCurrentIndex]);
+    if (ok) {
+        mDirty = false;
+        updateDirtyLabel();
+        emit logMessage(QString("Script gespeichert: %1").arg(mCurrentName));
+        // Liste ohne Stern
+        if (mCurrentIndex < mFileList->count()) {
+            QString label = mCurrentName;
+            if (scripts[mCurrentIndex]->isCore) label += "  [core]";
+            mFileList->item(mCurrentIndex)->setText(label);
+        }
+        emit scriptsChanged();
+    } else {
+        emit logMessage(QString("FEHLER: Speichern fehlgeschlagen: %1").arg(mCurrentName));
+    }
+    return ok;
+}
+
+bool QtCodeWorkspace::saveAll() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby) return false;
+    flushCurrentToManager();
+    mEngine->GetScriptManager().SaveAllScripts();
+    mDirty = false;
+    updateDirtyLabel();
+    emit logMessage("Alle Scripts gespeichert.");
+    refresh();
+    emit scriptsChanged();
+    return true;
+}
+
+void QtCodeWorkspace::runCurrent() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
+    flushCurrentToManager();
+    auto& scripts = mEngine->GetScriptManager().GetScripts();
+    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
+    const std::string& code = scripts[mCurrentIndex]->content;
+    const bool ok = mEngine->GetRubyVM().ExecuteString(code);
+    emit logMessage(ok
+        ? QString("Ruby ausgefuehrt: %1").arg(mCurrentName)
+        : QString("Ruby-Fehler in: %1 (siehe engine.log)").arg(mCurrentName));
+}
+
+void QtCodeWorkspace::runAll() {
+    if (!mEngine) return;
+    if (mLanguage == CodeLanguage::Ruby) flushCurrentToManager();
+    mEngine->GetScriptManager().ExecuteAllScripts();
+    emit logMessage("Alle Ruby-Scripts ausgefuehrt (Load-Order).");
+}
+
+void QtCodeWorkspace::onNewRubyScript() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby) return;
+    if (mEngine->GetProject().GetProjectPath().empty()) {
+        QMessageBox::information(this, "Neues Script",
+            "Bitte zuerst ein Projekt anlegen oder oeffnen.");
+        return;
+    }
+    bool ok = false;
+    QString name = QInputDialog::getText(this, "Neues Ruby-Script",
+        "Dateiname:", QLineEdit::Normal, "custom_logic.rb", &ok);
+    if (!ok || name.trimmed().isEmpty()) return;
+    name = name.trimmed();
+    if (!name.endsWith(".rb")) name += ".rb";
+    auto script = mEngine->GetScriptManager().CreateScript(name.toStdString());
+    if (!script) {
+        QMessageBox::warning(this, "Neues Script", "Konnte Script nicht anlegen.");
+        return;
+    }
+    emit logMessage("Script angelegt: " + name);
+    mCurrentIndex = static_cast<int>(mEngine->GetScriptManager().GetScripts().size()) - 1;
+    refresh();
+    emit scriptsChanged();
+}
+
+void QtCodeWorkspace::onDeleteRubyScript() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
+    auto& scripts = mEngine->GetScriptManager().GetScripts();
+    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
+    if (scripts[mCurrentIndex]->isCore) {
+        QMessageBox::information(this, "Loeschen", "Core-Scripts koennen nicht geloescht werden.");
+        return;
+    }
+    const QString name = QString::fromStdString(scripts[mCurrentIndex]->name);
+    if (QMessageBox::question(this, "Script loeschen",
+            QString("\"%1\" wirklich loeschen?").arg(name)) != QMessageBox::Yes) {
+        return;
+    }
+    mEngine->GetScriptManager().DeleteScript(scripts[mCurrentIndex]->name);
+    mCurrentIndex = -1;
+    mDirty = false;
+    emit logMessage("Script geloescht: " + name);
+    refresh();
+    emit scriptsChanged();
+}
+
+void QtCodeWorkspace::onReloadFromDisk() {
+    if (!mEngine) return;
+    if (hasUnsavedChanges()) {
+        const auto r = QMessageBox::question(this, "Neu laden",
+            "Ungespeicherte Aenderungen verwerfen und von Disk laden?",
+            QMessageBox::Yes | QMessageBox::No);
+        if (r != QMessageBox::Yes) return;
+    }
+    mEngine->GetScriptManager().ReloadFromDisk();
+    mDirty = false;
+    mCurrentIndex = -1;
+    emit logMessage("Scripts von Disk neu geladen.");
+    refresh();
+    emit scriptsChanged();
+}
+
+void QtCodeWorkspace::onOpenExternal() {
+    if (mCurrentPath.isEmpty() || mCurrentPath.startsWith("include/") ||
+        mCurrentPath.startsWith("qt_editor/")) {
+        // C++ Referenz: versuche Repo-Pfad relativ zum CWD
+        if (mLanguage == CodeLanguage::Cpp && mCurrentIndex >= 0 &&
+            mCurrentIndex < static_cast<int>(mCppDocs.size())) {
+            const QString hint = mCppDocs[static_cast<size_t>(mCurrentIndex)].pathHint;
+            if (QFileInfo::exists(hint)) {
+                QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(hint).absoluteFilePath()));
+                emit logMessage("Extern geoeffnet: " + hint);
+                return;
+            }
+        }
+        emit logMessage("Keine Datei zum Oeffnen (Referenz ist eingebettet).");
+        return;
+    }
+    if (!QFileInfo::exists(mCurrentPath)) {
+        emit logMessage("Datei existiert nicht: " + mCurrentPath);
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(mCurrentPath).absoluteFilePath()));
+    emit logMessage("Externer Editor: " + mCurrentPath);
+}
+
+void QtCodeWorkspace::onInsertSnippet(int index) {
+    if (index <= 0) return;
+    const int si = index - 1;
+    QString text;
+    if (mLanguage == CodeLanguage::Ruby) {
+        const int n = static_cast<int>(sizeof(kRubySnippets) / sizeof(kRubySnippets[0]));
+        if (si < 0 || si >= n) return;
+        text = QString::fromUtf8(kRubySnippets[si][1]);
+    } else {
+        const int n = static_cast<int>(sizeof(kCppSnippets) / sizeof(kCppSnippets[0]));
+        if (si < 0 || si >= n) return;
+        text = QString::fromUtf8(kCppSnippets[si][1]);
+        // C++ ist read-only – Snippet in Zwischenablage? Stattdessen temporaer einfuegbar machen
+        mEditor->setReadOnly(false);
+        mEditor->insertPlainText(text);
+        mEditor->setReadOnly(true);
+        mSnippetCombo->setCurrentIndex(0);
+        emit logMessage("C++ Snippet eingefuegt (Referenz-Ansicht, nicht speicherbar).");
+        return;
+    }
+    if (mEditor->isReadOnly()) return;
+    mEditor->insertPlainText(text);
+    mSnippetCombo->setCurrentIndex(0);
+}
+
+} // namespace qt_editor

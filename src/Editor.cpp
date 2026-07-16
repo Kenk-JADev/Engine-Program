@@ -1,3 +1,4 @@
+// LEGACY: ImGui-Editor – nicht mehr im CMake-Build (Qt-Editor ist Standard).
 #include <algorithm>
 #include <cmath>
 #include <functional>

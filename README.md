@@ -6,20 +6,24 @@ Eine modulare 3D-Game-Engine im Stil von RPG Maker, aber mit modernem Renderer u
 
 - **Low-Spec-freundlich**: OpenGL 3.3, instanzierbares Rendering, optionale Low-Poly-Modi
 - **Ruby-Scripting**: Eingebettete `mruby`-VM für Spiellogik, Events, Kampfsysteme
-- **Integrierter Editor**: Map-Editor, Tileset-Editor, Script-Editor, Asset-Manager (Dear ImGui)
+- **Qt-Editor**: Native Fenster, Game View, **Code Workspace (Ruby + C++)**
 - **Asset-Support**: PNG-Tilesets, OBJ/GLTF-Modelle, OGG/MP3/WAV-Audio, Shader
+
+> **Hinweis:** Der alte Dear-ImGui-Editor ist **entfernt**. Einziger Editor-Host ist Qt
+> (`docs/QT-EDITOR.md`). Der Tab **Code** ersetzt den früheren Game-Scene-/Script-Fokus
+> und ist für Ruby-Spiellogik sowie C++-Engine-API gedacht.
 
 ## Architektur
 
 ```
 ┌─────────────────────────────────────────────┐
-│                 Editor (ImGui)              │
+│   Qt Editor (Game View + Code Ruby/C++)     │
 ├─────────────────────────────────────────────┤
 │              Scripting (mruby)              │
 ├─────────────────────────────────────────────┤
 │  Scene Graph  │  Renderer  │  Audio  │ ECS  │
 ├─────────────────────────────────────────────┤
-│     SDL2     │     OpenGL 3.3     │ OpenAL  │
+│  SDL2 (Player) / Qt GL (Editor) │ OpenGL 3.3│
 └─────────────────────────────────────────────┘
 ```
 
@@ -27,9 +31,10 @@ Eine modulare 3D-Game-Engine im Stil von RPG Maker, aber mit modernem Renderer u
 
 - `src/` – Engine-Quellcode
 - `include/rpgmaker3d/` – Öffentliche Header
+- `qt_editor/` – Qt-Editor (Hauptfenster, Game View, Code Workspace)
 - `ruby/` – Beispiel-Scripts und Runtime-Scripts
 - `assets/` – Shaders, Texturen, Modelle, Audio
-- `third_party/` – ImGui, glad, stb_image, miniaudio
+- `third_party/` – glad, stb_image, miniaudio, RmlUi, …
 - `docs/` – Architektur- und API-Dokumentation
 
 ## Build (Windows mit Visual Studio 2022)
@@ -69,13 +74,18 @@ make
 
 Dann in CMake `RPGMAKER3D_ENABLE_RUBY=ON` setzen.
 
-## Schnellstart
+## Schnellstart (Qt-Editor)
 
 ```bash
-./build/rpgmaker3d
+cmake -B build -S . -DRPGMAKER3D_EDITOR_QT=ON
+cmake --build build -j
+./build/RPGMaker3D   # bzw. build/Release/RPGMaker3D.exe
 ```
 
-Im Editor: `File > New Project`, dann Maps erstellen, Tilesets laden, Ruby-Scripts editieren.
+Im Editor:
+- Tab **Game View** – 3D-Szene, Selektion, Playtest (F5)
+- Tab **Code** – Ruby-Scripts des Projekts + C++ Engine-API-Referenz
+- `Datei > Neues Projekt` / `Projekt öffnen`
 
 ## Lizenz
 

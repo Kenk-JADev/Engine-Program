@@ -1,14 +1,11 @@
 #pragma once
-// Qt-Editor-Hauptfenster: QMainWindow mit eigenen, nativen Dock-Fenstern
-// (das, was mit ImGui nicht moeglich ist), eingebetteter Game-View (Qt GL),
-// Menues/Toolbars/Statuszeile und dem Qt-getriebenen Game-Loop (QTimer).
+// Qt-Editor-Hauptfenster: QMainWindow mit nativen Dock-Fenstern.
+// Der ImGui-Editor ist entfernt – Qt ist der einzige Editor-Host.
 //
-// Erster Migrationsslice aus dem ImGui-Editor (Editor.cpp):
-//  - Datei-Menue komplett (Projekt neu/oeffnen/speichern, Szene laden/speichern)
-//  - Erstellen-Menue (Wuerfel/Ebene/Licht) via CommandHistory (undobar)
-//  - Bearbeiten-Menue (Rueckgaengig/Wiederholen/Loeschen) via CommandHistory
-//  - Hierarchie-Dock: live Liste der Scene-Entities, Klick = Selektion
-//  - Eigenschaften-Dock: Name + Transform des selektierten Objekts editieren
+// Layout:
+//  - Zentral: QTabWidget mit "Game View" (3D) und "Code" (Ruby/C++)
+//  - Docks: Hierarchie, Eigenschaften, Konsole
+//  - Menues/Toolbars + QTimer-Game-Loop
 
 #include <QMainWindow>
 #include <memory>
@@ -24,12 +21,14 @@ class QLineEdit;
 class QDoubleSpinBox;
 class QAction;
 class QWidget;
+class QTabWidget;
 
 namespace rpg { class Engine; }
 
 namespace qt_editor {
 
 class QtGameViewWidget;
+class QtCodeWorkspace;
 
 class QtEditorWindow : public QMainWindow {
     Q_OBJECT
@@ -45,6 +44,7 @@ private slots:
     void onUiTick();             // UI-Sync (500 ms): Hierarchie/Properties/Menues
     void onPlaytestToggled(bool on);
     void onAboutToQuit();        // sauberes Engine-Shutdown mit GL-Kontext
+    void onCentralTabChanged(int index);
 
     // Datei
     void actionNewProject();
@@ -65,12 +65,13 @@ private:
     void buildMenus();
     void buildDocks();
     void buildToolbar();
+    void buildCentral();
     QWidget* buildPropertiesWidget();
     void log(const QString& msg);
 
-    // Engine-Aktionen (Spiegel der ImGui-Editor-Logik)
-    void loadScenePackage();     // Editor::LoadMap-Aequivalent
-    void saveScenePackage();     // Editor::SaveMap-Aequivalent
+    // Engine-Aktionen
+    void loadScenePackage();
+    void saveScenePackage();
     void createSimpleEntity(int kind); // 0=Cube 1=Plane 2=Light
 
     // Selektion & UI-Sync
@@ -83,7 +84,9 @@ private:
     bool selectedEntityExists() const;
 
     std::unique_ptr<rpg::Engine> mEngine;
+    QTabWidget* mCentralTabs = nullptr;
     QtGameViewWidget* mView = nullptr;
+    QtCodeWorkspace* mCode = nullptr;
 
     // Docks
     QDockWidget* mDockHierarchy = nullptr;
@@ -93,7 +96,7 @@ private:
     QWidget* mPropsWidget = nullptr;
     QPlainTextEdit* mConsole = nullptr;
 
-    // Property-Editoren (werden bei rebuildProperties neu gebaut)
+    // Property-Editoren
     QLineEdit* mNameEdit = nullptr;
     QDoubleSpinBox* mPos[3] = {nullptr, nullptr, nullptr};
     QDoubleSpinBox* mRot[3] = {nullptr, nullptr, nullptr};
@@ -101,22 +104,24 @@ private:
 
     QLabel* mStatusInfo = nullptr;
 
-    // Menue-Aktionen (Text/Enable-Sync via Timer)
+    // Menue-Aktionen
     QAction* mUndoAction = nullptr;
     QAction* mRedoAction = nullptr;
     QAction* mDeleteAction = nullptr;
     QAction* mSaveAction = nullptr;
     QAction* mPlayAction = nullptr;
+    QAction* mShowGameViewAction = nullptr;
+    QAction* mShowCodeAction = nullptr;
 
-    QTimer* mTimer = nullptr;       // Game-Loop
-    QTimer* mUiTimer = nullptr;     // UI-Sync
+    QTimer* mTimer = nullptr;
+    QTimer* mUiTimer = nullptr;
     QElapsedTimer* mClock = nullptr;
     float mFpsAccum = 0.0f;
     int mFpsFrames = 0;
 
     int mSelectedEntity = -1;
-    std::vector<int> mLastHierarchyIds; // Aenderungserkennung fuer refresh
-    bool mSyncingProps = false;         // Reentry-Schutz beim Werte-Sync
+    std::vector<int> mLastHierarchyIds;
+    bool mSyncingProps = false;
 };
 
 } // namespace qt_editor
