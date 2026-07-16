@@ -14,7 +14,7 @@ module GameMenu
       @lock = 30
     elsif Input.key_down?(:f3)
       Game.start_battle(1) rescue nil
-      SceneManager.goto(Scene_Battle) if defined?(Scene_Battle)
+      SceneManager.goto(Scene_Battle) if Object.const_defined?(:Scene_Battle)
       @lock = 30
     end
   end

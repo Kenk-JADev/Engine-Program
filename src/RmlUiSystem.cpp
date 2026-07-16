@@ -104,9 +104,9 @@ static const char* kGameBody = R"RML(
         <div>Map: <span class="badge">{{map_name}}</span></div>
         <div style="margin: 6px 0;">FPS: <span class="badge">{{fps}}</span>  Modus: <span class="badge">{{mode}}</span></div>
         <div class="statlabel">HP {{hp}} / {{hp_max}}   Gold {{gold}}</div>
-        <div class="statbar"><div class="fill hpfill" data-attr-style="{{hp_style}}"></div></div>
+        <div class="statbar"><div class="fill hpfill" data-attr-style="hp_style"></div></div>
         <div class="statlabel">MP {{mp}} / {{mp_max}}</div>
-        <div class="statbar"><div class="fill mpfill" data-attr-style="{{mp_style}}"></div></div>
+        <div class="statbar"><div class="fill mpfill" data-attr-style="mp_style"></div></div>
         <div id="script_line" class="statlabel" style="margin-top: 8px; color: #ffd970;">{{script_line}}</div>
         <div class="hint">Ruby SceneManager + UI.*  |  F5 Playtest  |  F9 HUD</div>
     </div>

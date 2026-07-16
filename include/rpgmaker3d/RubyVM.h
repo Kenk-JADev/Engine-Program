@@ -23,6 +23,13 @@ public:
     bool ExecuteFile(const std::string& path);
     bool Update(float deltaTime);
 
+    // Erzwingt einen vollstaendigen Garbage-Collection-Durchlauf. Nuetzlich
+    // vor wiederholtem Script-Reload (Playtest), damit tote Ruby-Objekte
+    // (z.B. neu zugewiesene $game/$game_pictures aus vorigen Durchlaeufen)
+    // eingesammelt werden und der kleine mruby-Heap nicht ueberlaeuft
+    // (NoMemoryError bei vielen Playtest-Durchlaeufen).
+    void CollectGarbage();
+
     mrb_state* GetState() { return mMrb; }
 
     // Letzter Ruby-Fehler (leer wenn ok)

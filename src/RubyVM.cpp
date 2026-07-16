@@ -209,6 +209,12 @@ bool RubyVM::Update(float deltaTime) {
     return true;
 }
 
+void RubyVM::CollectGarbage() {
+    if (mMrb) {
+        mrb_full_gc(mMrb);
+    }
+}
+
 // ==================== Engine / Game Bindings ====================
 
 static mrb_value rb_engine_time(mrb_state* mrb, mrb_value self) {
@@ -1091,8 +1097,11 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, uiModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
     mrb_define_module_function(mMrb, uiModule, "clear_pictures", rb_ui_remove_picture, MRB_ARGS_NONE());
 
-    // Game module extensions for convenience
-    struct RClass* gameModule = mrb_define_module(mMrb, "Game");
+    // Game module extensions for convenience.
+    // WICHTIG: als KLASSE definieren (nicht Modul), damit die Spiellogik in
+    // main.rb ein "class Game ... end" reoeffnen kann. Ein Modul wuerde
+    // "TypeError: Game is not a class" ausloesen (siehe main.rb).
+    struct RClass* gameModule = mrb_define_class(mMrb, "Game", mMrb->object_class);
     mrb_define_module_function(mMrb, gameModule, "show_message", rb_ui_show_message, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gameModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
     mrb_define_module_function(mMrb, gameModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));

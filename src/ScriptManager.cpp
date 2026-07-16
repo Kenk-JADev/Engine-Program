@@ -517,6 +517,11 @@ void ScriptManager::ReloadFromDisk() {
 }
 
 void ScriptManager::ExecuteAllScripts() {
+    // Vor wiederholtem Script-Reload (Playtest) den mruby-Heap bereinigen,
+    // damit tote Ruby-Objekte aus vorigen Durchlaeufen eingesammelt werden
+    // (verhindert NoMemoryError bei vielen Playtest-Durchlaeufen).
+    if (mRubyVM) mRubyVM->CollectGarbage();
+
     for (auto& script : mScripts) {
         RPG_LOG_INFO("Execute script: " + script->name);
         if (mRubyVM) {

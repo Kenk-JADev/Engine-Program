@@ -11,7 +11,7 @@ class Scene_Battle < Scene_Base
   def update
     if Game.respond_to?(:in_battle?) && !Game.in_battle?
       UI.clear_texts
-      SceneManager.goto(Scene_Map) if defined?(Scene_Map)
+      SceneManager.goto(Scene_Map) if Object.const_defined?(:Scene_Map)
     end
   end
 

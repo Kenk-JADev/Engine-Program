@@ -11,12 +11,12 @@ class Game
   def update(delta_time)
     @time += delta_time
     # Party-Menue (Esc) hat Vorrang
-    if defined?(PartyMenu)
+    if Object.const_defined?(:PartyMenu)
       PartyMenu.update
       return if PartyMenu.open?
     end
     # F1/F2/F3 – siehe 14_Menu_Save.rb
-    GameMenu.update if defined?(GameMenu)
+    GameMenu.update if Object.const_defined?(:GameMenu)
   end
 
   def on_gold_gained(amount)
@@ -53,5 +53,5 @@ begin
   end
 rescue => e
   Engine.log("Scene start fallback: #{e}")
-  SceneManager.run(Scene_Map) if defined?(Scene_Map)
+    SceneManager.run(Scene_Map) if Object.const_defined?(:Scene_Map)
 end
