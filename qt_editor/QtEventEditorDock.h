@@ -11,6 +11,7 @@ class QComboBox;
 class QPlainTextEdit;
 class QLabel;
 class QPushButton;
+class QCheckBox;
 class QDoubleSpinBox;
 
 namespace rpg { class Engine; }
@@ -63,6 +64,11 @@ private:
     QSpinBox* mPosY = nullptr;
     QSpinBox* mPosZ = nullptr;
     QComboBox* mTriggerCombo = nullptr;
+    QCheckBox* mCondSwitchCheck = nullptr;
+    QSpinBox* mCondSwitchId = nullptr;
+    QCheckBox* mSelfSwitchCheck = nullptr;
+    QComboBox* mSelfSwitchChar = nullptr;
+    QLineEdit* mMoveRouteEdit = nullptr;
 
     QComboBox* mCmdCodeCombo = nullptr;
     QPlainTextEdit* mCmdText = nullptr;

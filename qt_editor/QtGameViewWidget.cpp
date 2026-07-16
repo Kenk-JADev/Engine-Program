@@ -243,7 +243,24 @@ void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {
 #endif
 
     if (b == rpg::MouseButton::Left) {
+        if (mPainting || mStrokeActive) flushPaintStroke();
+        if (mGizmoDragging && mEngine && mEngine->GetSelectedEntity() >= 0) {
+            auto* tc = mEngine->GetScene().GetComponent<rpg::TransformComponent>(
+                static_cast<rpg::EntityID>(mEngine->GetSelectedEntity()));
+            if (tc) {
+                rpg::Vec3 oldP(mGizmoStartPos[0], mGizmoStartPos[1], mGizmoStartPos[2]);
+                rpg::Vec3 newP = tc->transform.position;
+                if (glm::length(newP - oldP) > 1e-4f) {
+                    // Reset to old then Execute so history matches
+                    tc->transform.position = oldP;
+                    auto cmd = std::make_shared<rpg::MoveEntityCommand>(
+                        static_cast<rpg::EntityID>(mEngine->GetSelectedEntity()), oldP, newP);
+                    mEngine->GetCommandHistory().Execute(*mEngine, cmd);
+                }
+            }
+        }
         mPainting = false;
+        mStrokeActive = false;
         mGizmoDragging = false;
         mGizmoAxis = -1;
     }
@@ -273,6 +290,18 @@ bool QtGameViewWidget::tryGroundHit(float sx, float sy, int& outX, int& outZ) {
     return true;
 }
 
+// Stroke-Buffer fuer ein Undo pro Pinselstrich
+static std::vector<rpg::BatchTileCommand::Change> s_stroke;
+static int s_strokeLastX = -99999, s_strokeLastZ = -99999;
+
+void QtGameViewWidget::flushPaintStroke() {
+    if (!mEngine || s_stroke.empty()) { s_stroke.clear(); return; }
+    auto cmd = std::make_shared<rpg::BatchTileCommand>(std::move(s_stroke), "Brush Stroke");
+    s_stroke.clear();
+    s_strokeLastX = s_strokeLastZ = -99999;
+    mEngine->GetCommandHistory().Execute(*mEngine, cmd);
+}
+
 void QtGameViewWidget::paintTileAtScreen(float sx, float sy) {
     int x = 0, z = 0;
     if (!tryGroundHit(sx, sy, x, z)) return;
@@ -280,11 +309,15 @@ void QtGameViewWidget::paintTileAtScreen(float sx, float sy) {
     if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return;
     const int layer = mPaintLayer;
     if (layer < 0 || layer >= static_cast<int>(map.GetLayers().size())) return;
+    if (x == s_strokeLastX && z == s_strokeLastZ) return;
+    s_strokeLastX = x; s_strokeLastZ = z;
     const int oldTile = map.GetTile(layer, x, z);
-    const int newTile = mPaintTile; // -1 = eraser
+    const int newTile = mPaintTile;
     if (oldTile == newTile) return;
-    auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, newTile);
-    mEngine->GetCommandHistory().Execute(*mEngine, cmd);
+    // sofort anwenden fuer Feedback, Undo ueber Batch am Stroke-Ende
+    map.SetTile(layer, x, z, newTile);
+    s_stroke.push_back({layer, x, z, oldTile, newTile});
+    mStrokeActive = true;
     emit tilePainted(x, z, newTile);
 }
 
@@ -356,18 +389,18 @@ void QtGameViewWidget::fillRect(int x0, int z0, int x1, int z1) {
     z1 = std::min(map.GetHeight() - 1, z1);
     const int layer = mPaintLayer;
     if (layer < 0 || layer >= static_cast<int>(map.GetLayers().size())) return;
-    int painted = 0;
+    std::vector<rpg::BatchTileCommand::Change> changes;
     for (int z = z0; z <= z1; ++z) {
         for (int x = x0; x <= x1; ++x) {
             const int oldTile = map.GetTile(layer, x, z);
             if (oldTile == mPaintTile) continue;
-            auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, mPaintTile);
-            mEngine->GetCommandHistory().Execute(*mEngine, cmd);
-            ++painted;
+            changes.push_back({layer, x, z, oldTile, mPaintTile});
         }
     }
-    if (painted > 0)
-        emit tilePainted(x0, z0, mPaintTile);
+    if (changes.empty()) return;
+    auto cmd = std::make_shared<rpg::BatchTileCommand>(std::move(changes), "Rect Paint");
+    mEngine->GetCommandHistory().Execute(*mEngine, cmd);
+    emit tilePainted(x0, z0, mPaintTile);
 }
 
 } // namespace qt_editor

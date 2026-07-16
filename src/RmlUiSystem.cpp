@@ -95,7 +95,7 @@ body {
 // message_box: wird aus GameUI::Message gespiegelt (Ruby UI.show_message / Events).
 static const char* kGameBody = R"RML(
     <div id="message_box" class="rpg-window" style="position: absolute; left: 50%; bottom: 28px; margin-left: -36%; width: 72%; display: none;">
-        <div class="rpg-title">Dialog</div>
+        <div class="rpg-title">{{message_speaker}}</div>
         <div id="message_text" class="statlabel" style="font-size: 15px; color: #f0e6cc; white-space: pre-wrap;">{{message_text}}</div>
         <div class="hint">E / Enter / Space = weiter</div>
     </div>
@@ -197,6 +197,7 @@ public:
     Rml::String hpStyle = "width: 169px; height: 100%; background-color: #c8413c;";
     Rml::String mpStyle = "width: 156px; height: 100%; background-color: #3b6fc8;";
     Rml::String messageText = "";
+    Rml::String messageSpeaker = "Dialog";
     Rml::String scriptLine = "";
     Rml::String stText[6];
     float stX[6] = {};
@@ -230,6 +231,7 @@ public:
             h.DirtyVariable("hp_style");
             h.DirtyVariable("mp_style");
             h.DirtyVariable("message_text");
+            h.DirtyVariable("message_speaker");
             h.DirtyVariable("script_line");
             h.DirtyVariable("gold");
             h.DirtyVariable("st0"); h.DirtyVariable("st1"); h.DirtyVariable("st2");
@@ -265,6 +267,7 @@ public:
         ctor.Bind("hp_style", &hpStyle);
         ctor.Bind("mp_style", &mpStyle);
         ctor.Bind("message_text", &messageText);
+        ctor.Bind("message_speaker", &messageSpeaker);
         ctor.Bind("script_line", &scriptLine);
         ctor.Bind("gold", &gold);
         ctor.Bind("st0", &stText[0]); ctor.Bind("st1", &stText[1]); ctor.Bind("st2", &stText[2]);
@@ -530,8 +533,23 @@ void RmlUiSystem::SyncFromGameUI() {
     m->messageVisible = msg.IsVisible();
     if (m->messageVisible) {
         m->messageText = msg.GetDisplayedText().empty() ? msg.GetFullText() : msg.GetDisplayedText();
+        m->messageSpeaker = msg.GetSpeakerName().empty() ? "Dialog" : msg.GetSpeakerName();
+        // position: adjust bottom margin via style
+        if (auto* box = m->gameDoc ? m->gameDoc->GetElementById("message_box") : nullptr) {
+            if (msg.GetPosition() == 2) { // top
+                box->SetProperty("bottom", "auto");
+                box->SetProperty("top", "28px");
+            } else if (msg.GetPosition() == 1) {
+                box->SetProperty("bottom", "40%");
+                box->SetProperty("top", "auto");
+            } else {
+                box->SetProperty("top", "auto");
+                box->SetProperty("bottom", "28px");
+            }
+        }
     } else {
         m->messageText.clear();
+        m->messageSpeaker = "Dialog";
     }
     if (wasVis != m->messageVisible) m->ApplyMessageVisibility();
 

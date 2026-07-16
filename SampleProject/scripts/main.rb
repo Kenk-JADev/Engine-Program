@@ -10,7 +10,12 @@ class Game
 
   def update(delta_time)
     @time += delta_time
-    # F1/F2/F3 Menue (Save/Load/Battle) – siehe 14_Menu_Save.rb
+    # Party-Menue (Esc) hat Vorrang
+    if defined?(PartyMenu)
+      PartyMenu.update
+      return if PartyMenu.open?
+    end
+    # F1/F2/F3 – siehe 14_Menu_Save.rb
     GameMenu.update if defined?(GameMenu)
   end
 

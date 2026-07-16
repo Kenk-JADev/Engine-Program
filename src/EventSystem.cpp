@@ -13,6 +13,8 @@
 #include <cmath>
 #include <sstream>
 #include <cstdio>
+#include <cctype>
+#include <cstdlib>
 #include <filesystem>
 
 namespace rpg {
@@ -170,6 +172,54 @@ bool EventInterpreter::ExecuteCommand(const EventCommand& cmd) {
             if (onChangeActorHP) onChangeActorHP(cmd.param1, cmd.param2);
             return true;
         }
+        case EventCommandCode::ChangeSelfSwitch: {
+            char ch = 'A';
+            if (!cmd.text.empty()) ch = (char)std::toupper((unsigned char)cmd.text[0]);
+            else if (cmd.param2 >= 0 && cmd.param2 <= 3) ch = (char)('A' + cmd.param2);
+            bool val = cmd.param1 != 0;
+            if (onChangeSelfSwitch) onChangeSelfSwitch(mEventId, ch, val);
+            return true;
+        }
+        case EventCommandCode::SetMoveRoute: {
+            // text: "UULDRW10"  U/D/L/R/F=forward/T=toward/A=away/X=random/W=wait frames in digits
+            MoveRoute route;
+            route.repeat = cmd.param1 != 0;
+            route.skippable = cmd.param2 != 0;
+            std::string s = cmd.text;
+            for (size_t i = 0; i < s.size(); ++i) {
+                char c = (char)std::toupper((unsigned char)s[i]);
+                MoveRouteStep st;
+                if (c == 'U') st.code = MoveRouteCode::MoveUp;
+                else if (c == 'D') st.code = MoveRouteCode::MoveDown;
+                else if (c == 'L') st.code = MoveRouteCode::MoveLeft;
+                else if (c == 'R') st.code = MoveRouteCode::MoveRight;
+                else if (c == 'F') st.code = MoveRouteCode::MoveForward;
+                else if (c == 'T') st.code = MoveRouteCode::TowardPlayer;
+                else if (c == 'A') st.code = MoveRouteCode::AwayFromPlayer;
+                else if (c == 'X') st.code = MoveRouteCode::Random;
+                else if (c == 'W') {
+                    st.code = MoveRouteCode::Wait;
+                    int frames = 20;
+                    if (i+1 < s.size() && std::isdigit((unsigned char)s[i+1])) {
+                        frames = 0;
+                        while (i+1 < s.size() && std::isdigit((unsigned char)s[i+1])) {
+                            frames = frames*10 + (s[++i]-'0');
+                        }
+                    }
+                    st.param = frames;
+                } else continue;
+                route.list.push_back(st);
+            }
+            if (route.list.empty()) {
+                // default patrol
+                route.list.push_back({MoveRouteCode::MoveRight,0});
+                route.list.push_back({MoveRouteCode::Wait,30});
+                route.list.push_back({MoveRouteCode::MoveLeft,0});
+                route.list.push_back({MoveRouteCode::Wait,30});
+            }
+            if (onSetMoveRoute) onSetMoveRoute(mEventId > 0 ? mEventId : cmd.param3, route);
+            return true;
+        }
         case EventCommandCode::TransferPlayer: {
             if (onTransferPlayer)
                 onTransferPlayer(cmd.param1, cmd.param2, cmd.param3,
@@ -267,6 +317,13 @@ EventSystem& EventSystem::Get() {
     return instance;
 }
 
+void EventSystem::SetChoiceResult(int index) { mLastChoice = index; }
+int EventSystem::ConsumeChoiceResult() {
+    int v = mLastChoice;
+    mLastChoice = -1;
+    return v;
+}
+
 void EventSystem::Clear() {
     mEvents.clear();
     mCommonEvents.clear();
@@ -276,6 +333,17 @@ void EventSystem::Clear() {
 
 void EventSystem::AddEvent(const MapEvent& ev) {
     for (auto& e : mEvents) if (e.id == ev.id) { e = ev; return; }
+    // Ambient patrol
+    {
+        MoveRoute mr;
+        mr.repeat = true;
+        mr.list.push_back({MoveRouteCode::MoveRight, 0});
+        mr.list.push_back({MoveRouteCode::Wait, 40});
+        mr.list.push_back({MoveRouteCode::MoveLeft, 0});
+        mr.list.push_back({MoveRouteCode::Wait, 40});
+        ev.hasMoveRoute = true;
+        ev.moveRoute = mr;
+    }
     mEvents.push_back(ev);
 }
 
@@ -303,9 +371,6 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     interp.onShowText = [](const std::string& txt) {
         GameUI::Get().ShowMessage(txt);
         RPG_LOG_INFO(std::string("[Event] ") + txt);
-    };
-    interp.onShowChoices = [](const std::string& txt, int) {
-        GameUI::Get().ShowMessage(txt);
     };
     interp.onPlayBGM = [](const std::string& p, bool loop) {
         RPG_LOG_INFO("[Event] BGM: " + p + (loop ? " (loop)" : ""));
@@ -460,6 +525,44 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
             }
         }
     };
+    interp.onChangeSelfSwitch = [](int eventId, char ch, bool value) {
+        int mapId = EventSystem::Get().GetCurrentMapId();
+        Game::Get().SelfSwitches().Set(mapId, eventId, ch, value);
+        RPG_LOG_INFO(std::string("[Event] SelfSwitch ") + ch + " event " + std::to_string(eventId) +
+                     " = " + (value ? "ON" : "OFF"));
+    };
+    interp.onSetMoveRoute = [](int eventId, const MoveRoute& route) {
+        auto* ev = EventSystem::Get().GetEvent(eventId);
+        if (!ev) return;
+        ev->moveRoute = route;
+        ev->moveRoute.stepIndex = 0;
+        ev->moveRoute.waitTimer = 0;
+        ev->hasMoveRoute = !route.list.empty();
+        RPG_LOG_INFO("[Event] MoveRoute set on " + std::to_string(eventId) +
+                     " steps=" + std::to_string(route.list.size()));
+    };
+    interp.onShowChoices = [](const std::string& txt, int) {
+        // text: "Frage|OptionA|OptionB|OptionC"
+        std::vector<std::string> opts;
+        std::string prompt = txt;
+        size_t p = txt.find('|');
+        if (p != std::string::npos) {
+            prompt = txt.substr(0, p);
+            std::string rest = txt.substr(p+1);
+            size_t start = 0;
+            while (start <= rest.size()) {
+                size_t n = rest.find('|', start);
+                if (n == std::string::npos) { opts.push_back(rest.substr(start)); break; }
+                opts.push_back(rest.substr(start, n-start));
+                start = n+1;
+            }
+        }
+        if (opts.empty()) opts = {"Ja", "Nein"};
+        GameUI::Get().ShowChoices(prompt, opts, [](int idx) {
+            EventSystem::Get().SetChoiceResult(idx);
+            Game::Get().Variables().Set(0, idx); // last choice in var 0
+        });
+    };
 }
 
 void EventSystem::BindRuntimeCallbacks() {
@@ -476,7 +579,14 @@ bool EventSystem::ConditionsMet(const EventPage::Condition& c) const {
 void EventSystem::RefreshEventPage(MapEvent& ev) {
     int best = 0;
     for (int i = 0; i < (int)ev.pages.size(); ++i) {
-        if (ConditionsMet(ev.pages[i].condition)) best = i;
+        const auto& c = ev.pages[i].condition;
+        bool ok = ConditionsMet(c);
+        if (ok && c.selfSwitchValid) {
+            char ch = c.selfSwitchCh ? c.selfSwitchCh : 'A';
+            if (!Game::Get().SelfSwitches().Get(mCurrentMapId, ev.id, ch))
+                ok = false;
+        }
+        if (ok) best = i; // highest page that matches (RM style: last matching)
     }
     ev.currentPage = best;
 }
@@ -516,6 +626,8 @@ void EventSystem::Update(float dt, const Vec3& playerPos) {
         RPG_LOG_INFO("CommonEvent " + std::to_string(ce.id) + " (" + ce.name + ")");
     }
 
+    UpdateMoveRoutes(dt, playerPos);
+
     for (auto& ev : mEvents) {
         if (!ev.enabled || !ev.IsValid()) continue;
         RefreshEventPage(ev);
@@ -545,6 +657,8 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
     if (IsAnyEventRunning()) return;
     float best = radius;
     int bestId = -1;
+    UpdateMoveRoutes(dt, playerPos);
+
     for (auto& ev : mEvents) {
         if (!ev.enabled || !ev.IsValid()) continue;
         RefreshEventPage(ev);
@@ -587,6 +701,101 @@ bool EventSystem::IsAnyEventRunning() const {
 bool EventSystem::IsWaitingForMessage() const {
     for (auto& it : mInterpreters) if (it->IsWaitingForMessage()) return true;
     return false;
+}
+
+
+void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
+    for (auto& ev : mEvents) {
+        if (!ev.hasMoveRoute || ev.moveRoute.list.empty()) continue;
+        auto& mr = ev.moveRoute;
+        if (mr.waitTimer > 0) {
+            mr.waitTimer -= dt;
+            continue;
+        }
+        if (mr.stepIndex < 0 || mr.stepIndex >= (int)mr.list.size()) {
+            if (mr.repeat) mr.stepIndex = 0;
+            else { ev.hasMoveRoute = false; continue; }
+        }
+        const auto& step = mr.list[mr.stepIndex];
+        Vec3& pos = ev.worldPos;
+        if (glm::length(pos) < 0.001f)
+            pos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+        const float speed = 2.0f * dt;
+        auto applyDir = [&](Vec3 d) {
+            if (glm::length(d) > 1e-5f) d = glm::normalize(d);
+            pos += d * speed * 20.0f; // step roughly one cell over ~0.5s - use fixed step
+        };
+        // fixed cell step
+        const float cell = 1.0f;
+        Vec3 delta(0);
+        switch (step.code) {
+            case MoveRouteCode::MoveUp: delta = Vec3(0,0,-cell); break;
+            case MoveRouteCode::MoveDown: delta = Vec3(0,0,cell); break;
+            case MoveRouteCode::MoveLeft: delta = Vec3(-cell,0,0); break;
+            case MoveRouteCode::MoveRight: delta = Vec3(cell,0,0); break;
+            case MoveRouteCode::MoveForward: {
+                auto* page = ev.GetCurrentPage();
+                Vec3 d = page ? page->direction : Vec3(0,0,-1);
+                delta = glm::normalize(d) * cell;
+                break;
+            }
+            case MoveRouteCode::TowardPlayer: {
+                Vec3 d = playerPos - pos; d.y = 0;
+                if (glm::length(d) > 0.1f) {
+                    if (std::fabs(d.x) > std::fabs(d.z))
+                        delta = Vec3(d.x > 0 ? cell : -cell, 0, 0);
+                    else
+                        delta = Vec3(0, 0, d.z > 0 ? cell : -cell);
+                }
+                break;
+            }
+            case MoveRouteCode::AwayFromPlayer: {
+                Vec3 d = pos - playerPos; d.y = 0;
+                if (glm::length(d) > 0.1f) {
+                    if (std::fabs(d.x) > std::fabs(d.z))
+                        delta = Vec3(d.x > 0 ? cell : -cell, 0, 0);
+                    else
+                        delta = Vec3(0, 0, d.z > 0 ? cell : -cell);
+                }
+                break;
+            }
+            case MoveRouteCode::Random: {
+                int r = rand() % 4;
+                if (r==0) delta=Vec3(cell,0,0);
+                else if (r==1) delta=Vec3(-cell,0,0);
+                else if (r==2) delta=Vec3(0,0,cell);
+                else delta=Vec3(0,0,-cell);
+                break;
+            }
+            case MoveRouteCode::Wait:
+                mr.waitTimer = step.param > 0 ? step.param / 60.0f : 0.3f;
+                mr.stepIndex++;
+                continue;
+            default:
+                mr.stepIndex++;
+                continue;
+        }
+        // passability
+        Vec3 next = pos + delta;
+        if (Game::Get().Map().IsPassableWorld(next.x, next.z) || mr.skippable) {
+            if (Game::Get().Map().IsPassableWorld(next.x, next.z)) {
+                pos = next;
+                ev.x = (int)std::round(pos.x);
+                ev.z = (int)std::round(pos.z);
+                if (glm::length(delta) > 0.01f && !ev.pages.empty()) {
+                    int pi = ev.currentPage;
+                    if (pi < 0 || pi >= (int)ev.pages.size()) pi = 0;
+                    ev.pages[pi].direction = glm::normalize(delta);
+                }
+            }
+        }
+        mr.waitTimer = 0.25f; // pause between steps
+        mr.stepIndex++;
+        if (mr.stepIndex >= (int)mr.list.size()) {
+            if (mr.repeat) mr.stepIndex = 0;
+            else ev.hasMoveRoute = false;
+        }
+    }
 }
 
 void EventSystem::EnsureDemoEvent() {
@@ -655,9 +864,32 @@ void EventSystem::EnsureDemoEvent() {
     t.text = "(Schild) Norden: Dorf  |  Sueden: Wald";
     p2.list.push_back(t);
     sign.pages.push_back(p2);
+    // Schild bleibt; Elder bekommt Patrol-MoveRoute
+    {
+        MoveRoute mr;
+        mr.repeat = true;
+        mr.list.push_back({MoveRouteCode::MoveRight, 0});
+        mr.list.push_back({MoveRouteCode::Wait, 45});
+        mr.list.push_back({MoveRouteCode::MoveLeft, 0});
+        mr.list.push_back({MoveRouteCode::Wait, 45});
+        // apply to elder (id 1) already pushed - fix elder before push instead
+    }
     mEvents.push_back(sign);
 
-    RPG_LOG_INFO("Demo events created (Elder + Sign)");
+    // Patrol auf Village Elder
+    if (auto* elder = GetEvent(1)) {
+        MoveRoute mr;
+        mr.repeat = true;
+        mr.skippable = true;
+        mr.list.push_back({MoveRouteCode::MoveRight, 0});
+        mr.list.push_back({MoveRouteCode::Wait, 40});
+        mr.list.push_back({MoveRouteCode::MoveLeft, 0});
+        mr.list.push_back({MoveRouteCode::Wait, 40});
+        elder->moveRoute = mr;
+        elder->hasMoveRoute = true;
+    }
+
+    RPG_LOG_INFO("Demo events created (Elder + Sign + MoveRoute)");
 }
 
 // ==================== JSON Event Persistence ====================

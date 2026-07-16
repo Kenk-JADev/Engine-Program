@@ -140,3 +140,18 @@ Tile-Flag **solid** (Map-Dock: Button „Solid“) → `TilesetData.flags` → `
 ### Common Events
 `maps/CommonEvents.json`, Trigger Autorun wenn `switchId` an (oder 0=immer bei Autorun).
 Button **Common+** im Event-Dock.
+
+
+## 9. Prioritaet 3+4 (Menue, Kampf, MoveRoute, Qualitaet)
+
+| Feature | Umsetzung |
+|---------|-----------|
+| Esc-Party-Menue | `15_Party_Menu.rb` (Items/Status/Save) |
+| Message Name/Pos | `MessageWindow` Speaker + Position → RmlUi |
+| Self-Switch | Event-Befehl + Seiten-Condition im Event-Dock |
+| Move Route | `UDLR W T A X` Text-Format, Runtime-Update |
+| Battle-UI | Tasten 1-4 im Engine-Update |
+| Undo-Batch | `BatchTileCommand` fuer Pinsel/Rechteck |
+| Gizmo-Undo | `MoveEntityCommand` bei Loslassen |
+| Plugins | `scripts/plugins/*.rb` |
+| Deploy | `scripts/package-player.sh` / `.ps1` |

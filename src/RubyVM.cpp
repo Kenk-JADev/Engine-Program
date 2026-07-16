@@ -327,6 +327,16 @@ static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
         key = Key::F3;
     } else if (keyName == "f5") {
         key = Key::F5;
+    } else if (keyName == "up") {
+        key = Key::Up;
+    } else if (keyName == "down") {
+        key = Key::Down;
+    } else if (keyName == "left") {
+        key = Key::Left;
+    } else if (keyName == "right") {
+        key = Key::Right;
+    } else if (keyName == "i" || keyName == "I") {
+        key = Key::I;
     }
 
     return mrb_bool_value(engine->GetInput().IsKeyDown(key));

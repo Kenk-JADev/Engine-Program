@@ -64,10 +64,12 @@ private:
     int mPaintTile = 0;
     int mPaintLayer = 0;
     bool mPainting = false;
+    bool mStrokeActive = false;
     int mBrushMode = 0; // 0 paint, 1 rect
     bool mRectHasFirst = false;
     int mRectX0 = 0, mRectZ0 = 0;
     void fillRect(int x0, int z0, int x1, int z1);
+    void flushPaintStroke();
 
     // Gizmo translate
     int mGizmoMode = 1; // 1=translate

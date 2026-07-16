@@ -24,6 +24,15 @@ void MessageWindow::Show(const std::string& text) {
     mVisible = true;
     mWaitingForInput = false;
     mChoices.clear();
+    mSpeakerName.clear();
+    mFaceName.clear();
+    mPosition = 0;
+}
+void MessageWindow::Show(const std::string& text, const std::string& speaker, int position, const std::string& face) {
+    Show(text);
+    mSpeakerName = speaker;
+    mPosition = position;
+    mFaceName = face;
 }
 void MessageWindow::ShowWithChoices(const std::string& text, const std::vector<ChoiceOption>& choices) {
     Show(text);
@@ -173,6 +182,9 @@ void GameUI::Draw() {
 }
 void GameUI::ShowMessage(const std::string& text) {
     mMessage.Show(text);
+}
+void GameUI::ShowMessage(const std::string& text, const std::string& speaker, int position, const std::string& face) {
+    mMessage.Show(text, speaker, position, face);
 }
 void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback) {
     std::vector<ChoiceOption> choices;

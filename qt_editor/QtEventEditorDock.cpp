@@ -18,6 +18,7 @@
 #include <QGroupBox>
 #include <QSplitter>
 #include <QMessageBox>
+#include <QCheckBox>
 #include <algorithm>
 
 namespace qt_editor {
@@ -88,6 +89,8 @@ const CmdOpt kCmdOpts[] = {
     {rpg::EventCommandCode::ChangeExp, "Change EXP"},
     {rpg::EventCommandCode::ChangeLevel, "Change Level"},
     {rpg::EventCommandCode::RecoverAll, "Recover All"},
+    {rpg::EventCommandCode::ChangeSelfSwitch, "Self Switch A-D"},
+    {rpg::EventCommandCode::SetMoveRoute, "Move Route (UDLR...)"},
 };
 
 } // namespace
@@ -163,6 +166,18 @@ void QtEventEditorDock::buildUi() {
     form->addRow("Z", mPosZ);
     form->addRow("Seite", mPageCombo);
     form->addRow("Trigger", mTriggerCombo);
+    mCondSwitchCheck = new QCheckBox("Seite braucht Switch", props);
+    mCondSwitchId = new QSpinBox(props); mCondSwitchId->setRange(1, 9999); mCondSwitchId->setValue(1);
+    mSelfSwitchCheck = new QCheckBox("Seite braucht Self-Switch", props);
+    mSelfSwitchChar = new QComboBox(props);
+    mSelfSwitchChar->addItems(QStringList() << "A" << "B" << "C" << "D");
+    form->addRow(mCondSwitchCheck);
+    form->addRow("Switch-ID", mCondSwitchId);
+    form->addRow(mSelfSwitchCheck);
+    form->addRow("Self-Switch", mSelfSwitchChar);
+    mMoveRouteEdit = new QLineEdit(props);
+    mMoveRouteEdit->setPlaceholderText("MoveRoute: UDLR W20 T A X (Befehlstext)");
+    form->addRow("MoveRoute-Hilfe", mMoveRouteEdit);
     form->addRow(applyEv);
 
     auto* cmdBox = new QGroupBox("Befehle (aktuelle Seite)", split);
@@ -280,6 +295,15 @@ void QtEventEditorDock::syncEventProps() {
     auto& page = ev->pages[static_cast<size_t>(mSelectedPage)];
     int ti = mTriggerCombo->findData(static_cast<int>(page.trigger));
     mTriggerCombo->setCurrentIndex(ti >= 0 ? ti : 0);
+    if (mCondSwitchCheck) {
+        mCondSwitchCheck->setChecked(page.condition.switch1Valid);
+        mCondSwitchId->setValue(page.condition.switch1Id > 0 ? page.condition.switch1Id : 1);
+    }
+    if (mSelfSwitchCheck) {
+        mSelfSwitchCheck->setChecked(page.condition.selfSwitchValid);
+        int si = mSelfSwitchChar->findText(QString(QChar(page.condition.selfSwitchCh ? page.condition.selfSwitchCh : 'A')));
+        mSelfSwitchChar->setCurrentIndex(si >= 0 ? si : 0);
+    }
     mSyncing = false;
 }
 
@@ -406,6 +430,24 @@ void QtEventEditorDock::onApplyEventProps() {
     if (mSelectedPage >= 0 && mSelectedPage < static_cast<int>(ev->pages.size())) {
         auto& page = ev->pages[static_cast<size_t>(mSelectedPage)];
         page.trigger = static_cast<rpg::EventTrigger>(mTriggerCombo->currentData().toInt());
+        if (mCondSwitchCheck) {
+            page.condition.switch1Valid = mCondSwitchCheck->isChecked();
+            page.condition.switch1Id = mCondSwitchId->value();
+        }
+        if (mSelfSwitchCheck) {
+            page.condition.selfSwitchValid = mSelfSwitchCheck->isChecked();
+            QString ch = mSelfSwitchChar->currentText();
+            page.condition.selfSwitchCh = ch.isEmpty() ? 'A' : ch[0].toLatin1();
+        }
+        // optional: apply move route helper as command
+        if (mMoveRouteEdit && !mMoveRouteEdit->text().trimmed().isEmpty()) {
+            rpg::EventCommand mr;
+            mr.code = rpg::EventCommandCode::SetMoveRoute;
+            mr.text = mMoveRouteEdit->text().trimmed().toStdString();
+            mr.param1 = 1; // repeat
+            page.list.push_back(mr);
+            mMoveRouteEdit->clear();
+        }
     }
     rebuildEventList();
     emit logMessage(QString("Event %1 aktualisiert.").arg(ev->id));
