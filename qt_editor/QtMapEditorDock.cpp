@@ -29,8 +29,13 @@
 #include <QGroupBox>
 #include <QSplitter>
 #include <QMessageBox>
+#include <QPainter>
+#include <QIcon>
+#include <QPixmap>
+#include <QImage>
 #include <QToolButton>
 #include <filesystem>
+#include <cstring>
 
 namespace qt_editor {
 
@@ -108,6 +113,13 @@ void QtMapEditorDock::buildUi() {
     mTileInfo = new QLabel("Tile: 0", paintBox);
     mTilesetLabel = new QLabel("Tileset: -", paintBox);
     paintLay->addWidget(mPaintCheck);
+    mBrushCombo = new QComboBox(paintBox);
+    mBrushCombo->addItem("Pinsel (ziehen)");
+    mBrushCombo->addItem("Rechteck (2 Klicks)");
+    connect(mBrushCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &QtMapEditorDock::onBrushModeChanged);
+    paintLay->addWidget(new QLabel("Pinsel-Modus:", paintBox));
+    paintLay->addWidget(mBrushCombo);
     paintLay->addWidget(new QLabel("Ebene:", paintBox));
     paintLay->addWidget(mLayerCombo);
     auto* paintBtns = new QHBoxLayout();
@@ -419,7 +431,6 @@ void QtMapEditorDock::onTileClicked(int tileId) {
 }
 
 void QtMapEditorDock::rebuildTilePalette() {
-    // clear grid
     if (mTileGrid) {
         QLayoutItem* child;
         while ((child = mTileGrid->takeAt(0)) != nullptr) {
@@ -435,25 +446,65 @@ void QtMapEditorDock::rebuildTilePalette() {
     }
     const int cols = tileset->GetColumns();
     const int rows = tileset->GetRows();
+    const int tw = tileset->GetTileWidth();
+    const int th = tileset->GetTileHeight();
     mTilesetLabel->setText(QString("Tileset: %1x%2 tiles (%3x%4 px)")
-        .arg(cols).arg(rows).arg(tileset->GetTileWidth()).arg(tileset->GetTileHeight()));
+        .arg(cols).arg(rows).arg(tw).arg(th));
 
-    // Ohne QOpenGLTexture-Widget: nummerierte Buttons (stabil, kein GL-Tex in Qt-UI noetig)
+    // Versuche echte Pixel aus der GL-Textur (benoetigt current Context im Qt-Host)
+    QImage atlas;
+    if (auto* tex = tileset->GetTexture()) {
+        std::vector<unsigned char> rgba;
+        if (tex->ReadPixelsRGBA(rgba) && tex->GetWidth() > 0 && tex->GetHeight() > 0) {
+            atlas = QImage(tex->GetWidth(), tex->GetHeight(), QImage::Format_RGBA8888);
+            // stbi flippt vertikal beim Laden; glGetTexImage liefert origin bottom-left
+            // -> vertical flip fuer Qt (top-left origin)
+            const int w = tex->GetWidth();
+            const int h = tex->GetHeight();
+            for (int y = 0; y < h; ++y) {
+                const unsigned char* src = rgba.data() + static_cast<size_t>(h - 1 - y) * w * 4;
+                memcpy(atlas.scanLine(y), src, static_cast<size_t>(w) * 4);
+            }
+        }
+    }
+
     const int tileCount = cols * rows;
     const int colsPerRow = std::max(4, std::min(8, cols > 0 ? cols : 8));
+    const int btnSize = 40;
     for (int i = 0; i < tileCount; ++i) {
         auto* btn = new QToolButton(mTileGridHost);
-        btn->setText(QString::number(i));
-        btn->setFixedSize(36, 36);
+        btn->setFixedSize(btnSize, btnSize);
+        btn->setIconSize(QSize(btnSize - 4, btnSize - 4));
         btn->setToolTip(QString("Tile %1").arg(i));
-        if (i == mSelectedTile) {
-            btn->setStyleSheet("background:#c8a020; font-weight:bold;");
+        if (!atlas.isNull() && cols > 0) {
+            const int tx = i % cols;
+            const int ty = i / cols;
+            QImage tile = atlas.copy(tx * tw, ty * th, tw, th);
+            if (!tile.isNull()) {
+                btn->setIcon(QIcon(QPixmap::fromImage(tile.scaled(btnSize - 4, btnSize - 4,
+                    Qt::IgnoreAspectRatio, Qt::FastTransformation))));
+                btn->setText(QString());
+            } else {
+                btn->setText(QString::number(i));
+            }
+        } else {
+            btn->setText(QString::number(i));
         }
+        if (i == mSelectedTile)
+            btn->setStyleSheet("border: 2px solid #e0a020; background:#3a3020;");
+        else
+            btn->setStyleSheet("border: 1px solid #444;");
         connect(btn, &QToolButton::clicked, this, [this, i]() { onTileClicked(i); });
         mTileGrid->addWidget(btn, i / colsPerRow, i % colsPerRow);
     }
     if (mSelectedTile >= 0)
         mTileInfo->setText(QString("Tile: %1").arg(mSelectedTile));
+}
+
+void QtMapEditorDock::onBrushModeChanged(int index) {
+    mBrushMode = index;
+    emit paintStateChanged();
+    emit logMessage(index == 0 ? "Pinsel: ziehen" : "Pinsel: Rechteck (2 Klicks im Game View)");
 }
 
 } // namespace qt_editor

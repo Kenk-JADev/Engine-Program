@@ -74,7 +74,7 @@
 
 ## 6. Nächste Schritte
 
-1. Tile-Palette mit echten Texturen
-2. Gizmo-Transform im Game View
-3. Event-Editor als Qt-Dock
-4. Optional: QUndoStack-Spiegelung
+1. Gizmo-Transform im Game View
+2. Asset-Browser
+3. Undo-Batch fuer Multi-Tile-Pinsel
+4. GameUI Messages komplett auf RmlUi

@@ -23,6 +23,7 @@
 #include <QWheelEvent>
 #include <QInputMethodEvent>
 #include <cmath>
+#include <algorithm>
 
 namespace qt_editor {
 
@@ -174,8 +175,20 @@ void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
 
     if (b == rpg::MouseButton::Left && !mEngine->IsPlaying()) {
         if (mPaintMode) {
-            mPainting = true;
-            paintTileAtScreen(static_cast<float>(p.x()), static_cast<float>(p.y()));
+            if (mBrushMode == 1) {
+                int x=0,z=0;
+                if (tryGroundHit(static_cast<float>(p.x()), static_cast<float>(p.y()), x, z)) {
+                    if (!mRectHasFirst) {
+                        mRectX0 = x; mRectZ0 = z; mRectHasFirst = true;
+                    } else {
+                        fillRect(mRectX0, mRectZ0, x, z);
+                        mRectHasFirst = false;
+                    }
+                }
+            } else {
+                mPainting = true;
+                paintTileAtScreen(static_cast<float>(p.x()), static_cast<float>(p.y()));
+            }
         } else {
             // 3D-Entity-Selektion
             rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
@@ -249,6 +262,30 @@ void QtGameViewWidget::paintTileAtScreen(float sx, float sy) {
     auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, newTile);
     mEngine->GetCommandHistory().Execute(*mEngine, cmd);
     emit tilePainted(x, z, newTile);
+}
+
+void QtGameViewWidget::fillRect(int x0, int z0, int x1, int z1) {
+    if (!mEngine) return;
+    auto& map = mEngine->GetMap();
+    if (x0 > x1) std::swap(x0, x1);
+    if (z0 > z1) std::swap(z0, z1);
+    x0 = std::max(0, x0); z0 = std::max(0, z0);
+    x1 = std::min(map.GetWidth() - 1, x1);
+    z1 = std::min(map.GetHeight() - 1, z1);
+    const int layer = mPaintLayer;
+    if (layer < 0 || layer >= static_cast<int>(map.GetLayers().size())) return;
+    int painted = 0;
+    for (int z = z0; z <= z1; ++z) {
+        for (int x = x0; x <= x1; ++x) {
+            const int oldTile = map.GetTile(layer, x, z);
+            if (oldTile == mPaintTile) continue;
+            auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, mPaintTile);
+            mEngine->GetCommandHistory().Execute(*mEngine, cmd);
+            ++painted;
+        }
+    }
+    if (painted > 0)
+        emit tilePainted(x0, z0, mPaintTile);
 }
 
 } // namespace qt_editor

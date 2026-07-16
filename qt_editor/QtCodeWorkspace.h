@@ -12,6 +12,7 @@ class QListWidget;
 class QPlainTextEdit;
 class QLabel;
 class QComboBox;
+class QLineEdit;
 class QSplitter;
 class QToolBar;
 class QAction;
@@ -44,8 +45,10 @@ public:
     // Ruby-Scripts ausfuehren (Playtest-Vorbereitung)
     void runCurrent();
     void runAll();
+    void hotReloadAll(); // speichern + ExecuteAllScripts
 
     bool hasUnsavedChanges() const;
+    void showRubyError(const QString& err);
     CodeLanguage currentLanguage() const { return mLanguage; }
 
 signals:
@@ -63,6 +66,9 @@ private slots:
     void onReloadFromDisk();
     void onOpenExternal();
     void onInsertSnippet(int index);
+    void onFind();
+    void onFindNext();
+    void onHotReload();
 
 private:
     void buildUi();
@@ -86,6 +92,9 @@ private:
     QAction* mRunAction = nullptr;
     QAction* mNewAction = nullptr;
     QAction* mDeleteAction = nullptr;
+    QLineEdit* mFindEdit = nullptr;
+    QString mLastFind;
+    int mFindPos = 0;
 
     CodeLanguage mLanguage = CodeLanguage::Ruby;
     int mCurrentIndex = -1;

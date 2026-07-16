@@ -175,6 +175,7 @@ if(RPGMAKER3D_EDITOR_QT)
             qt_editor/QtSyntaxHighlighter.cpp
             qt_editor/QtMapEditorDock.cpp
             qt_editor/QtDatabaseEditorDock.cpp
+            qt_editor/QtEventEditorDock.cpp
         )
     else()
         message(WARNING

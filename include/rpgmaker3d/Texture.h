@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include "Types.h"
 
 typedef unsigned int GLuint;

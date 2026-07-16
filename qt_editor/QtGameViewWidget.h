@@ -22,6 +22,7 @@ public:
     void setPaintMode(bool enabled) { mPaintMode = enabled; }
     void setPaintTile(int tileId) { mPaintTile = tileId; } // -1 = eraser
     void setPaintLayer(int layer) { mPaintLayer = layer; }
+    void setBrushMode(int mode) { mBrushMode = mode; mRectHasFirst = false; }
     bool paintMode() const { return mPaintMode; }
 
 signals:
@@ -57,7 +58,11 @@ private:
     bool mPaintMode = false;
     int mPaintTile = 0;
     int mPaintLayer = 0;
-    bool mPainting = false; // LMB gehalten im Paint-Modus
+    bool mPainting = false;
+    int mBrushMode = 0; // 0 paint, 1 rect
+    bool mRectHasFirst = false;
+    int mRectX0 = 0, mRectZ0 = 0;
+    void fillRect(int x0, int z0, int x1, int z1);
 };
 
 } // namespace qt_editor

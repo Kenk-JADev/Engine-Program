@@ -499,10 +499,14 @@ void ScriptManager::ExecuteAllScripts() {
     for (auto& script : mScripts) {
         RPG_LOG_INFO("Execute script: " + script->name);
         if (mRubyVM) {
+            bool ok = false;
             if (!script->path.empty() && std::filesystem::exists(script->path)) {
-                mRubyVM->ExecuteFile(script->path);
+                ok = mRubyVM->ExecuteFile(script->path);
             } else if (!script->content.empty()) {
-                mRubyVM->ExecuteString(script->content);
+                ok = mRubyVM->ExecuteString(script->content, script->name);
+            }
+            if (!ok && mRubyVM->HasError()) {
+                RPG_LOG_ERROR("Script failed: " + script->name + " -> " + mRubyVM->GetLastError());
             }
         }
     }

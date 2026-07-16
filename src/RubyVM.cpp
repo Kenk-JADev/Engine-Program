@@ -102,43 +102,72 @@ void RubyVM::Shutdown() {
     }
 }
 
-bool RubyVM::ExecuteString(const std::string& code) {
+bool RubyVM::CaptureException(const std::string& context) {
+    if (!mMrb || !mMrb->exc) {
+        mLastError.clear();
+        return false;
+    }
+    mrb_value exc = mrb_obj_value(mMrb->exc);
+    mrb_value msg = mrb_funcall(mMrb, exc, "inspect", 0);
+    std::string text;
+    if (mrb_string_p(msg)) {
+        text = std::string(RSTRING_PTR(msg), RSTRING_LEN(msg));
+    } else {
+        text = "(unprintable exception)";
+    }
+    mLastError = context.empty() ? text : (context + ": " + text);
+    RPG_LOG_ERROR("[Ruby] " + mLastError);
+    mrb_print_error(mMrb);
+    mMrb->exc = nullptr;
+    return true;
+}
+
+bool RubyVM::ExecuteString(const std::string& code, const std::string& sourceName) {
+    mLastError.clear();
     if (!mMrb) {
+        mLastError = "RubyVM not initialized";
         return false;
     }
 
-    mrb_load_string(mMrb, code.c_str());
+    // mrb_load_nstring_cxt mit filename fuer bessere Tracebacks
+    mrbc_context* cxt = mrbc_context_new(mMrb);
+    if (cxt && !sourceName.empty()) {
+        mrbc_filename(mMrb, cxt, sourceName.c_str());
+    }
+    mrb_load_nstring_cxt(mMrb, code.c_str(), code.size(), cxt);
+    if (cxt) mrbc_context_free(mMrb, cxt);
 
     if (mMrb->exc) {
-        mrb_print_error(mMrb);
-        mMrb->exc = nullptr;
+        CaptureException(sourceName.empty() ? "<string>" : sourceName);
         return false;
     }
-
     return true;
 }
 
 bool RubyVM::ExecuteFile(const std::string& path) {
+    mLastError.clear();
     if (!mMrb) {
+        mLastError = "RubyVM not initialized";
         return false;
     }
 
     FILE* file = fopen(path.c_str(), "r");
-
     if (!file) {
-        RPG_LOG_ERROR("Failed to open script: " + path);
+        mLastError = "Failed to open script: " + path;
+        RPG_LOG_ERROR(mLastError);
         return false;
     }
 
-    mrb_load_file(mMrb, file);
+    mrbc_context* cxt = mrbc_context_new(mMrb);
+    if (cxt) mrbc_filename(mMrb, cxt, path.c_str());
+    mrb_load_file_cxt(mMrb, file, cxt);
+    if (cxt) mrbc_context_free(mMrb, cxt);
     fclose(file);
 
     if (mMrb->exc) {
-        mrb_print_error(mMrb);
-        mMrb->exc = nullptr;
+        CaptureException(path);
         return false;
     }
-
     return true;
 }
 
@@ -160,11 +189,9 @@ bool RubyVM::Update(float deltaTime) {
     mrb_funcall_argv(mMrb, game, updateSymbol, 1, &deltaValue);
 
     if (mMrb->exc) {
-        mrb_print_error(mMrb);
-        mMrb->exc = nullptr;
+        CaptureException("$game.update");
         return false;
     }
-
     return true;
 }
 
@@ -1404,13 +1431,15 @@ bool RubyVM::Initialize(Engine* engine) {
 
 void RubyVM::Shutdown() {}
 
-bool RubyVM::ExecuteString(const std::string& code) {
-    (void)code;
+bool RubyVM::ExecuteString(const std::string& code, const std::string& sourceName) {
+    (void)code; (void)sourceName;
+    mLastError = "Ruby support not compiled in";
     return false;
 }
 
 bool RubyVM::ExecuteFile(const std::string& path) {
     (void)path;
+    mLastError = "Ruby support not compiled in";
     return false;
 }
 
@@ -1418,6 +1447,8 @@ bool RubyVM::Update(float deltaTime) {
     (void)deltaTime;
     return false;
 }
+
+bool RubyVM::CaptureException(const std::string&) { return false; }
 
 void RubyVM::BindEngine() {}
 void RubyVM::BindInput() {}

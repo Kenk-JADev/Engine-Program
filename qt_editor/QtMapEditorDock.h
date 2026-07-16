@@ -30,6 +30,8 @@ public:
     int selectedTile() const { return mSelectedTile; } // -1 = Eraser
     int selectedLayer() const { return mSelectedLayer; }
     bool paintEnabled() const { return mPaintEnabled; }
+    // 0=paint drag, 1=rect fill (2 Klicks)
+    int brushMode() const { return mBrushMode; }
     int selectedMapIndex() const { return mSelectedMapIndex; }
 
 signals:
@@ -53,6 +55,7 @@ private slots:
     void onClearLayer();
     void onFillLayer();
     void onTileClicked(int tileId);
+    void onBrushModeChanged(int index);
 
 private:
     void buildUi();
@@ -81,6 +84,8 @@ private:
     int mSelectedTile = 0;
     int mSelectedLayer = 0;
     bool mPaintEnabled = true;
+    int mBrushMode = 0; // 0 paint, 1 rect
+    QComboBox* mBrushCombo = nullptr;
     bool mSyncing = false;
 };
 

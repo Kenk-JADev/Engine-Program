@@ -241,6 +241,123 @@ bool EnemiesTableModel::removeRows(int row, int count, const QModelIndex& parent
     return true;
 }
 
+
+// ---------------------------------------------------------------------------
+// Skills / Weapons / Classes
+// ---------------------------------------------------------------------------
+SimpleDbTableModel::SimpleDbTableModel(Kind kind, QObject* parent)
+    : QAbstractTableModel(parent), mKind(kind) {}
+void SimpleDbTableModel::reload() { beginResetModel(); endResetModel(); }
+int SimpleDbTableModel::rowCount(const QModelIndex& parent) const {
+    if (parent.isValid()) return 0;
+    auto& db = rpg::Database::Get();
+    switch (mKind) {
+        case Skills: return (int)db.Skills().size();
+        case Weapons: return (int)db.Weapons().size();
+        case Classes: return (int)db.Classes().size();
+    }
+    return 0;
+}
+int SimpleDbTableModel::columnCount(const QModelIndex&) const {
+    return mKind == Classes ? 3 : 5;
+}
+QVariant SimpleDbTableModel::headerData(int section, Qt::Orientation o, int role) const {
+    if (o != Qt::Horizontal || role != Qt::DisplayRole) return {};
+    if (mKind == Skills) {
+        static const char* h[] = {"ID","Name","MP","Power","Scope"};
+        return (section>=0&&section<5)?h[section]:QVariant();
+    }
+    if (mKind == Weapons) {
+        static const char* h[] = {"ID","Name","Preis","ATK","Anim"};
+        return (section>=0&&section<5)?h[section]:QVariant();
+    }
+    static const char* h[] = {"ID","Name","ExpBase"};
+    return (section>=0&&section<3)?h[section]:QVariant();
+}
+QVariant SimpleDbTableModel::data(const QModelIndex& index, int role) const {
+    if (!index.isValid() || (role != Qt::DisplayRole && role != Qt::EditRole)) return {};
+    auto& db = rpg::Database::Get();
+    const int r = index.row(), c = index.column();
+    if (mKind == Skills) {
+        auto& s = db.Skills()[(size_t)r];
+        switch (c) {
+            case 0: return s.id; case 1: return QString::fromStdString(s.name);
+            case 2: return s.mpCost; case 3: return s.power; case 4: return s.scope;
+        }
+    } else if (mKind == Weapons) {
+        auto& w = db.Weapons()[(size_t)r];
+        switch (c) {
+            case 0: return w.id; case 1: return QString::fromStdString(w.name);
+            case 2: return w.price; case 3: return w.atk; case 4: return w.animationId;
+        }
+    } else {
+        auto& cl = db.Classes()[(size_t)r];
+        switch (c) {
+            case 0: return cl.id; case 1: return QString::fromStdString(cl.name);
+            case 2: return cl.expBase;
+        }
+    }
+    return {};
+}
+bool SimpleDbTableModel::setData(const QModelIndex& index, const QVariant& value, int role) {
+    if (!index.isValid() || role != Qt::EditRole) return false;
+    auto& db = rpg::Database::Get();
+    const int r = index.row(), c = index.column();
+    if (mKind == Skills) {
+        auto& s = db.Skills()[(size_t)r];
+        if (c==0) s.id=value.toInt(); else if (c==1) s.name=value.toString().toStdString();
+        else if (c==2) s.mpCost=value.toInt(); else if (c==3) s.power=value.toInt();
+        else if (c==4) s.scope=value.toInt(); else return false;
+    } else if (mKind == Weapons) {
+        auto& w = db.Weapons()[(size_t)r];
+        if (c==0) w.id=value.toInt(); else if (c==1) w.name=value.toString().toStdString();
+        else if (c==2) w.price=value.toInt(); else if (c==3) w.atk=value.toInt();
+        else if (c==4) w.animationId=value.toInt(); else return false;
+    } else {
+        auto& cl = db.Classes()[(size_t)r];
+        if (c==0) cl.id=value.toInt(); else if (c==1) cl.name=value.toString().toStdString();
+        else if (c==2) cl.expBase=value.toInt(); else return false;
+    }
+    emit dataChanged(index, index);
+    return true;
+}
+Qt::ItemFlags SimpleDbTableModel::flags(const QModelIndex& index) const {
+    if (!index.isValid()) return Qt::NoItemFlags;
+    return Qt::ItemIsSelectable | Qt::ItemIsEnabled | Qt::ItemIsEditable;
+}
+bool SimpleDbTableModel::insertRows(int row, int count, const QModelIndex& parent) {
+    if (parent.isValid()) return false;
+    auto& db = rpg::Database::Get();
+    beginInsertRows(parent, row, row+count-1);
+    for (int i=0;i<count;++i) {
+        if (mKind == Skills) {
+            rpg::SkillData s; s.id = db.Skills().empty()?1:db.Skills().back().id+1;
+            s.name = "Skill "+std::to_string(s.id);
+            db.Skills().insert(db.Skills().begin()+row+i, s);
+        } else if (mKind == Weapons) {
+            rpg::WeaponData w; w.id = db.Weapons().empty()?1:db.Weapons().back().id+1;
+            w.name = "Weapon "+std::to_string(w.id);
+            db.Weapons().insert(db.Weapons().begin()+row+i, w);
+        } else {
+            rpg::ClassData cl; cl.id = db.Classes().empty()?1:db.Classes().back().id+1;
+            cl.name = "Class "+std::to_string(cl.id);
+            db.Classes().insert(db.Classes().begin()+row+i, cl);
+        }
+    }
+    endInsertRows();
+    return true;
+}
+bool SimpleDbTableModel::removeRows(int row, int count, const QModelIndex& parent) {
+    if (parent.isValid()) return false;
+    auto& db = rpg::Database::Get();
+    beginRemoveRows(parent, row, row+count-1);
+    if (mKind == Skills) db.Skills().erase(db.Skills().begin()+row, db.Skills().begin()+row+count);
+    else if (mKind == Weapons) db.Weapons().erase(db.Weapons().begin()+row, db.Weapons().begin()+row+count);
+    else db.Classes().erase(db.Classes().begin()+row, db.Classes().begin()+row+count);
+    endRemoveRows();
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Dock
 // ---------------------------------------------------------------------------
@@ -296,6 +413,30 @@ void QtDatabaseEditorDock::buildUi() {
     mEnemiesView->setAlternatingRowColors(true);
     mTabs->addTab(mEnemiesView, "Enemies");
 
+    mSkillsModel = new SimpleDbTableModel(SimpleDbTableModel::Skills, this);
+    mSkillsView = new QTableView(mTabs);
+    mSkillsView->setModel(mSkillsModel);
+    mSkillsView->horizontalHeader()->setStretchLastSection(true);
+    mSkillsView->setSelectionBehavior(QAbstractItemView::SelectRows);
+    mSkillsView->setAlternatingRowColors(true);
+    mTabs->addTab(mSkillsView, "Skills");
+
+    mWeaponsModel = new SimpleDbTableModel(SimpleDbTableModel::Weapons, this);
+    mWeaponsView = new QTableView(mTabs);
+    mWeaponsView->setModel(mWeaponsModel);
+    mWeaponsView->horizontalHeader()->setStretchLastSection(true);
+    mWeaponsView->setSelectionBehavior(QAbstractItemView::SelectRows);
+    mWeaponsView->setAlternatingRowColors(true);
+    mTabs->addTab(mWeaponsView, "Weapons");
+
+    mClassesModel = new SimpleDbTableModel(SimpleDbTableModel::Classes, this);
+    mClassesView = new QTableView(mTabs);
+    mClassesView->setModel(mClassesModel);
+    mClassesView->horizontalHeader()->setStretchLastSection(true);
+    mClassesView->setSelectionBehavior(QAbstractItemView::SelectRows);
+    mClassesView->setAlternatingRowColors(true);
+    mTabs->addTab(mClassesView, "Classes");
+
     auto* sys = new QWidget(mTabs);
     auto* form = new QFormLayout(sys);
     mGameTitle = new QLineEdit(sys);
@@ -326,6 +467,9 @@ void QtDatabaseEditorDock::refresh() {
     if (mActorsModel) mActorsModel->reload();
     if (mItemsModel) mItemsModel->reload();
     if (mEnemiesModel) mEnemiesModel->reload();
+    if (mSkillsModel) mSkillsModel->reload();
+    if (mWeaponsModel) mWeaponsModel->reload();
+    if (mClassesModel) mClassesModel->reload();
     syncSystemForm();
 }
 
@@ -380,16 +524,14 @@ void QtDatabaseEditorDock::onReload() {
 
 void QtDatabaseEditorDock::onAddRow() {
     const int tab = mTabs->currentIndex();
-    if (tab == 0) {
-        const int r = mActorsModel->rowCount();
-        mActorsModel->insertRows(r, 1);
-    } else if (tab == 1) {
-        const int r = mItemsModel->rowCount();
-        mItemsModel->insertRows(r, 1);
-    } else if (tab == 2) {
-        const int r = mEnemiesModel->rowCount();
-        mEnemiesModel->insertRows(r, 1);
-    }
+    QAbstractTableModel* model = nullptr;
+    if (tab == 0) model = mActorsModel;
+    else if (tab == 1) model = mItemsModel;
+    else if (tab == 2) model = mEnemiesModel;
+    else if (tab == 3) model = mSkillsModel;
+    else if (tab == 4) model = mWeaponsModel;
+    else if (tab == 5) model = mClassesModel;
+    if (model) model->insertRows(model->rowCount(), 1);
 }
 
 void QtDatabaseEditorDock::onRemoveRow() {
@@ -399,6 +541,9 @@ void QtDatabaseEditorDock::onRemoveRow() {
     if (tab == 0) { view = mActorsView; model = mActorsModel; }
     else if (tab == 1) { view = mItemsView; model = mItemsModel; }
     else if (tab == 2) { view = mEnemiesView; model = mEnemiesModel; }
+    else if (tab == 3) { view = mSkillsView; model = mSkillsModel; }
+    else if (tab == 4) { view = mWeaponsView; model = mWeaponsModel; }
+    else if (tab == 5) { view = mClassesView; model = mClassesModel; }
     else return;
     const auto rows = view->selectionModel()->selectedRows();
     if (rows.isEmpty()) return;

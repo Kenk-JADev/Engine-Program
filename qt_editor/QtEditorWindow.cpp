@@ -3,6 +3,7 @@
 #include "QtCodeWorkspace.h"
 #include "QtMapEditorDock.h"
 #include "QtDatabaseEditorDock.h"
+#include "QtEventEditorDock.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Scene.h"
@@ -14,6 +15,7 @@
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/CommandHistory.h"
 #include "rpgmaker3d/ScriptManager.h"
+#include "rpgmaker3d/EventSystem.h"
 #ifdef RPGMAKER3D_ENABLE_RMLUI
 #include "rpgmaker3d/RmlUiSystem.h"
 #endif
@@ -221,6 +223,7 @@ void QtEditorWindow::buildMenus() {
     mViewMenu->addAction(mDockProperties->toggleViewAction());
     if (mDockMap) mViewMenu->addAction(mDockMap->toggleViewAction());
     if (mDockDatabase) mViewMenu->addAction(mDockDatabase->toggleViewAction());
+    if (mDockEvents) mViewMenu->addAction(mDockEvents->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
 #ifdef RPGMAKER3D_ENABLE_RMLUI
     mViewMenu->addSeparator();
@@ -239,7 +242,7 @@ void QtEditorWindow::buildMenus() {
     mHelp->addAction("Ueber", this, [this]() {
         QMessageBox::about(this, "RPG Maker 3D Qt Editor",
             "Qt-basierter Editor (ImGui entfernt):\n"
-            "- Docks: Hierarchie, Eigenschaften, Map-Editor, Database, Konsole\n"
+            "- Docks: Hierarchie, Map, Database, Events, Code, Konsole\n"
             "- Game View (QOpenGLWidget) + Tile-Malen\n"
             "- Code Workspace: Ruby/C++ mit Syntax-Highlighting\n"
             "- RmlUi-Input-Bruecke im Game View (F9)\n"
@@ -301,15 +304,26 @@ void QtEditorWindow::buildDocks() {
     mDockDatabase->setWidget(mDbDockWidget);
     addDockWidget(Qt::RightDockWidgetArea, mDockDatabase);
     tabifyDockWidget(mDockMap, mDockDatabase);
+
+    mDockEvents = new QDockWidget("Events", this);
+    mEventDockWidget = new QtEventEditorDock(mEngine.get(), mDockEvents);
+    mDockEvents->setWidget(mEventDockWidget);
+    addDockWidget(Qt::RightDockWidgetArea, mDockEvents);
+    tabifyDockWidget(mDockDatabase, mDockEvents);
     mDockProperties->raise();
 
     connect(mMapDockWidget, &QtMapEditorDock::logMessage, this, [this](const QString& m) { log(m); });
     connect(mDbDockWidget, &QtDatabaseEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mEventDockWidget, &QtEventEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mEventDockWidget, &QtEventEditorDock::eventsChanged, this, [this]() {
+        // nothing heavy – hierarchy is entities, not events
+    });
     connect(mMapDockWidget, &QtMapEditorDock::paintStateChanged, this, [this]() {
         if (!mView || !mMapDockWidget) return;
         mView->setPaintMode(mMapDockWidget->paintEnabled());
         mView->setPaintTile(mMapDockWidget->selectedTile());
         mView->setPaintLayer(mMapDockWidget->selectedLayer());
+        mView->setBrushMode(mMapDockWidget->brushMode());
     });
     connect(mMapDockWidget, &QtMapEditorDock::mapLoaded, this, [this]() {
         setSelectedEntity(-1);
@@ -325,7 +339,7 @@ void QtEditorWindow::buildDocks() {
     log("Qt-Editor gestartet (ohne ImGui).");
     log("  Tab 'Game View'  = 3D-Szene / Playtest / Tile-Malen");
     log("  Tab 'Code'       = Ruby-Scripts + C++ Engine-API (Syntax-HL)");
-    log("  Docks: Hierarchie | Eigenschaften | Map-Editor | Database | Konsole");
+    log("  Docks: Hierarchie | Eigenschaften | Map | Database | Events | Konsole");
     log("  F9 = RmlUi HUD umschalten (Input im Game View aktiv)");
     log("Datei -> Projekt oeffnen... um loszulegen.");
 }
@@ -566,6 +580,8 @@ void QtEditorWindow::saveScenePackage() {
     mEngine->SaveScene(pp + "/scene.json");
     mEngine->GetMap().Save(proj.GetMapPath(1));
     rpg::Database::Get().Save(pp);
+    const int mapId = rpg::Database::Get().System().startMapId;
+    rpg::EventSystem::Get().SaveMapEvents(mapId > 0 ? mapId : 1, pp);
     proj.Save();
 }
 
@@ -576,6 +592,7 @@ void QtEditorWindow::afterProjectChanged() {
     if (mCode) mCode->refresh();
     if (mMapDockWidget) mMapDockWidget->refresh();
     if (mDbDockWidget) mDbDockWidget->refresh();
+    if (mEventDockWidget) mEventDockWidget->refresh();
 }
 
 // ---------------------------------------------------------------------------

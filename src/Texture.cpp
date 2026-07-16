@@ -19,6 +19,7 @@ bool Texture::LoadFromFile(const std::string& path) {
         return false;
     }
 
+    if (mTextureID != 0) Delete();
     glGenTextures(1, &mTextureID);
     glBindTexture(GL_TEXTURE_2D, mTextureID);
 
@@ -33,6 +34,16 @@ bool Texture::LoadFromFile(const std::string& path) {
 
     glBindTexture(GL_TEXTURE_2D, 0);
     stbi_image_free(data);
+    mPath = path;
+    return true;
+}
+
+bool Texture::ReadPixelsRGBA(std::vector<unsigned char>& outPixels) const {
+    if (mTextureID == 0 || mWidth <= 0 || mHeight <= 0) return false;
+    outPixels.resize(static_cast<size_t>(mWidth) * static_cast<size_t>(mHeight) * 4u);
+    glBindTexture(GL_TEXTURE_2D, mTextureID);
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, outPixels.data());
+    glBindTexture(GL_TEXTURE_2D, 0);
     return true;
 }
 

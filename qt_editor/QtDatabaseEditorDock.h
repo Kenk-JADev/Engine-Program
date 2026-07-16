@@ -66,6 +66,25 @@ public:
     bool removeRows(int row, int count, const QModelIndex& parent = QModelIndex()) override;
 };
 
+// Generic helper used for Skills / Weapons / Classes (column schema via type id)
+class SimpleDbTableModel : public QAbstractTableModel {
+    Q_OBJECT
+public:
+    enum Kind { Skills, Weapons, Classes };
+    explicit SimpleDbTableModel(Kind kind, QObject* parent = nullptr);
+    void reload();
+    int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex& parent = QModelIndex()) const override;
+    QVariant data(const QModelIndex& index, int role) const override;
+    bool setData(const QModelIndex& index, const QVariant& value, int role) override;
+    QVariant headerData(int section, Qt::Orientation o, int role) const override;
+    Qt::ItemFlags flags(const QModelIndex& index) const override;
+    bool insertRows(int row, int count, const QModelIndex& parent = QModelIndex()) override;
+    bool removeRows(int row, int count, const QModelIndex& parent = QModelIndex()) override;
+private:
+    Kind mKind;
+};
+
 class QtDatabaseEditorDock : public QWidget {
     Q_OBJECT
 public:
@@ -95,6 +114,12 @@ private:
     ActorsTableModel* mActorsModel = nullptr;
     ItemsTableModel* mItemsModel = nullptr;
     EnemiesTableModel* mEnemiesModel = nullptr;
+    SimpleDbTableModel* mSkillsModel = nullptr;
+    SimpleDbTableModel* mWeaponsModel = nullptr;
+    SimpleDbTableModel* mClassesModel = nullptr;
+    QTableView* mSkillsView = nullptr;
+    QTableView* mWeaponsView = nullptr;
+    QTableView* mClassesView = nullptr;
 
     QLineEdit* mGameTitle = nullptr;
     QLineEdit* mCurrency = nullptr;

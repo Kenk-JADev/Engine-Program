@@ -26,6 +26,7 @@
 #include <QUrl>
 #include <QFileInfo>
 #include <QDir>
+#include <QTextCursor>
 
 namespace qt_editor {
 
@@ -107,8 +108,18 @@ void QtCodeWorkspace::buildUi() {
     tb->addSeparator();
     mRunAction = tb->addAction("Ausfuehren", this, &QtCodeWorkspace::runCurrent);
     tb->addAction("Alle ausfuehren", this, &QtCodeWorkspace::runAll);
+    tb->addAction("Hot-Reload", this, &QtCodeWorkspace::onHotReload);
     tb->addSeparator();
     tb->addAction("Extern oeffnen", this, &QtCodeWorkspace::onOpenExternal);
+    tb->addSeparator();
+    tb->addWidget(new QLabel(" Suchen: ", tb));
+    mFindEdit = new QLineEdit(tb);
+    mFindEdit->setPlaceholderText("Ctrl+F");
+    mFindEdit->setMaximumWidth(180);
+    tb->addWidget(mFindEdit);
+    tb->addAction("Find", this, &QtCodeWorkspace::onFind);
+    tb->addAction("Next", this, &QtCodeWorkspace::onFindNext);
+    connect(mFindEdit, &QLineEdit::returnPressed, this, &QtCodeWorkspace::onFind);
 
     tb->addSeparator();
     tb->addWidget(new QLabel(" Snippet: ", tb));
@@ -506,6 +517,7 @@ void QtCodeWorkspace::loadRubyFile(int index) {
     mCurrentBuffer = QString::fromStdString(s->content);
     mEditor->setPlainText(mCurrentBuffer);
     mEditor->setReadOnly(mEngine->IsPlaying()); // waehrend Playtest schreibgeschuetzt
+    mPathLabel->setStyleSheet("");
     mPathLabel->setText(mCurrentPath);
     mDirty = s->modified;
     mLoading = false;
@@ -624,18 +636,89 @@ void QtCodeWorkspace::runCurrent() {
     flushCurrentToManager();
     auto& scripts = mEngine->GetScriptManager().GetScripts();
     if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
-    const std::string& code = scripts[mCurrentIndex]->content;
-    const bool ok = mEngine->GetRubyVM().ExecuteString(code);
-    emit logMessage(ok
-        ? QString("Ruby ausgefuehrt: %1").arg(mCurrentName)
-        : QString("Ruby-Fehler in: %1 (siehe engine.log)").arg(mCurrentName));
+    auto& script = scripts[static_cast<size_t>(mCurrentIndex)];
+    const bool ok = mEngine->GetRubyVM().ExecuteString(script->content, script->name);
+    if (ok) {
+        emit logMessage(QString("Ruby OK: %1").arg(mCurrentName));
+        showRubyError(QString());
+    } else {
+        const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
+        emit logMessage(QString("Ruby-Fehler in %1: %2").arg(mCurrentName, err));
+        showRubyError(err);
+    }
 }
 
 void QtCodeWorkspace::runAll() {
     if (!mEngine) return;
     if (mLanguage == CodeLanguage::Ruby) flushCurrentToManager();
     mEngine->GetScriptManager().ExecuteAllScripts();
-    emit logMessage("Alle Ruby-Scripts ausgefuehrt (Load-Order).");
+    if (mEngine->GetRubyVM().HasError()) {
+        const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
+        emit logMessage("Ruby-Fehler beim Ausfuehren aller Scripts: " + err);
+        showRubyError(err);
+    } else {
+        emit logMessage("Alle Ruby-Scripts ausgefuehrt (Load-Order).");
+        showRubyError(QString());
+    }
+}
+
+void QtCodeWorkspace::hotReloadAll() {
+    if (!mEngine) return;
+    if (mLanguage == CodeLanguage::Ruby) {
+        flushCurrentToManager();
+        saveAll();
+    }
+    mEngine->GetScriptManager().ExecuteAllScripts();
+    if (mEngine->GetRubyVM().HasError()) {
+        showRubyError(QString::fromStdString(mEngine->GetRubyVM().GetLastError()));
+        emit logMessage("Hot-Reload mit Fehlern – siehe Konsole.");
+    } else {
+        showRubyError(QString());
+        emit logMessage("Hot-Reload OK (alle Scripts neu ausgefuehrt).");
+    }
+}
+
+void QtCodeWorkspace::onHotReload() { hotReloadAll(); }
+
+void QtCodeWorkspace::showRubyError(const QString& err) {
+    if (!mPathLabel) return;
+    if (err.isEmpty()) {
+        mPathLabel->setStyleSheet("");
+        if (!mCurrentPath.isEmpty()) mPathLabel->setText(mCurrentPath);
+        return;
+    }
+    mPathLabel->setStyleSheet("color:#ff6666; font-weight:bold;");
+    mPathLabel->setText(QString("RUBY ERROR: %1").arg(err));
+}
+
+void QtCodeWorkspace::onFind() {
+    if (!mEditor || !mFindEdit) return;
+    mLastFind = mFindEdit->text();
+    mFindPos = 0;
+    onFindNext();
+}
+
+void QtCodeWorkspace::onFindNext() {
+    if (!mEditor || mLastFind.isEmpty()) {
+        if (mFindEdit) mLastFind = mFindEdit->text();
+    }
+    if (mLastFind.isEmpty()) return;
+    QString text = mEditor->toPlainText();
+    int pos = text.indexOf(mLastFind, mFindPos, Qt::CaseInsensitive);
+    if (pos < 0 && mFindPos > 0) {
+        mFindPos = 0;
+        pos = text.indexOf(mLastFind, 0, Qt::CaseInsensitive);
+    }
+    if (pos < 0) {
+        emit logMessage(QString("Nicht gefunden: %1").arg(mLastFind));
+        return;
+    }
+    QTextCursor c = mEditor->textCursor();
+    c.setPosition(pos);
+    c.setPosition(pos + mLastFind.size(), QTextCursor::KeepAnchor);
+    mEditor->setTextCursor(c);
+    mEditor->setFocus();
+    mFindPos = pos + mLastFind.size();
 }
 
 void QtCodeWorkspace::onNewRubyScript() {
