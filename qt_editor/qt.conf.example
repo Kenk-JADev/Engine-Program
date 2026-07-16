@@ -1,0 +1,4 @@
+; Optional: neben RPGMaker3D.exe legen als qt.conf
+; (nur noetig wenn DPI-Warnung trotz Fix bleibt)
+[Platforms]
+WindowsArguments = dpiawareness=1

@@ -5,10 +5,25 @@
 
 #include <QApplication>
 #include <QSurfaceFormat>
+#include <QCoreApplication>
+#include <QGuiApplication>
 
 #include "QtEditorWindow.h"
 
+// Windows: Qt 6 setzt DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 selbst.
+// Manifest (app.manifest) deklariert dasselbe. Kein manuelles
+// SetProcessDpiAwarenessContext vor QApplication – sonst "Zugriff verweigert".
+
 int main(int argc, char** argv) {
+    // High-DPI: Qt 6 default ist bereits passend; Attribute nur absichern.
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+#endif
+    // Rounding-Policy: schaerfere UI auf gemischten Monitoren
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+
     // GL 3.3 Core (wie SDL-Pfad: EngineConfig::OPENGL_MAJOR/MINOR)
     QSurfaceFormat fmt;
     fmt.setRenderableType(QSurfaceFormat::OpenGL);

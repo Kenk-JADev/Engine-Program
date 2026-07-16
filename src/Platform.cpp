@@ -121,21 +121,50 @@ void Platform::OpenURL(const std::string& url) {
 
 void Platform::SetDPIAware() {
 #ifdef _WIN32
-    // Für Windows 10+ high DPI
+    // Nur einmal pro Prozess setzen. Windows erlaubt keinen zweiten Wechsel
+    // (Qt, Manifest und Engine rufen das sonst mehrfach auf -> "Zugriff verweigert").
+    static bool s_done = false;
+    if (s_done) return;
+    s_done = true;
+
+    // 1) Bevorzugt Per-Monitor V2 (Windows 10 1703+) – gleiche Default wie Qt 6
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((HANDLE)-4)
+#endif
     HMODULE user32 = LoadLibraryA("user32.dll");
+    if (user32) {
+        typedef BOOL(WINAPI* SetProcessDpiAwarenessContextFunc)(HANDLE);
+        auto setCtx = (SetProcessDpiAwarenessContextFunc)GetProcAddress(
+            user32, "SetProcessDpiAwarenessContext");
+        if (setCtx) {
+            // Wenn Manifest/Qt es schon gesetzt hat: Fehler ignorieren (ACCESS_DENIED)
+            setCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            FreeLibrary(user32);
+            return;
+        }
+        FreeLibrary(user32);
+    }
+
+    // 2) Fallback: Shcore SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE=2)
+    HMODULE shcore = LoadLibraryA("Shcore.dll");
+    if (shcore) {
+        typedef HRESULT(WINAPI* SetProcessDpiAwarenessFunc)(int);
+        auto setAwareness = (SetProcessDpiAwarenessFunc)GetProcAddress(shcore, "SetProcessDpiAwareness");
+        if (setAwareness) {
+            setAwareness(2);
+            FreeLibrary(shcore);
+            return;
+        }
+        FreeLibrary(shcore);
+    }
+
+    // 3) Sehr alter Fallback
+    user32 = LoadLibraryA("user32.dll");
     if (user32) {
         typedef BOOL(WINAPI* SetProcessDPIAwareFunc)();
         auto setDPIAware = (SetProcessDPIAwareFunc)GetProcAddress(user32, "SetProcessDPIAware");
         if (setDPIAware) setDPIAware();
         FreeLibrary(user32);
-    }
-    // Try SetProcessDpiAwarenessContext (Windows 10 1703+)
-    HMODULE shcore = LoadLibraryA("Shcore.dll");
-    if (shcore) {
-        typedef HRESULT(WINAPI* SetProcessDpiAwarenessFunc)(int);
-        auto setAwareness = (SetProcessDpiAwarenessFunc)GetProcAddress(shcore, "SetProcessDpiAwareness");
-        if (setAwareness) setAwareness(2); // PROCESS_PER_MONITOR_DPI_AWARE
-        FreeLibrary(shcore);
     }
 #endif
 }

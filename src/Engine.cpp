@@ -61,7 +61,11 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     RPG_LOG_INFO(std::string(EngineConfig::NAME) + " v" + EngineConfig::VERSION + " - Init started [" + RPG_PLATFORM_NAME + "]");
 
     // Plattform
+    // Im Qt-Host setzt Qt die DPI-Awareness (PerMonitorV2). Ein zweiter
+    // SetProcessDpiAwarenessContext-Aufruf schlaegt mit "Zugriff verweigert" fehl.
+#ifndef RPGMAKER3D_EDITOR_QT
     Platform::SetDPIAware();
+#endif
     RPG_LOG_INFO("Working Dir: " + Platform::GetWorkingDirectory());
     RPG_LOG_INFO("Exe Path: " + Platform::GetExecutablePath());
 #ifdef _WIN32
