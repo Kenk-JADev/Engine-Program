@@ -96,3 +96,15 @@ noch das historische GameUI-ImGui-Overlay (kein Editor).
 ## Lizenz
 
 Qt Widgets: LGPL/kommerziell. Dynamisches Linken (`windeployqt`) ist unproblematisch.
+
+## CI (GitHub Actions)
+
+Der aktuelle CI (`.github/workflows/Main.yml`) baut ohne installiertes Qt:
+CMake deaktiviert den Qt-Editor soft und nutzt SDL-`main.cpp` (Player + Core).
+
+**Vollstaendiger Qt-CI** (aqtinstall + `x64-windows` + `windeployqt`) liegt in:
+
+`BUILD-WINDOWS-WORKFLOW.yml`
+
+Maintainer: Inhalt nach `.github/workflows/Main.yml` kopieren und pushen
+(der Arena-Bot hat oft keine `workflows`-Permission).
