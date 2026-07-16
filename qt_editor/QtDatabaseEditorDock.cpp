@@ -464,6 +464,10 @@ void QtDatabaseEditorDock::buildUi() {
 }
 
 void QtDatabaseEditorDock::refresh() {
+    // Die Models binden an den globalen Database-Singleton (auch vor der
+    // Engine-Init gueltig). Trotzdem einheitlich guarden, damit engineReady()
+    // die Projekt-Daten nach der Initialisierung sauber nachlaedt.
+    if (!mEngine || !mEngine->IsInitialized()) return;
     if (mActorsModel) mActorsModel->reload();
     if (mItemsModel) mItemsModel->reload();
     if (mEnemiesModel) mEnemiesModel->reload();

@@ -43,6 +43,13 @@ public:
     bool IsRunning() const { return mRunning; }
     void RequestQuit() { mRunning = false; }
 
+    // Gibt an, ob Initialize()/InitializeEmbedded() erfolgreich durchlaufen
+    // wurde. WICHTIG: Die Qt-Docks rufen refresh() im Konstruktor auf, der
+    // Engine-Subsysteme dereferenziert. Vor der Initialisierung sind diese
+    // noch nullptr -> ohne diesen Guard käme es zu einem Null-Dereferenz-
+    // Absturz, bevor das Editor-Fenster überhaupt sichtbar wird.
+    bool IsInitialized() const { return mInitialized; }
+
     Window& GetWindow() { return *mWindow; }
     Renderer& GetRenderer() { return *mRenderer; }
     Input& GetInput() { return *mInput; }
@@ -126,6 +133,7 @@ private:
     Mesh mGridMesh;
 
     bool mRunning = false;
+    bool mInitialized = false;
     bool mEditorMode = true;
     bool mPlayMode = false;
     bool mPlayModeFollowPlayer = true;

@@ -109,7 +109,15 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     mInput = std::make_unique<Input>();
     mCommandHistory = std::make_unique<CommandHistory>();
     mRubyVM = std::make_unique<RubyVM>();
-    mRubyVM->Initialize(this);
+    try {
+        if (!mRubyVM->Initialize(this)) {
+            // Ruby ist optional: VM-Objekt bleibt erhalten (mMrb == nullptr),
+            // ExecuteString/ExecuteFile/Update liefern dann sauber false.
+            RPG_LOG_WARN("RubyVM-Initialisierung fehlgeschlagen - Engine laeuft ohne Ruby-Scripting");
+        }
+    } catch (const std::exception& e) {
+        RPG_LOG_WARN(std::string("RubyVM-Initialisierung warf Exception - Engine laeuft ohne Ruby: ") + e.what());
+    }
 
     mScriptManager = std::make_unique<ScriptManager>();
     mScriptManager->SetRubyVM(mRubyVM.get());
@@ -145,24 +153,36 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     }
 
     // Projekt anlegen / laden
-    if (std::filesystem::exists("./SampleProject/project.json")) {
-        mProject->Load("./SampleProject");
-        RPG_LOG_INFO("Loaded SampleProject");
-        // Try to load real database from project
-        if (Database::Get().Load(mProject->GetProjectPath())) {
-            RPG_LOG_INFO("Database loaded from project: " + mProject->GetProjectPath());
+    try {
+        if (std::filesystem::exists("./SampleProject/project.json")) {
+            mProject->Load("./SampleProject");
+            RPG_LOG_INFO("Loaded SampleProject");
+            // Try to load real database from project
+            try {
+                if (Database::Get().Load(mProject->GetProjectPath())) {
+                    RPG_LOG_INFO("Database loaded from project: " + mProject->GetProjectPath());
+                }
+            } catch (const std::exception& e) {
+                RPG_LOG_ERROR(std::string("Database::Load fehlgeschlagen (Defaults bleiben aktiv): ") + e.what());
+            }
+        } else {
+            mProject->New("./SampleProject", "Sample RPG 3D");
+            RPG_LOG_INFO("Created new SampleProject");
         }
-    } else {
-        mProject->New("./SampleProject", "Sample RPG 3D");
-        RPG_LOG_INFO("Created new SampleProject");
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Projekt laden/erzeugen fehlgeschlagen: ") + e.what());
     }
 
     // Load/Create scripts
     if (mScriptManager) {
-        mScriptManager->LoadProjectScripts(mProject->GetProjectPath());
-        // If no scripts exist, create defaults
-        if (mScriptManager->GetScripts().empty()) {
-            mScriptManager->CreateDefaultScripts(mProject->GetProjectPath());
+        try {
+            mScriptManager->LoadProjectScripts(mProject->GetProjectPath());
+            // If no scripts exist, create defaults
+            if (mScriptManager->GetScripts().empty()) {
+                mScriptManager->CreateDefaultScripts(mProject->GetProjectPath());
+            }
+        } catch (const std::exception& e) {
+            RPG_LOG_ERROR(std::string("Script-Laden fehlgeschlagen: ") + e.what());
         }
     }
 
@@ -190,17 +210,21 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     }
     mMap->SetTileset(tileset);
     // Passability-Flags aus Database auf Tileset anwenden
-    if (!Database::Get().Tilesets().empty()) {
-        const auto& flags = Database::Get().Tilesets()[0].flags;
-        for (size_t i = 0; i < flags.size(); ++i) {
-            if (flags[i]) {
-                rpg::TileInfo ti;
-                if (const auto* old = tileset->GetTileInfo((int)i)) ti = *old;
-                ti.id = (int)i;
-                ti.solid = true;
-                tileset->SetTileInfo((int)i, ti);
+    try {
+        if (!Database::Get().Tilesets().empty()) {
+            const auto& flags = Database::Get().Tilesets()[0].flags;
+            for (size_t i = 0; i < flags.size(); ++i) {
+                if (flags[i]) {
+                    rpg::TileInfo ti;
+                    if (const auto* old = tileset->GetTileInfo((int)i)) ti = *old;
+                    ti.id = (int)i;
+                    ti.solid = true;
+                    tileset->SetTileInfo((int)i, ti);
+                }
             }
         }
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Tileset-Passability anwenden fehlgeschlagen: ") + e.what());
     }
 
     // Bind GameMap for collision checks
@@ -259,6 +283,7 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     };
 
     mRunning = true;
+    mInitialized = true;
     RPG_LOG_INFO("Engine initialized successfully");
     return true;
 }
@@ -335,6 +360,7 @@ void Engine::SetPlaying(bool playing) {
 
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
+    mInitialized = false;
 // ImGui/Editor shutdown removed
     mGridMesh.Delete();
 #ifdef RPGMAKER3D_ENABLE_RMLUI

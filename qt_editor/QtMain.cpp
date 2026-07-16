@@ -8,6 +8,7 @@
 #include <QByteArray>
 
 #include "rpgmaker3d/Platform.h"
+#include "rpgmaker3d/StartupError.h"
 #include "QtEditorWindow.h"
 
 // ============================================================================
@@ -33,7 +34,14 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     // 1) DPI einmal setzen, BEVOR Qt die QPA-Plugin-Init laeuft
     rpg::Platform::SetDPIAware();
+#endif
 
+    // GLOBAL: jede ungefangene Exception (z.B. in QtEditorWindow-Ctor oder
+    // waehrend initializeGL aus dem Event-Loop) soll eine sichtbare Meldung
+    // + engine.log-Eintrag erzeugen, statt lautlos (std::terminate) zu sterben.
+    rpg::InstallStartupTerminateHandler();
+
+#if defined(_WIN32)
     // 2) Qt soll die bekannte, harmlose Doppel-Set-Warnung nicht spammen.
     //    (Qt ruft intern trotzdem SetProcessDpiAwarenessContext auf.)
     {
@@ -69,8 +77,16 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName("RPGMaker3D-Editor-Qt");
     QApplication::setOrganizationName("RPGMaker3D");
 
-    qt_editor::QtEditorWindow window;
-    window.show();
+    try {
+        qt_editor::QtEditorWindow window;
+        window.show();
 
-    return QApplication::exec();
+        return QApplication::exec();
+    } catch (const std::exception& e) {
+        rpg::ReportStartupError("Qt-Editor-Start", e.what());
+        return -3;
+    } catch (...) {
+        rpg::ReportStartupError("Qt-Editor-Start", "Unbekannter Fehler beim Start des Editors.");
+        return -3;
+    }
 }

@@ -155,6 +155,9 @@ void QtMapEditorDock::buildUi() {
 }
 
 void QtMapEditorDock::refresh() {
+    // Engine erst nach initializeGL initialisiert; Konstruktor-Aufruf von
+    // refresh() wuerde GetMap() auf nullptr dereferenzieren.
+    if (!mEngine || !mEngine->IsInitialized()) return;
     rebuildMapList();
     // Layers
     mLayerCombo->blockSignals(true);

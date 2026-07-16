@@ -4,8 +4,10 @@
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/StartupError.h"
 #include <iostream>
 #include <string>
+#include <exception>
 
 void PrintHelp() {
     std::cout << "RPG Maker 3D Engine v" << rpg::EngineConfig::VERSION << "\n"
@@ -29,6 +31,12 @@ int main(int argc, char* argv[]) {
     // Windows DPI Awareness setzen bevor SDL Fenster erstellt wird
     rpg::Platform::SetDPIAware();
 
+    // GLOBAL: jede ungefangene Exception waehrend des Starts soll eine
+    // sichtbare Meldung + engine.log-Eintrag erzeugen, statt lautlos
+    // (std::terminate) zu sterben.
+    rpg::InstallStartupTerminateHandler();
+
+    try {
     std::cout << rpg::EngineConfig::NAME << " v" << rpg::EngineConfig::VERSION
               << " [" << RPG_PLATFORM_NAME << "]" << std::endl;
 
@@ -98,6 +106,15 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Engine beendet. Bye!" << std::endl;
     return 0;
+    } catch (const std::exception& e) {
+        rpg::ReportStartupError("Engine-Start (main)", e.what());
+        std::cerr << "FATAL (Startup): " << e.what() << std::endl;
+        return -3;
+    } catch (...) {
+        rpg::ReportStartupError("Engine-Start (main)", "Unbekannter Fehler beim Start.");
+        std::cerr << "FATAL (Startup): unbekannter Fehler" << std::endl;
+        return -3;
+    }
 }
 
 #ifdef _WIN32

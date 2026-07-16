@@ -66,6 +66,9 @@ void QtAssetBrowserDock::buildUi() {
 }
 
 void QtAssetBrowserDock::refresh() {
+    // Engine erst nach initializeGL initialisiert; GetProject() wuerde sonst
+    // auf nullptr dereferenzieren. Guard, damit engineReady() neu befuellt.
+    if (!mEngine || !mEngine->IsInitialized()) return;
     mRootPath.clear();
     if (mEngine && !mEngine->GetProject().GetProjectPath().empty())
         mRootPath = QString::fromStdString(mEngine->GetProject().GetProjectPath());

@@ -430,6 +430,10 @@ void QtCodeWorkspace::updateHighlighter() {
 }
 
 void QtCodeWorkspace::refresh() {
+    // Engine ist im Qt-Host erst nach initializeGL (GL-Kontext) initialisiert.
+    // Der Konstruktor ruft refresh() auf, bevor das der Fall ist -> Guard,
+    // sonst wuerde GetScriptManager() auf einen nullptr dereferenzieren.
+    if (!mEngine || !mEngine->IsInitialized()) return;
     if (mLanguage == CodeLanguage::Ruby) populateRubyList();
     else populateCppList();
     updateDirtyLabel();

@@ -93,6 +93,11 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
             mView->setPaintLayer(mMapDockWidget->selectedLayer());
         }
         if (mDbDockWidget) mDbDockWidget->refresh();
+        // Diese Docks rufen refresh() bereits im Konstruktor auf, bevor die
+        // Engine initialisiert ist (Guard in refresh()). Hier nachholen,
+        // damit sie mit den echten Projekt-Daten befuellt werden.
+        if (mEventDockWidget) mEventDockWidget->refresh();
+        if (mAssetDockWidget) mAssetDockWidget->refresh();
     });
     connect(mView, &QtGameViewWidget::entityPicked, this, [this](int id) {
         setSelectedEntity(id);

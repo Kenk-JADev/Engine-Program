@@ -231,6 +231,8 @@ void QtEventEditorDock::buildUi() {
 }
 
 void QtEventEditorDock::refresh() {
+    // Engine erst nach initializeGL initialisiert; Guard gegen Null-Deref.
+    if (!mEngine || !mEngine->IsInitialized()) return;
     rebuildEventList();
 }
 

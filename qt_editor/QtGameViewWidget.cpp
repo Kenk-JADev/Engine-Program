@@ -54,8 +54,17 @@ void QtGameViewWidget::initializeGL() {
     }
     mGladLoaded = true;
 
-    if (!mEngine->InitializeEmbedded(width(), height(), true)) {
-        emit engineInitFailed(QStringLiteral("Engine::InitializeEmbedded ist fehlgeschlagen (siehe engine.log)."));
+    try {
+        if (!mEngine->InitializeEmbedded(width(), height(), true)) {
+            emit engineInitFailed(QStringLiteral("Engine::InitializeEmbedded ist fehlgeschlagen (siehe engine.log)."));
+            return;
+        }
+    } catch (const std::exception& e) {
+        emit engineInitFailed(QStringLiteral("Engine-Initialisierung warf Exception: ")
+                              + QString::fromUtf8(e.what()));
+        return;
+    } catch (...) {
+        emit engineInitFailed(QStringLiteral("Engine-Initialisierung warf unbekannte Exception."));
         return;
     }
     mEngineReady = true;
