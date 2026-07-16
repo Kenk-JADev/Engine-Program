@@ -5,34 +5,15 @@
 #include <QSurfaceFormat>
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QByteArray>
 
 #include "QtEditorWindow.h"
 
-// Windows DPI:
-// - app.manifest setzt bereits PerMonitorV2 beim Prozessstart.
-// - Qt 6 ruft standardmaessig SetProcessDpiAwarenessContext(V2) auf.
-// - Der zweite Aufruf schlaegt mit "Zugriff verweigert" fehl und loggt
-//   qt.qpa.window-Warnungen. dpiawareness=-1 = Qt setzt DPI NICHT selbst.
-// Siehe: https://doc.qt.io/qt-6/highdpi.html#configuring-windows
+// DPI: Qt 6 setzt PerMonitorV2 selbst (korrekt und unterstuetzt).
+// app.manifest enthaelt KEINE dpiAwareness mehr, damit es keinen
+// Doppel-Aufruf und keine "Invalid"/"Zugriff verweigert"-Warnungen gibt.
+// Nicht qt.conf mit dpiawareness=-1 verwenden (das ist "Invalid").
 
 int main(int argc, char** argv) {
-#if defined(_WIN32)
-    // Muss VOR QGuiApplication/QApplication gesetzt werden.
-    // Erhaelt bestehendes Platform-Argument, haengt nur dpiawareness an.
-    {
-        QByteArray plat = qgetenv("QT_QPA_PLATFORM");
-        if (plat.isEmpty()) {
-            qputenv("QT_QPA_PLATFORM", "windows:dpiawareness=-1");
-        } else if (!plat.contains("dpiawareness")) {
-            if (plat.startsWith("windows")) {
-                qputenv("QT_QPA_PLATFORM", plat + ":dpiawareness=-1");
-            }
-            // sonst: User hat anderes Plugin gesetzt – nicht anfassen
-        }
-    }
-#endif
-
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);

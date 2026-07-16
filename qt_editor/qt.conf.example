@@ -1,5 +1,9 @@
-; Optional: als "qt.conf" neben RPGMaker3D.exe legen.
-; Unterdrueckt Qt's zweiten DPI-Set-Aufruf (Manifest hat PerMonitorV2 schon).
-; Mit aktuellem QtMain.cpp (QT_QPA_PLATFORM=windows:dpiawareness=-1) meist unnoetig.
-[Platforms]
-WindowsArguments = dpiawareness=-1
+; NICHT mit dpiawareness=-1 verwenden – das ist "Invalid" und erzeugt:
+;   QtWindows::DpiAwareness::Invalid is not supported by current system.
+;
+; DPI wird korrekt gesetzt durch:
+;   - Qt-Editor: Qt 6 Default (PerMonitorV2)
+;   - Player: Platform::SetDPIAware()
+;
+; Diese Datei ist nur ein Platzhalter. Loesche qt.conf neben der EXE,
+; falls du eine mit dpiawareness=-1 angelegt hast.
