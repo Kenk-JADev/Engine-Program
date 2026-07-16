@@ -1044,7 +1044,7 @@ static mrb_value rb_game_var_get(mrb_state* mrb, mrb_value self) {
     (void)self;
     mrb_int id;
     mrb_get_args(mrb, "i", &id);
-    return mrb_int_value(Game::Get().Variables().Get((int)id));
+    return mrb_int_value(mrb, Game::Get().Variables().Get((int)id));
 }
 static mrb_value rb_game_var_set(mrb_state* mrb, mrb_value self) {
     (void)self;

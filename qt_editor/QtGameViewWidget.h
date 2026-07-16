@@ -4,6 +4,10 @@
 // Embedded-Modus und rendert jede paintGL()-Runde den Engine-Frame.
 // Zusaetzlich: Tile-Paint-Modus + RmlUi-Input-Bruecke.
 
+// glad VOR Qt OpenGL, sonst "OpenGL header already included"
+#ifndef GLAD_GL_H_
+#include <glad/gl.h>
+#endif
 #include <QOpenGLWidget>
 #include <QElapsedTimer>
 #include <QPointF>

@@ -333,17 +333,6 @@ void EventSystem::Clear() {
 
 void EventSystem::AddEvent(const MapEvent& ev) {
     for (auto& e : mEvents) if (e.id == ev.id) { e = ev; return; }
-    // Ambient patrol
-    {
-        MoveRoute mr;
-        mr.repeat = true;
-        mr.list.push_back({MoveRouteCode::MoveRight, 0});
-        mr.list.push_back({MoveRouteCode::Wait, 40});
-        mr.list.push_back({MoveRouteCode::MoveLeft, 0});
-        mr.list.push_back({MoveRouteCode::Wait, 40});
-        ev.hasMoveRoute = true;
-        ev.moveRoute = mr;
-    }
     mEvents.push_back(ev);
 }
 
@@ -657,7 +646,6 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
     if (IsAnyEventRunning()) return;
     float best = radius;
     int bestId = -1;
-    UpdateMoveRoutes(dt, playerPos);
 
     for (auto& ev : mEvents) {
         if (!ev.enabled || !ev.IsValid()) continue;

@@ -1,3 +1,6 @@
+// WICHTIG: glad VOR Qt/OpenGL-Headern, sonst gl.h-Doppelinclude.
+#include <glad/gl.h>
+
 #include "QtGameViewWidget.h"
 #include "QtKeyMap.h"
 
@@ -15,8 +18,6 @@
 #include "rpgmaker3d/RmlUiSystem.h"
 #endif
 
-#include <glad/gl.h>
-
 #include <QOpenGLContext>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -24,6 +25,7 @@
 #include <QInputMethodEvent>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 namespace qt_editor {
 
