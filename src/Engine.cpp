@@ -198,7 +198,8 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
 #ifdef RPGMAKER3D_EDITOR_QT
         RPG_LOG_INFO("Qt editor host active (ImGui Editor removed)");
 #else
-        RPG_LOG_INFO("Editor mode without Qt host (Player-style window, no ImGui panels)");
+        RPG_LOG_INFO("Editor mode without Qt host – RmlUi panels (F9) + F5 Playtest. "
+                     "Fuer vollen Qt-Editor: Qt6 + -DRPGMAKER3D_EDITOR_QT=ON -DCMAKE_PREFIX_PATH=<Qt>");
 #endif
     }
 
@@ -474,6 +475,11 @@ void Engine::Update(float dt) {
         // Im Spiel: Pause Menü
         if (GameUI::Get().Pause().IsVisible()) GameUI::Get().Pause().Hide();
         else GameUI::Get().Pause().Show();
+    }
+
+    // F5: Playtest-Toggle im Editor-Modus (SDL-Host ohne Qt / RmlUi-Panel)
+    if (mEditorMode && mInput->IsKeyPressed(Key::F5)) {
+        SetPlaying(!mPlayMode);
     }
 
     // Kamera Navigation (Editor oder Play)

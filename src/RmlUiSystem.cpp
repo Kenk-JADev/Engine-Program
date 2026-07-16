@@ -9,12 +9,14 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <string>
 
 namespace rpg {
 
 // ===========================================================================
 // Embedded demo documents (PoC) - spaeter als .rml/.rcss Dateien im Projekt.
 // ===========================================================================
+// RmlUi CSS: border-shorthand akzeptiert NUR width+color (kein "solid"/border-style).
 static const char* kRc = R"RCSS(
 * { box-sizing: border-box; }
 body {
@@ -25,7 +27,8 @@ body {
 }
 .rpg-window {
     background-color: #1c1c28f2;
-    border: 2px solid #b98a2f;
+    border-width: 2px;
+    border-color: #b98a2f;
     border-radius: 8px;
     padding: 12px;
     width: 300px;
@@ -33,13 +36,15 @@ body {
 .rpg-title {
     font-size: 18px;
     color: #ffd970;
-    border-bottom: 1px solid #b98a2f;
+    border-bottom-width: 1px;
+    border-bottom-color: #b98a2f;
     padding-bottom: 6px;
     margin-bottom: 10px;
 }
 .rpg-button {
     background-color: #2f2f44;
-    border: 1px solid #b98a2f;
+    border-width: 1px;
+    border-color: #b98a2f;
     border-radius: 4px;
     color: #f0e6cc;
     padding: 6px 12px;
@@ -48,52 +53,66 @@ body {
     width: 100%;
     text-align: center;
 }
-.rpg-button:hover { background-color: #454568; border-color: #ffd970; }
+.rpg-button:hover {
+    background-color: #454568;
+    border-color: #ffd970;
+}
 .rpg-button:active { background-color: #1c1c2c; }
 .statbar {
     background-color: #101018;
-    border: 1px solid #5a5a70;
+    border-width: 1px;
+    border-color: #5a5a70;
     border-radius: 3px;
     height: 16px;
     margin: 4px 0 8px 0;
+    width: 260px;
 }
-.statbar .fill { height: 100%; border-radius: 2px; }
+.statbar .fill {
+    height: 100%;
+    border-radius: 2px;
+    min-width: 2px;
+}
 .hpfill { background-color: #c8413c; }
 .mpfill { background-color: #3b6fc8; }
 .statlabel { font-size: 12px; color: #b8b0a0; }
 .badge {
     background-color: #2f2f44;
-    border: 1px solid #5a5a70;
+    border-width: 1px;
+    border-color: #5a5a70;
     border-radius: 4px;
     padding: 2px 8px;
     font-size: 12px;
     color: #9fe0a0;
     display: inline-block;
 }
+.hint { font-size: 12px; color: #a0a0b0; margin-top: 8px; }
 )RCSS";
 
+// data-attr-style statt inline style="width: {{x}}px" (}}px bricht den Rml-Parser).
 static const char* kGameBody = R"RML(
     <div class="rpg-window" style="position: absolute; left: 24px; top: 24px; width: 320px;">
         <div class="rpg-title">RmlUi Game HUD</div>
         <div>Map: <span class="badge">{{map_name}}</span></div>
-        <div style="margin: 6px 0;">FPS: <span class="badge">{{fps}}</span> Modus: <span class="badge">{{mode}}</span></div>
+        <div style="margin: 6px 0;">FPS: <span class="badge">{{fps}}</span>  Modus: <span class="badge">{{mode}}</span></div>
         <div class="statlabel">HP {{hp}} / {{hp_max}}</div>
-        <div class="statbar"><div class="fill hpfill" style="width: {{hp_width}}px;"></div></div>
+        <div class="statbar"><div class="fill hpfill" data-attr-style="{{hp_style}}"></div></div>
         <div class="statlabel">MP {{mp}} / {{mp_max}}</div>
-        <div class="statbar"><div class="fill mpfill" style="width: {{mp_width}}px;"></div></div>
+        <div class="statbar"><div class="fill mpfill" data-attr-style="{{mp_style}}"></div></div>
         <button class="rpg-button" onclick="cmd_damage">Schaden nehmen</button>
         <button class="rpg-button" onclick="cmd_heal">Heilen</button>
+        <div class="hint">F5 Playtest  |  F9 HUD an/aus  |  WASD Kamera</div>
     </div>
 )RML";
 
 static const char* kEditorBody = R"RML(
-    <div class="rpg-window" style="position: absolute; right: 24px; top: 24px; width: 280px;">
-        <div class="rpg-title">RmlUi Editor Panel</div>
-        <div class="statlabel">Getrennter UI-Kontext: "editor" (HUD laeuft im "game"-Kontext)</div>
+    <div class="rpg-window" style="position: absolute; right: 24px; top: 24px; width: 300px;">
+        <div class="rpg-title">RPG Maker 3D</div>
+        <div class="statlabel">{{host_hint}}</div>
         <div style="margin: 8px 0;">FPS: <span class="badge">{{fps}}</span></div>
-        <button class="rpg-button" onclick="cmd_new">Neues Projekt</button>
-        <button class="rpg-button" onclick="cmd_save">Speichern</button>
+        <button class="rpg-button" onclick="cmd_play">Playtest (F5)</button>
+        <button class="rpg-button" onclick="cmd_save">Speichern (Log)</button>
         <button class="rpg-button" onclick="cmd_quit">Beenden</button>
+        <div class="hint">Qt-Editor: mit Qt6 bauen (-DRPGMAKER3D_EDITOR_QT=ON). Ohne Qt: dieser RmlUi-Host.</div>
     </div>
 )RML";
 
@@ -153,15 +172,91 @@ public:
     bool visible = true;
     bool initialized = false;
 
-    // Data-model "engine" state
-    Rml::DataModelHandle model{};
+    // Data-model "engine" state (pro Kontext ein Handle)
+    Rml::DataModelHandle gameModel{};
+    Rml::DataModelHandle editorModel{};
     int fps = 0;
     Rml::String mapName = "Sample Map";
     Rml::String mode = "Editor";
+    Rml::String hostHint = "RmlUi Host (ohne Qt-Fenster)";
+    Rml::String hpStyle = "width: 169px; height: 100%; background-color: #c8413c;";
+    Rml::String mpStyle = "width: 156px; height: 100%; background-color: #3b6fc8;";
     int hp = 65, hpMax = 100;
     int mp = 30, mpMax = 50;
     float fpsTime = 0.0f;
     int fpsFrames = 0;
+
+    void RefreshBarStyles() {
+        const int hpW = hpMax > 0 ? (260 * hp / hpMax) : 0;
+        const int mpW = mpMax > 0 ? (260 * mp / mpMax) : 0;
+        hpStyle = "width: " + std::to_string(hpW) + "px; height: 100%; background-color: #c8413c;";
+        mpStyle = "width: " + std::to_string(mpW) + "px; height: 100%; background-color: #3b6fc8;";
+    }
+
+    void DirtyAll() {
+        auto dirty = [](Rml::DataModelHandle& h) {
+            if (!h) return;
+            h.DirtyVariable("fps");
+            h.DirtyVariable("map_name");
+            h.DirtyVariable("mode");
+            h.DirtyVariable("host_hint");
+            h.DirtyVariable("hp");
+            h.DirtyVariable("hp_max");
+            h.DirtyVariable("mp");
+            h.DirtyVariable("mp_max");
+            h.DirtyVariable("hp_style");
+            h.DirtyVariable("mp_style");
+        };
+        dirty(gameModel);
+        dirty(editorModel);
+    }
+
+    bool BindModel(Rml::Context* ctx, Rml::DataModelHandle& outHandle) {
+        if (!ctx) return false;
+        Rml::DataModelConstructor ctor = ctx->CreateDataModel("engine");
+        if (!ctor) return false;
+        ctor.Bind("fps", &fps);
+        ctor.Bind("map_name", &mapName);
+        ctor.Bind("mode", &mode);
+        ctor.Bind("host_hint", &hostHint);
+        ctor.Bind("hp", &hp);
+        ctor.Bind("hp_max", &hpMax);
+        ctor.Bind("mp", &mp);
+        ctor.Bind("mp_max", &mpMax);
+        ctor.Bind("hp_style", &hpStyle);
+        ctor.Bind("mp_style", &mpStyle);
+        RmlUiSystemImpl* impl = this;
+        ctor.BindEventCallback("cmd_damage", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+            impl->hp = std::max(0, impl->hp - 10);
+            impl->RefreshBarStyles();
+            impl->DirtyAll();
+        });
+        ctor.BindEventCallback("cmd_heal", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+            impl->hp = std::min(impl->hpMax, impl->hp + 20);
+            impl->RefreshBarStyles();
+            impl->DirtyAll();
+        });
+        ctor.BindEventCallback("cmd_new", [](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+            RPG_LOG_INFO("[RmlUi] Editor: Neues Projekt (PoC)");
+        });
+        ctor.BindEventCallback("cmd_save", [](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+            RPG_LOG_INFO("[RmlUi] Editor: Speichern (PoC)");
+        });
+        ctor.BindEventCallback("cmd_play", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+            if (impl->engine) {
+                const bool next = !impl->engine->IsPlaying();
+                impl->engine->SetPlaying(next);
+                impl->mode = next ? "Playtest" : "Editor";
+                impl->DirtyAll();
+                RPG_LOG_INFO(std::string("[RmlUi] Playtest ") + (next ? "ON" : "OFF"));
+            }
+        });
+        ctor.BindEventCallback("cmd_quit", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
+            if (impl->engine) impl->engine->RequestQuit();
+        });
+        outHandle = ctor.GetModelHandle();
+        return true;
+    }
 
     int GetKeyModifiers() const {
         const SDL_Keymod m = SDL_GetModState();
@@ -270,42 +365,19 @@ bool RmlUiSystem::Initialize(Engine* engine) {
         return false;
     }
 
-    // --- Data model "engine" fuer beide Dokumente ---
-    {
-        Rml::DataModelConstructor ctor = m->gameContext->CreateDataModel("engine");
-        if (ctor) {
-            ctor.Bind("fps", &m->fps);
-            ctor.Bind("map_name", &m->mapName);
-            ctor.Bind("mode", &m->mode);
-            ctor.Bind("hp", &m->hp);
-            ctor.Bind("hp_max", &m->hpMax);
-            ctor.Bind("mp", &m->mp);
-            ctor.Bind("mp_max", &m->mpMax);
-            RmlUiSystemImpl* impl = m.get();
-            ctor.BindFunc("hp_width", [impl](Rml::Variant& out) {
-                out = Rml::Variant(260 * impl->hp / impl->hpMax);
-            });
-            ctor.BindFunc("mp_width", [impl](Rml::Variant& out) {
-                out = Rml::Variant(260 * impl->mp / impl->mpMax);
-            });
-            ctor.BindEventCallback("cmd_damage", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-                impl->hp = std::max(0, impl->hp - 10);
-            });
-            ctor.BindEventCallback("cmd_heal", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-                impl->hp = std::min(impl->hpMax, impl->hp + 20);
-            });
-            ctor.BindEventCallback("cmd_new", [](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-                RPG_LOG_INFO("[RmlUi] Editor: Neues Projekt (PoC)");
-            });
-            ctor.BindEventCallback("cmd_save", [](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-                RPG_LOG_INFO("[RmlUi] Editor: Speichern (PoC)");
-            });
-            ctor.BindEventCallback("cmd_quit", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
-                if (impl->engine) impl->engine->RequestQuit();
-            });
-            m->model = ctor.GetModelHandle();
-        }
-    }
+    // Data-Model "engine" in BEIDEN Kontexten (editor-Dokument braucht eigenes Model).
+    m->RefreshBarStyles();
+#ifdef RPGMAKER3D_EDITOR_QT
+    m->hostHint = "Qt-Editor-Host (native Docks + Game View)";
+    m->mode = "Qt-Editor";
+#else
+    m->hostHint = "SDL-Host ohne Qt – RmlUi-Panels aktiv. F5=Playtest, F9=HUD.";
+    m->mode = "Editor";
+#endif
+    if (!m->BindModel(m->gameContext, m->gameModel))
+        RPG_LOG_WARN("[RmlUi] DataModel 'engine' (game) fehlgeschlagen");
+    if (!m->BindModel(m->editorContext, m->editorModel))
+        RPG_LOG_WARN("[RmlUi] DataModel 'engine' (editor) fehlgeschlagen");
 
     m->gameDoc = m->gameContext->LoadDocumentFromMemory(BuildDocument("RPG Maker 3D - Game HUD", kGameBody));
     if (m->gameDoc) m->gameDoc->Show();
@@ -315,7 +387,7 @@ bool RmlUiSystem::Initialize(Engine* engine) {
     if (!m->gameDoc || !m->editorDoc) {
         RPG_LOG_ERROR("[RmlUi] Dokument-Load fehlgeschlagen (siehe RmlUi-Log oben)");
     } else {
-        RPG_LOG_INFO("[RmlUi] PoC initialisiert: 2 Kontexte (editor/game), F9 toggelt Sichtbarkeit");
+        RPG_LOG_INFO("[RmlUi] initialisiert: 2 Kontexte (editor/game), F9 toggelt Sichtbarkeit");
     }
 
     // TextInput nur wenn SDL-Video existiert (im Qt-Editor nicht der Fall)
@@ -398,13 +470,24 @@ bool RmlUiSystem::ProcessEvent(const SDL_Event& e) {
 void RmlUiSystem::Update(float dt) {
     if (!m || !m->initialized) return;
 
-    // FPS (0.5s Intervall)
+    // FPS (0.5s Intervall) + Model-Sync
     m->fpsTime += dt;
     m->fpsFrames++;
     if (m->fpsTime >= 0.5f) {
         m->fps = (int)((float)m->fpsFrames / m->fpsTime + 0.5f);
         m->fpsFrames = 0;
         m->fpsTime = 0.0f;
+        if (m->engine) {
+            m->mode = m->engine->IsPlaying() ? "Playtest" : (
+#ifdef RPGMAKER3D_EDITOR_QT
+                "Qt-Editor"
+#else
+                "Editor"
+#endif
+            );
+        }
+        m->RefreshBarStyles();
+        m->DirtyAll();
     }
 
     if (m->visible) {
