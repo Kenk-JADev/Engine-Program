@@ -1,4 +1,5 @@
-; Optional: neben RPGMaker3D.exe legen als qt.conf
-; (nur noetig wenn DPI-Warnung trotz Fix bleibt)
+; Optional: als "qt.conf" neben RPGMaker3D.exe legen.
+; Unterdrueckt Qt's zweiten DPI-Set-Aufruf (Manifest hat PerMonitorV2 schon).
+; Mit aktuellem QtMain.cpp (QT_QPA_PLATFORM=windows:dpiawareness=-1) meist unnoetig.
 [Platforms]
-WindowsArguments = dpiawareness=1
+WindowsArguments = dpiawareness=-1

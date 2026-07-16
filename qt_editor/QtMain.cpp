@@ -1,37 +1,53 @@
 // RPG Maker 3D - Qt Editor entry point
-// Ersetzt src/main.cpp, wenn RPGMAKER3D_EDITOR_QT=ON:
-// SDL-Fenster + ImGui entfallen; der Editor ist eine native Qt-App
-// (QMainWindow + Dock-Fenster, Game-View als QOpenGLWidget).
+// Ersetzt src/main.cpp, wenn RPGMAKER3D_EDITOR_QT=ON.
 
 #include <QApplication>
 #include <QSurfaceFormat>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QByteArray>
 
 #include "QtEditorWindow.h"
 
-// Windows: Qt 6 setzt DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 selbst.
-// Manifest (app.manifest) deklariert dasselbe. Kein manuelles
-// SetProcessDpiAwarenessContext vor QApplication – sonst "Zugriff verweigert".
+// Windows DPI:
+// - app.manifest setzt bereits PerMonitorV2 beim Prozessstart.
+// - Qt 6 ruft standardmaessig SetProcessDpiAwarenessContext(V2) auf.
+// - Der zweite Aufruf schlaegt mit "Zugriff verweigert" fehl und loggt
+//   qt.qpa.window-Warnungen. dpiawareness=-1 = Qt setzt DPI NICHT selbst.
+// Siehe: https://doc.qt.io/qt-6/highdpi.html#configuring-windows
 
 int main(int argc, char** argv) {
-    // High-DPI: Qt 6 default ist bereits passend; Attribute nur absichern.
+#if defined(_WIN32)
+    // Muss VOR QGuiApplication/QApplication gesetzt werden.
+    // Erhaelt bestehendes Platform-Argument, haengt nur dpiawareness an.
+    {
+        QByteArray plat = qgetenv("QT_QPA_PLATFORM");
+        if (plat.isEmpty()) {
+            qputenv("QT_QPA_PLATFORM", "windows:dpiawareness=-1");
+        } else if (!plat.contains("dpiawareness")) {
+            if (plat.startsWith("windows")) {
+                qputenv("QT_QPA_PLATFORM", plat + ":dpiawareness=-1");
+            }
+            // sonst: User hat anderes Plugin gesetzt – nicht anfassen
+        }
+    }
+#endif
+
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 #endif
-    // Rounding-Policy: schaerfere UI auf gemischten Monitoren
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
-    // GL 3.3 Core (wie SDL-Pfad: EngineConfig::OPENGL_MAJOR/MINOR)
+    // GL 3.3 Core
     QSurfaceFormat fmt;
     fmt.setRenderableType(QSurfaceFormat::OpenGL);
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setDepthBufferSize(24);
     fmt.setStencilBufferSize(8);
-    fmt.setSwapInterval(1); // VSync
+    fmt.setSwapInterval(1);
     QSurfaceFormat::setDefaultFormat(fmt);
 
     QApplication app(argc, argv);
