@@ -92,8 +92,13 @@ public:
     /// Skip typewriter or close when complete (keyboard)
     void AdvanceInput();
 
+    // Fuer RmlUi-Spiegelung (Ruby UI.show_message -> GameUI -> RmlUi)
+    const std::string& GetFullText() const { return mText; }
+    const std::string& GetDisplayedText() const { return mDisplayed; }
+    bool HasChoices() const { return !mChoices.empty(); }
+
     void Update(float dt);
-    void Draw(); // ImGui rendering
+    void Draw(); // ImGui rendering (optional, wenn RPGMAKER3D_ENABLE_IMGUI)
 
     std::function<void(int)> onChoice; // choice index
 

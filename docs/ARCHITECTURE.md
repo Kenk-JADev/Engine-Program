@@ -78,3 +78,29 @@
 2. Asset-Browser
 3. Undo-Batch fuer Multi-Tile-Pinsel
 4. GameUI Messages komplett auf RmlUi
+
+
+## 7. UI-Pipeline (Scripts & Game-Fenster)
+
+```
+  Script-Editor (Ruby)
+        |
+        v
+  RubyVM  UI.show_message / show_screen_text / show_picture
+        |
+        v
+  GameUI  (Logik: MessageWindow, ScreenTexts, Pictures)
+        |
+        +--(optional ImGui Draw, wenn RPGMAKER3D_ENABLE_IMGUI)
+        |
+        v
+  RmlUiSystem::SyncFromGameUI()
+        |
+        v
+  RmlUi Game-Kontext  (sichtbares HUD + Dialog-Box im GL-Fenster)
+```
+
+**RmlUi hat kein Ruby-Binding.** Scripts nutzen immer das Modul `UI` (C++-Bindings
+in `RubyVM::BindUI`). RmlUi ist nur der Renderer fuer das Game-Fenster.
+
+Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code) und laufen nicht im Player.

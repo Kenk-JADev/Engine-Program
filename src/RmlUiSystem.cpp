@@ -2,6 +2,9 @@
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Window.h"
 #include "rpgmaker3d/Logger.h"
+#include "rpgmaker3d/UI.h"
+#include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/Database.h"
 
 #include "rmlui_glue/RmlUiRenderGL3.h"
 
@@ -89,18 +92,23 @@ body {
 )RCSS";
 
 // data-attr-style statt inline style="width: {{x}}px" (}}px bricht den Rml-Parser).
+// message_box: wird aus GameUI::Message gespiegelt (Ruby UI.show_message / Events).
 static const char* kGameBody = R"RML(
-    <div class="rpg-window" style="position: absolute; left: 24px; top: 24px; width: 320px;">
-        <div class="rpg-title">RmlUi Game HUD</div>
+    <div id="message_box" class="rpg-window" style="position: absolute; left: 50%; bottom: 28px; margin-left: -36%; width: 72%; display: none;">
+        <div class="rpg-title">Dialog</div>
+        <div id="message_text" class="statlabel" style="font-size: 15px; color: #f0e6cc; white-space: pre-wrap;">{{message_text}}</div>
+        <div class="hint">E / Enter / Space = weiter</div>
+    </div>
+    <div id="hud_root" class="rpg-window" style="position: absolute; left: 24px; top: 24px; width: 320px;">
+        <div class="rpg-title">Game HUD</div>
         <div>Map: <span class="badge">{{map_name}}</span></div>
         <div style="margin: 6px 0;">FPS: <span class="badge">{{fps}}</span>  Modus: <span class="badge">{{mode}}</span></div>
-        <div class="statlabel">HP {{hp}} / {{hp_max}}</div>
+        <div class="statlabel">HP {{hp}} / {{hp_max}}   Gold {{gold}}</div>
         <div class="statbar"><div class="fill hpfill" data-attr-style="{{hp_style}}"></div></div>
         <div class="statlabel">MP {{mp}} / {{mp_max}}</div>
         <div class="statbar"><div class="fill mpfill" data-attr-style="{{mp_style}}"></div></div>
-        <button class="rpg-button" onclick="cmd_damage">Schaden nehmen</button>
-        <button class="rpg-button" onclick="cmd_heal">Heilen</button>
-        <div class="hint">F5 Playtest  |  F9 HUD an/aus  |  WASD Kamera</div>
+        <div id="script_line" class="statlabel" style="margin-top: 8px; color: #ffd970;">{{script_line}}</div>
+        <div class="hint">Ruby: UI.show_message / UI.show_screen_text  |  F5 Playtest  |  F9 HUD</div>
     </div>
 )RML";
 
@@ -181,6 +189,10 @@ public:
     Rml::String hostHint = "RmlUi Host (ohne Qt-Fenster)";
     Rml::String hpStyle = "width: 169px; height: 100%; background-color: #c8413c;";
     Rml::String mpStyle = "width: 156px; height: 100%; background-color: #3b6fc8;";
+    Rml::String messageText = "";
+    Rml::String scriptLine = "";
+    int gold = 0;
+    bool messageVisible = false;
     int hp = 65, hpMax = 100;
     int mp = 30, mpMax = 50;
     float fpsTime = 0.0f;
@@ -206,9 +218,23 @@ public:
             h.DirtyVariable("mp_max");
             h.DirtyVariable("hp_style");
             h.DirtyVariable("mp_style");
+            h.DirtyVariable("message_text");
+            h.DirtyVariable("script_line");
+            h.DirtyVariable("gold");
         };
         dirty(gameModel);
         dirty(editorModel);
+    }
+
+    void ApplyMessageVisibility() {
+        if (!gameDoc) return;
+        if (auto* box = gameDoc->GetElementById("message_box")) {
+            box->SetProperty("display", messageVisible ? "block" : "none");
+        }
+        // HUD etwas einklappen wenn Dialog offen (optional lesbarer)
+        if (auto* hud = gameDoc->GetElementById("hud_root")) {
+            hud->SetProperty("opacity", messageVisible ? "0.35" : "1.0");
+        }
     }
 
     bool BindModel(Rml::Context* ctx, Rml::DataModelHandle& outHandle) {
@@ -225,6 +251,9 @@ public:
         ctor.Bind("mp_max", &mpMax);
         ctor.Bind("hp_style", &hpStyle);
         ctor.Bind("mp_style", &mpStyle);
+        ctor.Bind("message_text", &messageText);
+        ctor.Bind("script_line", &scriptLine);
+        ctor.Bind("gold", &gold);
         RmlUiSystemImpl* impl = this;
         ctor.BindEventCallback("cmd_damage", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
             impl->hp = std::max(0, impl->hp - 10);
@@ -467,10 +496,55 @@ bool RmlUiSystem::ProcessEvent(const SDL_Event& e) {
     }
 }
 
+void RmlUiSystem::SyncFromGameUI() {
+    if (!m || !m->initialized) return;
+
+    // Party / Gold
+    try {
+        auto& party = Game::Get().Party();
+        m->gold = party.GetGold();
+        if (!party.Members().empty()) {
+            m->hp = party.Members()[0].hp;
+            m->hpMax = std::max(m->hp, 100);
+        }
+    } catch (...) {}
+
+    // Dialog aus GameUI (Ruby: UI.show_message / Events)
+    auto& msg = GameUI::Get().Message();
+    const bool wasVis = m->messageVisible;
+    m->messageVisible = msg.IsVisible();
+    if (m->messageVisible) {
+        m->messageText = msg.GetDisplayedText().empty() ? msg.GetFullText() : msg.GetDisplayedText();
+    } else {
+        m->messageText.clear();
+    }
+    if (wasVis != m->messageVisible) m->ApplyMessageVisibility();
+
+    // Letzte ScreenTexts als "script_line" (Ruby UI.show_screen_text)
+    const auto& texts = GameUI::Get().GetScreenTexts();
+    if (!texts.empty()) {
+        m->scriptLine = texts.back().text;
+    } else if (!m->messageVisible) {
+        m->scriptLine.clear();
+    }
+
+    // Map-Name aus Database
+    try {
+        const int mid = Database::Get().System().startMapId;
+        m->mapName = Database::Get().System().gameTitle;
+        for (const auto& mi : Database::Get().MapInfos()) {
+            if (mi.id == mid) { m->mapName = mi.name; break; }
+        }
+    } catch (...) {}
+
+    m->RefreshBarStyles();
+    m->DirtyAll();
+}
+
 void RmlUiSystem::Update(float dt) {
     if (!m || !m->initialized) return;
 
-    // FPS (0.5s Intervall) + Model-Sync
+    // FPS (0.5s Intervall)
     m->fpsTime += dt;
     m->fpsFrames++;
     if (m->fpsTime >= 0.5f) {
@@ -486,9 +560,10 @@ void RmlUiSystem::Update(float dt) {
 #endif
             );
         }
-        m->RefreshBarStyles();
-        m->DirtyAll();
     }
+
+    // Jeden Frame: GameUI (Ruby-Scripts) -> RmlUi HUD
+    SyncFromGameUI();
 
     if (m->visible) {
         if (m->editorContext) m->editorContext->Update();

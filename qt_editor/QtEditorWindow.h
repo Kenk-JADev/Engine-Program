@@ -32,6 +32,7 @@ class QtCodeWorkspace;
 class QtMapEditorDock;
 class QtDatabaseEditorDock;
 class QtEventEditorDock;
+class QtAssetBrowserDock;
 
 class QtEditorWindow : public QMainWindow {
     Q_OBJECT
@@ -93,6 +94,7 @@ private:
     QtMapEditorDock* mMapDockWidget = nullptr;
     QtDatabaseEditorDock* mDbDockWidget = nullptr;
     QtEventEditorDock* mEventDockWidget = nullptr;
+    QtAssetBrowserDock* mAssetDockWidget = nullptr;
 
     // Docks
     QDockWidget* mDockHierarchy = nullptr;
@@ -101,6 +103,7 @@ private:
     QDockWidget* mDockMap = nullptr;
     QDockWidget* mDockDatabase = nullptr;
     QDockWidget* mDockEvents = nullptr;
+    QDockWidget* mDockAssets = nullptr;
     QTreeWidget* mHierarchy = nullptr;
     QWidget* mPropsWidget = nullptr;
     QPlainTextEdit* mConsole = nullptr;

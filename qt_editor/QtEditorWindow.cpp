@@ -4,6 +4,7 @@
 #include "QtMapEditorDock.h"
 #include "QtDatabaseEditorDock.h"
 #include "QtEventEditorDock.h"
+#include "QtAssetBrowserDock.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Scene.h"
@@ -224,6 +225,7 @@ void QtEditorWindow::buildMenus() {
     if (mDockMap) mViewMenu->addAction(mDockMap->toggleViewAction());
     if (mDockDatabase) mViewMenu->addAction(mDockDatabase->toggleViewAction());
     if (mDockEvents) mViewMenu->addAction(mDockEvents->toggleViewAction());
+    if (mDockAssets) mViewMenu->addAction(mDockAssets->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
 #ifdef RPGMAKER3D_ENABLE_RMLUI
     mViewMenu->addSeparator();
@@ -310,11 +312,19 @@ void QtEditorWindow::buildDocks() {
     mDockEvents->setWidget(mEventDockWidget);
     addDockWidget(Qt::RightDockWidgetArea, mDockEvents);
     tabifyDockWidget(mDockDatabase, mDockEvents);
+
+    mDockAssets = new QDockWidget("Assets", this);
+    mAssetDockWidget = new QtAssetBrowserDock(mEngine.get(), mDockAssets);
+    mDockAssets->setWidget(mAssetDockWidget);
+    addDockWidget(Qt::LeftDockWidgetArea, mDockAssets);
+    tabifyDockWidget(mDockHierarchy, mDockAssets);
+
     mDockProperties->raise();
 
     connect(mMapDockWidget, &QtMapEditorDock::logMessage, this, [this](const QString& m) { log(m); });
     connect(mDbDockWidget, &QtDatabaseEditorDock::logMessage, this, [this](const QString& m) { log(m); });
     connect(mEventDockWidget, &QtEventEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mAssetDockWidget, &QtAssetBrowserDock::logMessage, this, [this](const QString& m) { log(m); });
     connect(mEventDockWidget, &QtEventEditorDock::eventsChanged, this, [this]() {
         // nothing heavy – hierarchy is entities, not events
     });
@@ -593,6 +603,7 @@ void QtEditorWindow::afterProjectChanged() {
     if (mMapDockWidget) mMapDockWidget->refresh();
     if (mDbDockWidget) mDbDockWidget->refresh();
     if (mEventDockWidget) mEventDockWidget->refresh();
+    if (mAssetDockWidget) mAssetDockWidget->refresh();
 }
 
 // ---------------------------------------------------------------------------
