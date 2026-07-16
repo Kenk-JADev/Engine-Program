@@ -11,6 +11,8 @@ option(RPGMAKER3D_BUILD_EDITOR "Build editor host (Qt)" ON)
 option(RPGMAKER3D_BUILD_PLAYER "Build standalone game player" ON)
 option(RPGMAKER3D_ENABLE_CONSOLE "Keep console window on Windows (for debugging)" ON)
 option(RPGMAKER3D_ENABLE_RMLUI "Enable RmlUi UI system" ON)
+# Default ON: Qt ist der Editor-Host. CI installiert Qt via aqtinstall (siehe .github/workflows/Main.yml).
+# Lokal ohne Qt: -DRPGMAKER3D_EDITOR_QT=OFF
 option(RPGMAKER3D_EDITOR_QT "Build Qt-based editor (native windows, QOpenGLWidget + Code Workspace)" ON)
 option(RPGMAKER3D_ENABLE_IMGUI "Legacy ImGui overlay for GameUI (off by default; ImGui editor removed)" OFF)
 
