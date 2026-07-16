@@ -121,23 +121,52 @@ void Platform::OpenURL(const std::string& url) {
 
 void Platform::SetDPIAware() {
 #ifdef _WIN32
-    // Nur einmal pro Prozess setzen. Windows erlaubt keinen zweiten Wechsel
-    // (Qt, Manifest und Engine rufen das sonst mehrfach auf -> "Zugriff verweigert").
+    // Einmal pro Prozess. Windows verbietet erneutes Setzen (auch auf denselben Wert)
+    // -> ACCESS_DENIED. Qt loggt das als qt.qpa.window Warnung.
     static bool s_done = false;
     if (s_done) return;
     s_done = true;
 
-    // 1) Bevorzugt Per-Monitor V2 (Windows 10 1703+) – gleiche Default wie Qt 6
+    // Wenn der Prozess BEREITS DPI-aware ist (z.B. alte Manifest-Reste, Compatibility
+    // Tab "High DPI scaling override"), nicht nochmal setzen.
+    HMODULE user32 = LoadLibraryA("user32.dll");
+    if (user32) {
+        typedef HANDLE(WINAPI* GetThreadDpiAwarenessContextFunc)();
+        typedef BOOL(WINAPI* AreDpiAwarenessContextsEqualFunc)(HANDLE, HANDLE);
+        auto getCtx = (GetThreadDpiAwarenessContextFunc)GetProcAddress(
+            user32, "GetThreadDpiAwarenessContext");
+        auto eqCtx = (AreDpiAwarenessContextsEqualFunc)GetProcAddress(
+            user32, "AreDpiAwarenessContextsEqual");
+
+#ifndef DPI_AWARENESS_CONTEXT_UNAWARE
+#define DPI_AWARENESS_CONTEXT_UNAWARE ((HANDLE)-1)
+#endif
+#ifndef DPI_AWARENESS_CONTEXT_SYSTEM_AWARE
+#define DPI_AWARENESS_CONTEXT_SYSTEM_AWARE ((HANDLE)-2)
+#endif
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE ((HANDLE)-3)
+#endif
 #ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
 #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((HANDLE)-4)
 #endif
-    HMODULE user32 = LoadLibraryA("user32.dll");
-    if (user32) {
+
+        if (getCtx && eqCtx) {
+            HANDLE cur = getCtx();
+            // Schon system/per-monitor/v2? Dann nichts tun.
+            if (eqCtx(cur, DPI_AWARENESS_CONTEXT_SYSTEM_AWARE) ||
+                eqCtx(cur, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE) ||
+                eqCtx(cur, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)) {
+                FreeLibrary(user32);
+                return;
+            }
+        }
+
+        // Noch unaware -> PerMonitorV2 setzen
         typedef BOOL(WINAPI* SetProcessDpiAwarenessContextFunc)(HANDLE);
         auto setCtx = (SetProcessDpiAwarenessContextFunc)GetProcAddress(
             user32, "SetProcessDpiAwarenessContext");
         if (setCtx) {
-            // Wenn Manifest/Qt es schon gesetzt hat: Fehler ignorieren (ACCESS_DENIED)
             setCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             FreeLibrary(user32);
             return;
@@ -145,20 +174,21 @@ void Platform::SetDPIAware() {
         FreeLibrary(user32);
     }
 
-    // 2) Fallback: Shcore SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE=2)
+    // Fallback Shcore
     HMODULE shcore = LoadLibraryA("Shcore.dll");
     if (shcore) {
         typedef HRESULT(WINAPI* SetProcessDpiAwarenessFunc)(int);
-        auto setAwareness = (SetProcessDpiAwarenessFunc)GetProcAddress(shcore, "SetProcessDpiAwareness");
+        auto setAwareness = (SetProcessDpiAwarenessFunc)GetProcAddress(
+            shcore, "SetProcessDpiAwareness");
         if (setAwareness) {
-            setAwareness(2);
+            setAwareness(2); // PROCESS_PER_MONITOR_DPI_AWARE
             FreeLibrary(shcore);
             return;
         }
         FreeLibrary(shcore);
     }
 
-    // 3) Sehr alter Fallback
+    // Sehr alter Fallback
     user32 = LoadLibraryA("user32.dll");
     if (user32) {
         typedef BOOL(WINAPI* SetProcessDPIAwareFunc)();

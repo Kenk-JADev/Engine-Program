@@ -5,15 +5,50 @@
 #include <QSurfaceFormat>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QByteArray>
 
+#include "rpgmaker3d/Platform.h"
 #include "QtEditorWindow.h"
 
-// DPI: Qt 6 setzt PerMonitorV2 selbst (korrekt und unterstuetzt).
-// app.manifest enthaelt KEINE dpiAwareness mehr, damit es keinen
-// Doppel-Aufruf und keine "Invalid"/"Zugriff verweigert"-Warnungen gibt.
-// Nicht qt.conf mit dpiawareness=-1 verwenden (das ist "Invalid").
+// ============================================================================
+// Windows DPI – exakte Ursache der Warnung:
+//
+//   SetProcessDpiAwarenessContext() failed: Zugriff verweigert
+//
+// Windows erlaubt pro Prozess GENAU EINEN erfolgreichen DPI-Set.
+// Reihenfolge ohne Fix:
+//   1) app.manifest / gdiScaling / alte qt.conf setzt Awareness
+//   2) Qt 6 QWindowsIntegration ruft erneut SetProcessDpiAwarenessContext(V2)
+//   3) -> ACCESS_DENIED + qt.qpa.window Log
+//
+// Fix:
+//   1) Manifest ohne DPI/gdiScaling
+//   2) Platform::SetDPIAware() EINMAL vor QApplication (PerMonitorV2)
+//   3) Qt-Warnung qt.qpa.window unterdruecken (Qt versucht trotzdem den
+//      Set-Call; das ist harmlos, wenn wir schon V2 sind – nur Log-Noise)
+//   4) Kein dpiawareness=-1 (das ist "Invalid" und erzeugt andere Fehler)
+// ============================================================================
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    // 1) DPI einmal setzen, BEVOR Qt die QPA-Plugin-Init laeuft
+    rpg::Platform::SetDPIAware();
+
+    // 2) Qt soll die bekannte, harmlose Doppel-Set-Warnung nicht spammen.
+    //    (Qt ruft intern trotzdem SetProcessDpiAwarenessContext auf.)
+    {
+        QByteArray rules = qgetenv("QT_LOGGING_RULES");
+        const char* silence = "qt.qpa.window.warning=false";
+        if (rules.isEmpty()) {
+            qputenv("QT_LOGGING_RULES", silence);
+        } else if (!rules.contains("qt.qpa.window")) {
+            rules += ";";
+            rules += silence;
+            qputenv("QT_LOGGING_RULES", rules);
+        }
+    }
+#endif
+
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
@@ -21,7 +56,6 @@ int main(int argc, char** argv) {
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 
-    // GL 3.3 Core
     QSurfaceFormat fmt;
     fmt.setRenderableType(QSurfaceFormat::OpenGL);
     fmt.setVersion(3, 3);
