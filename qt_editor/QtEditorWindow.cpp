@@ -377,6 +377,14 @@ void QtEditorWindow::buildToolbar() {
     connect(gameTab, &QAction::triggered, this, [this]() {
         if (mCentralTabs) mCentralTabs->setCurrentWidget(mView);
     });
+    QAction* gizmo = tb->addAction("Gizmo");
+    gizmo->setCheckable(true);
+    gizmo->setChecked(true);
+    gizmo->setToolTip("Translate-Gizmo an selektiertem Objekt (X/Y/Z Achsen ziehen)");
+    connect(gizmo, &QAction::toggled, this, [this](bool on) {
+        if (mView) mView->setGizmoMode(on ? 1 : 0);
+        log(on ? "Gizmo: Translate an" : "Gizmo aus");
+    });
     tb->addSeparator();
 
     QAction* play = tb->addAction("Play");

@@ -53,6 +53,11 @@ const char* CommandName(rpg::EventCommandCode c) {
         case rpg::EventCommandCode::Script: return "Script (Ruby)";
         case rpg::EventCommandCode::SpawnEntity: return "Spawn Entity";
         case rpg::EventCommandCode::MoveEntity: return "Move Entity";
+        case rpg::EventCommandCode::ConditionalBranch: return "Conditional Branch";
+        case rpg::EventCommandCode::BattleProcessing: return "Battle Processing";
+        case rpg::EventCommandCode::ShopProcessing: return "Shop Processing";
+        case rpg::EventCommandCode::ChangeActorHP: return "Change Actor HP";
+        case rpg::EventCommandCode::RecoverAll: return "Recover All";
         default: return "None / Other";
     }
 }
@@ -74,6 +79,12 @@ const CmdOpt kCmdOpts[] = {
     {rpg::EventCommandCode::Script, "Script (Ruby)"},
     {rpg::EventCommandCode::SpawnEntity, "Spawn Entity"},
     {rpg::EventCommandCode::MoveEntity, "Move Entity"},
+    {rpg::EventCommandCode::ConditionalBranch, "Conditional Branch"},
+    {rpg::EventCommandCode::BattleProcessing, "Battle Processing"},
+    {rpg::EventCommandCode::ShopProcessing, "Shop Processing"},
+    {rpg::EventCommandCode::ChangeActorHP, "Change Actor HP"},
+    {rpg::EventCommandCode::RecoverAll, "Recover All"},
+    {rpg::EventCommandCode::ShowChoices, "Show Choices"},
 };
 
 } // namespace

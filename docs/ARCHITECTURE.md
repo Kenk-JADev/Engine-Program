@@ -103,4 +103,9 @@
 **RmlUi hat kein Ruby-Binding.** Scripts nutzen immer das Modul `UI` (C++-Bindings
 in `RubyVM::BindUI`). RmlUi ist nur der Renderer fuer das Game-Fenster.
 
-Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code) und laufen nicht im Player.
+**Ruby-Runtime pro Frame (Playtest/Player):**
+1. `SceneManager.update` (Title/Map/Battle aus Script-Editor)
+2. `$game.update(dt)` (optional, main.rb)
+3. C++ Player/Events/BattleSystem
+
+Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht im Player.

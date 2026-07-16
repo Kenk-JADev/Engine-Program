@@ -6,6 +6,7 @@
 
 #include <QOpenGLWidget>
 #include <QElapsedTimer>
+#include <QPointF>
 
 namespace rpg { class Engine; }
 
@@ -24,6 +25,10 @@ public:
     void setPaintLayer(int layer) { mPaintLayer = layer; }
     void setBrushMode(int mode) { mBrushMode = mode; mRectHasFirst = false; }
     bool paintMode() const { return mPaintMode; }
+
+    // Gizmo: 0=off/select, 1=translate (default when not painting)
+    void setGizmoMode(int mode) { mGizmoMode = mode; }
+    int gizmoMode() const { return mGizmoMode; }
 
 signals:
     void engineInitFailed(QString message);
@@ -63,6 +68,15 @@ private:
     bool mRectHasFirst = false;
     int mRectX0 = 0, mRectZ0 = 0;
     void fillRect(int x0, int z0, int x1, int z1);
+
+    // Gizmo translate
+    int mGizmoMode = 1; // 1=translate
+    int mGizmoAxis = -1; // 0=X 1=Y 2=Z
+    bool mGizmoDragging = false;
+    float mGizmoStartPos[3] = {0,0,0};
+    QPointF mGizmoStartMouse{};
+    bool tryPickGizmoAxis(float sx, float sy, int& outAxis);
+    void dragGizmo(float sx, float sy);
 };
 
 } // namespace qt_editor

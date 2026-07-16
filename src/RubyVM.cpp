@@ -176,21 +176,33 @@ bool RubyVM::Update(float deltaTime) {
         return false;
     }
 
-    mrb_sym gameSymbol = mrb_intern_lit(mMrb, "$game");
-    mrb_value game = mrb_gv_get(mMrb, gameSymbol);
-
-    if (mrb_nil_p(game)) {
-        return true;
+    // 1) SceneManager (RPG-Maker-Style Scenes aus dem Script-Editor)
+    //    Scene_Title / Scene_Map / Scene_Battle laufen hier pro Frame.
+    {
+        mrb_sym smSym = mrb_intern_lit(mMrb, "SceneManager");
+        if (mrb_const_defined(mMrb, mrb_obj_value(mMrb->object_class), smSym)) {
+            mrb_value sceneMgr = mrb_const_get(mMrb, mrb_obj_value(mMrb->object_class), smSym);
+            if (!mrb_nil_p(sceneMgr)) {
+                mrb_funcall(mMrb, sceneMgr, "update", 0);
+                if (mMrb->exc) {
+                    CaptureException("SceneManager.update");
+                    return false;
+                }
+            }
+        }
     }
 
-    mrb_sym updateSymbol = mrb_intern_lit(mMrb, "update");
-    mrb_value deltaValue = mrb_float_value(mMrb, deltaTime);
-
-    mrb_funcall_argv(mMrb, game, updateSymbol, 1, &deltaValue);
-
-    if (mMrb->exc) {
-        CaptureException("$game.update");
-        return false;
+    // 2) $game.update(dt) – optionale Custom-Logik aus main.rb
+    mrb_sym gameSymbol = mrb_intern_lit(mMrb, "$game");
+    mrb_value game = mrb_gv_get(mMrb, gameSymbol);
+    if (!mrb_nil_p(game)) {
+        mrb_sym updateSymbol = mrb_intern_lit(mMrb, "update");
+        mrb_value deltaValue = mrb_float_value(mMrb, deltaTime);
+        mrb_funcall_argv(mMrb, game, updateSymbol, 1, &deltaValue);
+        if (mMrb->exc) {
+            CaptureException("$game.update");
+            return false;
+        }
     }
     return true;
 }

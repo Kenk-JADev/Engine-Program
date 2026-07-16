@@ -108,8 +108,15 @@ static const char* kGameBody = R"RML(
         <div class="statlabel">MP {{mp}} / {{mp_max}}</div>
         <div class="statbar"><div class="fill mpfill" data-attr-style="{{mp_style}}"></div></div>
         <div id="script_line" class="statlabel" style="margin-top: 8px; color: #ffd970;">{{script_line}}</div>
-        <div class="hint">Ruby: UI.show_message / UI.show_screen_text  |  F5 Playtest  |  F9 HUD</div>
+        <div class="hint">Ruby SceneManager + UI.*  |  F5 Playtest  |  F9 HUD</div>
     </div>
+    <!-- Absolute ScreenTexts aus Ruby (bis 6 Stueck) -->
+    <div id="st0" class="badge" style="position:absolute; display:none;">{{st0}}</div>
+    <div id="st1" class="badge" style="position:absolute; display:none;">{{st1}}</div>
+    <div id="st2" class="badge" style="position:absolute; display:none;">{{st2}}</div>
+    <div id="st3" class="badge" style="position:absolute; display:none;">{{st3}}</div>
+    <div id="st4" class="badge" style="position:absolute; display:none;">{{st4}}</div>
+    <div id="st5" class="badge" style="position:absolute; display:none;">{{st5}}</div>
 )RML";
 
 static const char* kEditorBody = R"RML(
@@ -191,6 +198,10 @@ public:
     Rml::String mpStyle = "width: 156px; height: 100%; background-color: #3b6fc8;";
     Rml::String messageText = "";
     Rml::String scriptLine = "";
+    Rml::String stText[6];
+    float stX[6] = {};
+    float stY[6] = {};
+    bool stOn[6] = {};
     int gold = 0;
     bool messageVisible = false;
     int hp = 65, hpMax = 100;
@@ -221,6 +232,8 @@ public:
             h.DirtyVariable("message_text");
             h.DirtyVariable("script_line");
             h.DirtyVariable("gold");
+            h.DirtyVariable("st0"); h.DirtyVariable("st1"); h.DirtyVariable("st2");
+            h.DirtyVariable("st3"); h.DirtyVariable("st4"); h.DirtyVariable("st5");
         };
         dirty(gameModel);
         dirty(editorModel);
@@ -254,6 +267,8 @@ public:
         ctor.Bind("message_text", &messageText);
         ctor.Bind("script_line", &scriptLine);
         ctor.Bind("gold", &gold);
+        ctor.Bind("st0", &stText[0]); ctor.Bind("st1", &stText[1]); ctor.Bind("st2", &stText[2]);
+        ctor.Bind("st3", &stText[3]); ctor.Bind("st4", &stText[4]); ctor.Bind("st5", &stText[5]);
         RmlUiSystemImpl* impl = this;
         ctor.BindEventCallback("cmd_damage", [impl](Rml::DataModelHandle, Rml::Event&, const Rml::VariantList&) {
             impl->hp = std::max(0, impl->hp - 10);
@@ -520,12 +535,42 @@ void RmlUiSystem::SyncFromGameUI() {
     }
     if (wasVis != m->messageVisible) m->ApplyMessageVisibility();
 
-    // Letzte ScreenTexts als "script_line" (Ruby UI.show_screen_text)
+    // ScreenTexts aus Ruby -> RmlUi Overlays + script_line
     const auto& texts = GameUI::Get().GetScreenTexts();
-    if (!texts.empty()) {
-        m->scriptLine = texts.back().text;
-    } else if (!m->messageVisible) {
-        m->scriptLine.clear();
+    for (int i = 0; i < 6; ++i) {
+        m->stOn[i] = false;
+        m->stText[i].clear();
+    }
+    int n = 0;
+    for (const auto& st : texts) {
+        if (st.worldSpace) continue; // world texts bleiben optional ungerendert in Rml
+        if (n >= 6) break;
+        m->stOn[n] = true;
+        m->stText[n] = st.text;
+        m->stX[n] = st.screenPos.x;
+        m->stY[n] = st.screenPos.y;
+        ++n;
+    }
+    if (n > 0) m->scriptLine = m->stText[n - 1];
+    else if (!m->messageVisible) m->scriptLine.clear();
+
+    // Positionen auf Elemente anwenden (Prozent der Viewport-Groesse)
+    if (m->gameDoc) {
+        const char* ids[6] = {"st0","st1","st2","st3","st4","st5"};
+        for (int i = 0; i < 6; ++i) {
+            Rml::Element* el = m->gameDoc->GetElementById(ids[i]);
+            if (!el) continue;
+            if (!m->stOn[i]) {
+                el->SetProperty("display", "none");
+                continue;
+            }
+            el->SetProperty("display", "block");
+            el->SetProperty("left", std::to_string(m->stX[i] * 100.f) + "%");
+            el->SetProperty("top", std::to_string(m->stY[i] * 100.f) + "%");
+            el->SetProperty("transform", "translate(-50%, -50%)");
+            el->SetProperty("pointer-events", "none");
+            el->SetProperty("z-index", "20");
+        }
     }
 
     // Map-Name aus Database

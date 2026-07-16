@@ -149,6 +149,10 @@ void QtGameViewWidget::mouseMoveEvent(QMouseEvent* event) {
     if (mPainting && mPaintMode && !mEngine->IsPlaying()) {
         paintTileAtScreen(static_cast<float>(p.x()), static_cast<float>(p.y()));
     }
+    // Gizmo drag
+    if (mGizmoDragging && !mEngine->IsPlaying()) {
+        dragGizmo(static_cast<float>(p.x()), static_cast<float>(p.y()));
+    }
 }
 
 void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
@@ -190,13 +194,29 @@ void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
                 paintTileAtScreen(static_cast<float>(p.x()), static_cast<float>(p.y()));
             }
         } else {
-            // 3D-Entity-Selektion
-            rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
-            const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
-                rpg::Vec2(static_cast<float>(p.x()), static_cast<float>(p.y())),
-                rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
-            const rpg::RaycastHit hit = rpg::Raycast::PickEntity(ray, mEngine->GetScene(), 2000.0f);
-            emit entityPicked(hit.hit ? static_cast<int>(hit.entity) : -1);
+            // Gizmo-Achse greifen wenn Entity selektiert
+            int axis = -1;
+            if (mGizmoMode == 1 && mEngine->GetSelectedEntity() >= 0 &&
+                tryPickGizmoAxis(static_cast<float>(p.x()), static_cast<float>(p.y()), axis)) {
+                mGizmoDragging = true;
+                mGizmoAxis = axis;
+                mGizmoStartMouse = p;
+                auto* tc = mEngine->GetScene().GetComponent<rpg::TransformComponent>(
+                    static_cast<rpg::EntityID>(mEngine->GetSelectedEntity()));
+                if (tc) {
+                    mGizmoStartPos[0] = tc->transform.position.x;
+                    mGizmoStartPos[1] = tc->transform.position.y;
+                    mGizmoStartPos[2] = tc->transform.position.z;
+                }
+            } else {
+                // 3D-Entity-Selektion
+                rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
+                const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
+                    rpg::Vec2(static_cast<float>(p.x()), static_cast<float>(p.y())),
+                    rpg::Vec2(static_cast<float>(width()), static_cast<float>(height())));
+                const rpg::RaycastHit hit = rpg::Raycast::PickEntity(ray, mEngine->GetScene(), 2000.0f);
+                emit entityPicked(hit.hit ? static_cast<int>(hit.entity) : -1);
+            }
         }
     }
 }
@@ -222,7 +242,11 @@ void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
 #endif
 
-    if (b == rpg::MouseButton::Left) mPainting = false;
+    if (b == rpg::MouseButton::Left) {
+        mPainting = false;
+        mGizmoDragging = false;
+        mGizmoAxis = -1;
+    }
 }
 
 void QtGameViewWidget::wheelEvent(QWheelEvent* event) {
@@ -262,6 +286,64 @@ void QtGameViewWidget::paintTileAtScreen(float sx, float sy) {
     auto cmd = std::make_shared<rpg::SetTileCommand>(layer, x, z, oldTile, newTile);
     mEngine->GetCommandHistory().Execute(*mEngine, cmd);
     emit tilePainted(x, z, newTile);
+}
+
+bool QtGameViewWidget::tryPickGizmoAxis(float sx, float sy, int& outAxis) {
+    outAxis = -1;
+    const int sel = mEngine->GetSelectedEntity();
+    if (sel < 0) return false;
+    auto* tc = mEngine->GetScene().GetComponent<rpg::TransformComponent>(static_cast<rpg::EntityID>(sel));
+    if (!tc) return false;
+    rpg::Camera& cam = mEngine->GetRenderer().GetCamera();
+    const rpg::Ray ray = rpg::Raycast::ScreenPointToRay(cam,
+        rpg::Vec2(sx, sy), rpg::Vec2((float)width(), (float)height()));
+    const rpg::Vec3 origin = tc->transform.position;
+    // Einfache Achsen-Picking: naechster Punkt auf Achsen-Segment (Laenge ~1.5)
+    float best = 0.25f; // max Distanz zur Achse
+    int bestAxis = -1;
+    const rpg::Vec3 axes[3] = {
+        rpg::Vec3(1.5f, 0, 0), rpg::Vec3(0, 1.5f, 0), rpg::Vec3(0, 0, 1.5f)
+    };
+    for (int a = 0; a < 3; ++a) {
+        // distance ray to segment origin->origin+axis
+        const rpg::Vec3 d = axes[a];
+        const rpg::Vec3 w0 = ray.origin - origin;
+        const float a_ = glm::dot(ray.direction, ray.direction);
+        const float b_ = glm::dot(ray.direction, d);
+        const float c_ = glm::dot(d, d);
+        const float d_ = glm::dot(ray.direction, w0);
+        const float e_ = glm::dot(d, w0);
+        const float denom = a_ * c_ - b_ * b_;
+        float t = 0.f, s = 0.f;
+        if (std::fabs(denom) > 1e-6f) {
+            t = (b_ * e_ - c_ * d_) / denom;
+            s = (a_ * e_ - b_ * d_) / denom;
+        }
+        s = std::max(0.f, std::min(1.f, s));
+        t = std::max(0.f, t);
+        const rpg::Vec3 pRay = ray.origin + ray.direction * t;
+        const rpg::Vec3 pSeg = origin + d * s;
+        const float dist = glm::length(pRay - pSeg);
+        if (dist < best) { best = dist; bestAxis = a; }
+    }
+    if (bestAxis < 0) return false;
+    outAxis = bestAxis;
+    return true;
+}
+
+void QtGameViewWidget::dragGizmo(float sx, float sy) {
+    const int sel = mEngine->GetSelectedEntity();
+    if (sel < 0 || mGizmoAxis < 0) return;
+    auto* tc = mEngine->GetScene().GetComponent<rpg::TransformComponent>(static_cast<rpg::EntityID>(sel));
+    if (!tc) return;
+    // Maus-Delta in Screen -> Welt entlang Achse (einfach skaliert)
+    const float dx = (sx - static_cast<float>(mGizmoStartMouse.x())) * 0.02f;
+    const float dy = (static_cast<float>(mGizmoStartMouse.y()) - sy) * 0.02f;
+    rpg::Vec3 pos(mGizmoStartPos[0], mGizmoStartPos[1], mGizmoStartPos[2]);
+    if (mGizmoAxis == 0) pos.x += dx;
+    else if (mGizmoAxis == 1) pos.y += dy;
+    else if (mGizmoAxis == 2) pos.z += dx;
+    tc->transform.position = pos;
 }
 
 void QtGameViewWidget::fillRect(int x0, int z0, int x1, int z1) {

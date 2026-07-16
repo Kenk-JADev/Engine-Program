@@ -802,12 +802,36 @@ void Engine::RenderScene() {
         }
     }
 
-    // Auswahl-BoundingBox im Editor (Qt-Host setzt mSelectedEntity)
+    // Auswahl-BoundingBox + einfache Translate-Gizmo-Achsen (Editor)
     if (mEditorMode && !mPlayMode && mSelectedEntity >= 0) {
         auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
         if (transform) {
             Mat4 matrix = transform->transform.GetMatrix();
             mRenderer->DrawBoundingBox(Vec3(-0.5f), Vec3(0.5f), matrix, Color(1.0f, 0.8f, 0.0f, 1.0f));
+            // Achsen-Gizmo (kleine Wuerfel an den Enden der Achsen)
+            const Vec3 o = transform->transform.position;
+            auto drawAxis = [&](const Vec3& end, const Color& col) {
+                Mesh tip = MeshFactory::CreateCube(0.12f);
+                Mat4 m = glm::translate(Mat4(1.0f), end);
+                mRenderer->DrawMesh(tip, m, nullptr, col);
+                // Linie als gestreckter duenner Wuerfel
+                Vec3 mid = (o + end) * 0.5f;
+                Vec3 d = end - o;
+                float len = glm::length(d);
+                if (len < 1e-4f) return;
+                Mat4 line = glm::translate(Mat4(1.0f), mid);
+                // rough scale along largest component
+                Vec3 sc(0.04f, 0.04f, 0.04f);
+                if (std::fabs(d.x) > std::fabs(d.y) && std::fabs(d.x) > std::fabs(d.z)) sc = Vec3(len, 0.04f, 0.04f);
+                else if (std::fabs(d.y) > std::fabs(d.z)) sc = Vec3(0.04f, len, 0.04f);
+                else sc = Vec3(0.04f, 0.04f, len);
+                line = glm::scale(line, sc);
+                Mesh bar = MeshFactory::CreateCube(1.0f);
+                mRenderer->DrawMesh(bar, line, nullptr, col);
+            };
+            drawAxis(o + Vec3(1.5f, 0, 0), Color(1.0f, 0.2f, 0.2f, 1.0f)); // X
+            drawAxis(o + Vec3(0, 1.5f, 0), Color(0.2f, 1.0f, 0.3f, 1.0f)); // Y
+            drawAxis(o + Vec3(0, 0, 1.5f), Color(0.25f, 0.45f, 1.0f, 1.0f)); // Z
         }
     }
 
