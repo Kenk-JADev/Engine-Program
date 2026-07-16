@@ -59,6 +59,11 @@ public:
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
     ScriptManager& GetScriptManager() { return *mScriptManager; }
+    #ifdef RPGMAKER3D_ENABLE_RMLUI
+    RmlUiSystem* GetRmlUi() { return mRmlUi.get(); }
+#else
+    RmlUiSystem* GetRmlUi() { return nullptr; }
+#endif
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }
@@ -114,7 +119,9 @@ private:
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
+#ifdef RPGMAKER3D_ENABLE_RMLUI
     std::unique_ptr<RmlUiSystem> mRmlUi;
+#endif
     std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 

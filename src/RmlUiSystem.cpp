@@ -425,4 +425,146 @@ bool RmlUiSystem::IsVisible() const { return m ? m->visible : false; }
 void RmlUiSystem::SetVisible(bool v) { if (m) m->visible = v; }
 void RmlUiSystem::ToggleVisible() { if (m) m->visible = !m->visible; }
 
+// ---------------------------------------------------------------------------
+// Qt-Editor Input-Bruecke
+// ---------------------------------------------------------------------------
+namespace {
+// Qt::Key Werte (stabil, ohne Qt-Header in dieser TU)
+// https://doc.qt.io/qt-6/qt.html#Key-enum
+constexpr int QT_Key_Escape = 0x01000000;
+constexpr int QT_Key_Tab = 0x01000001;
+constexpr int QT_Key_Backspace = 0x01000003;
+constexpr int QT_Key_Return = 0x01000004;
+constexpr int QT_Key_Enter = 0x01000005;
+constexpr int QT_Key_Insert = 0x01000006;
+constexpr int QT_Key_Delete = 0x01000007;
+constexpr int QT_Key_Pause = 0x01000008;
+constexpr int QT_Key_Home = 0x01000010;
+constexpr int QT_Key_End = 0x01000011;
+constexpr int QT_Key_Left = 0x01000012;
+constexpr int QT_Key_Up = 0x01000013;
+constexpr int QT_Key_Right = 0x01000014;
+constexpr int QT_Key_Down = 0x01000015;
+constexpr int QT_Key_PageUp = 0x01000016;
+constexpr int QT_Key_PageDown = 0x01000017;
+constexpr int QT_Key_Shift = 0x01000020;
+constexpr int QT_Key_Control = 0x01000021;
+constexpr int QT_Key_Alt = 0x01000023;
+constexpr int QT_Key_Meta = 0x01000022;
+constexpr int QT_Key_CapsLock = 0x01000024;
+constexpr int QT_Key_F1 = 0x01000030;
+constexpr int QT_Key_Space = 0x20;
+constexpr int QT_Key_0 = 0x30;
+constexpr int QT_Key_9 = 0x39;
+constexpr int QT_Key_A = 0x41;
+constexpr int QT_Key_Z = 0x5a;
+
+Rml::Input::KeyIdentifier ConvertQtKey(int qtKey) {
+    using KI = Rml::Input::KeyIdentifier;
+    if (qtKey >= QT_Key_A && qtKey <= QT_Key_Z)
+        return (KI)((int)KI::KI_A + (qtKey - QT_Key_A));
+    if (qtKey >= QT_Key_0 && qtKey <= QT_Key_9)
+        return (KI)((int)KI::KI_0 + (qtKey - QT_Key_0));
+    if (qtKey >= QT_Key_F1 && qtKey < QT_Key_F1 + 12)
+        return (KI)((int)KI::KI_F1 + (qtKey - QT_Key_F1));
+
+    switch (qtKey) {
+        case QT_Key_Space: return KI::KI_SPACE;
+        case QT_Key_Return:
+        case QT_Key_Enter: return KI::KI_RETURN;
+        case QT_Key_Escape: return KI::KI_ESCAPE;
+        case QT_Key_Tab: return KI::KI_TAB;
+        case QT_Key_Backspace: return KI::KI_BACK;
+        case QT_Key_Delete: return KI::KI_DELETE;
+        case QT_Key_Left: return KI::KI_LEFT;
+        case QT_Key_Right: return KI::KI_RIGHT;
+        case QT_Key_Up: return KI::KI_UP;
+        case QT_Key_Down: return KI::KI_DOWN;
+        case QT_Key_Home: return KI::KI_HOME;
+        case QT_Key_End: return KI::KI_END;
+        case QT_Key_PageUp: return KI::KI_PRIOR;
+        case QT_Key_PageDown: return KI::KI_NEXT;
+        case QT_Key_Insert: return KI::KI_INSERT;
+        case QT_Key_Shift: return KI::KI_LSHIFT;
+        case QT_Key_Control: return KI::KI_LCONTROL;
+        case QT_Key_Alt: return KI::KI_LMENU;
+        case QT_Key_Meta: return KI::KI_LMETA;
+        case QT_Key_CapsLock: return KI::KI_CAPITAL;
+        case QT_Key_Pause: return KI::KI_PAUSE;
+        default: return KI::KI_UNKNOWN;
+    }
+}
+
+// Qt KeyboardModifiers: Shift=0x02000000, Control=0x04000000, Alt=0x08000000, Meta=0x10000000
+int MapQtModifiers(int qtMods) {
+    int r = 0;
+    if (qtMods & 0x04000000) r |= Rml::Input::KM_CTRL;
+    if (qtMods & 0x02000000) r |= Rml::Input::KM_SHIFT;
+    if (qtMods & 0x08000000) r |= Rml::Input::KM_ALT;
+    if (qtMods & 0x10000000) r |= Rml::Input::KM_META;
+    // already-Rml bitmask (small values) pass through
+    if (qtMods & Rml::Input::KM_CTRL) r |= Rml::Input::KM_CTRL;
+    if (qtMods & Rml::Input::KM_SHIFT) r |= Rml::Input::KM_SHIFT;
+    if (qtMods & Rml::Input::KM_ALT) r |= Rml::Input::KM_ALT;
+    if (qtMods & Rml::Input::KM_META) r |= Rml::Input::KM_META;
+    return r;
+}
+} // namespace
+
+bool RmlUiSystem::ProcessMouseMove(int x, int y, int modifiers) {
+    if (!m || !m->initialized || !m->visible) return false;
+    const int mods = MapQtModifiers(modifiers);
+    return m->ForContexts([&](Rml::Context* c) {
+        return c->ProcessMouseMove(x, y, mods);
+    });
+}
+
+bool RmlUiSystem::ProcessMouseButton(int button, bool down, int modifiers) {
+    if (!m || !m->initialized || !m->visible) return false;
+    const int mods = MapQtModifiers(modifiers);
+    return m->ForContexts([&](Rml::Context* c) {
+        return down ? c->ProcessMouseButtonDown(button, mods)
+                    : c->ProcessMouseButtonUp(button, mods);
+    });
+}
+
+bool RmlUiSystem::ProcessMouseWheel(float deltaY, int modifiers) {
+    if (!m || !m->initialized || !m->visible) return false;
+    const int mods = MapQtModifiers(modifiers);
+    return m->ForContexts([&](Rml::Context* c) {
+        return c->ProcessMouseWheel(deltaY, mods);
+    });
+}
+
+bool RmlUiSystem::ProcessKeyQt(int qtKey, bool down, int modifiers) {
+    if (!m || !m->initialized) return false;
+    // F9 toggelt auch im Qt-Modus
+    if (down && qtKey == (QT_Key_F1 + 8)) { // F9
+        ToggleVisible();
+        return true;
+    }
+    if (!m->visible) return false;
+    const int mods = MapQtModifiers(modifiers);
+    const auto key = ConvertQtKey(qtKey);
+    if (key == Rml::Input::KeyIdentifier::KI_UNKNOWN) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return down ? (c->ProcessKeyDown(key, mods) || true)
+                    : c->ProcessKeyUp(key, mods);
+    });
+}
+
+bool RmlUiSystem::ProcessTextInput(const std::string& utf8) {
+    if (!m || !m->initialized || !m->visible || utf8.empty()) return false;
+    return m->ForContexts([&](Rml::Context* c) {
+        return c->ProcessTextInput(Rml::String(utf8));
+    });
+}
+
+void RmlUiSystem::NotifyViewport(int width, int height) {
+    if (!m || !m->initialized || width <= 0 || height <= 0) return;
+    if (m->renderInterface) m->renderInterface->SetViewport(width, height);
+    if (m->editorContext) m->editorContext->SetDimensions(Rml::Vector2i(width, height));
+    if (m->gameContext) m->gameContext->SetDimensions(Rml::Vector2i(width, height));
+}
+
 } // namespace rpg

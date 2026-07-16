@@ -74,7 +74,7 @@
 
 ## 6. Nächste Schritte
 
-1. Map-Editor als Qt-Dock
-2. Database-Editor (QTableView)
-3. RmlUi-Input im Qt-Modus
-4. Syntax-Highlighting im Code Workspace
+1. Tile-Palette mit echten Texturen
+2. Gizmo-Transform im Game View
+3. Event-Editor als Qt-Dock
+4. Optional: QUndoStack-Spiegelung

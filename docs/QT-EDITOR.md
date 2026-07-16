@@ -16,9 +16,10 @@ qt_editor/
                         - paintGL() -> Engine::Render()
                         - Qt-Key/Mouse-Events -> rpg::Input
                         - Linksklick-Raycast-Selektion
-  QtCodeWorkspace.*     Ersetzt den alten ImGui "Game Scene"/Script-Schwerpunkt:
-                        - Ruby: Projekt-Scripts editieren (ScriptManager)
-                        - C++: Engine-API-Referenz + Snippets (read-only)
+  QtCodeWorkspace.*     Ruby/C++ Code-Workspace (Syntax-Highlighting)
+  QtSyntaxHighlighter.* QSyntaxHighlighter fuer Ruby + C++
+  QtMapEditorDock.*     Map-Liste, Props, Tile-Palette, Paint-State
+  QtDatabaseEditorDock.* QTableView Actors/Items/Enemies + System
   QtKeyMap.h            Qt::Key -> rpg::Key Mapping
 ```
 
@@ -75,13 +76,16 @@ Fertig:
 - [x] Hierarchie + Eigenschaften
 - [x] 3D-Klick-Selektion
 - [x] **ImGui-Editor komplett entfernt** (nicht mehr im Build)
-- [x] **Code Workspace** (Ruby editierbar, C++ API-Referenz) ersetzt Game-Scene-Fokus
+- [x] **Code Workspace** (Ruby/C++) ersetzt Game-Scene-Fokus
+- [x] **Map-Editor-Dock** (Kartenliste, Props, Tile-Palette, Malen im Game View)
+- [x] **Database-Editor** (QTableView: Actors/Items/Enemies + System)
+- [x] **Syntax-Highlighting** (Ruby + C++ via QSyntaxHighlighter)
+- [x] **RmlUi-Input-Bruecke** im Qt-Modus (Maus/Tastatur/Text, F9, Viewport)
 
-Offen:
-- [ ] Map-Editor-Panel als Qt-Dock
-- [ ] Database-Editor (QTableView)
-- [ ] RmlUi-Input-Bruecke im Qt-Modus
-- [ ] Optionale Syntax-Highlighting-Erweiterung (QSyntaxHighlighter)
+Offen (spaeter):
+- [ ] Tile-Palette mit echten Tileset-Texturen (OpenGL->QImage)
+- [ ] Gizmo-Transform im Game View
+- [ ] Event-Editor als Qt-Dock
 
 ## Legacy
 

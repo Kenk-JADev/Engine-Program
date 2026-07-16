@@ -29,6 +29,8 @@ namespace qt_editor {
 
 class QtGameViewWidget;
 class QtCodeWorkspace;
+class QtMapEditorDock;
+class QtDatabaseEditorDock;
 
 class QtEditorWindow : public QMainWindow {
     Q_OBJECT
@@ -87,11 +89,15 @@ private:
     QTabWidget* mCentralTabs = nullptr;
     QtGameViewWidget* mView = nullptr;
     QtCodeWorkspace* mCode = nullptr;
+    QtMapEditorDock* mMapDockWidget = nullptr;
+    QtDatabaseEditorDock* mDbDockWidget = nullptr;
 
     // Docks
     QDockWidget* mDockHierarchy = nullptr;
     QDockWidget* mDockProperties = nullptr;
     QDockWidget* mDockConsole = nullptr;
+    QDockWidget* mDockMap = nullptr;
+    QDockWidget* mDockDatabase = nullptr;
     QTreeWidget* mHierarchy = nullptr;
     QWidget* mPropsWidget = nullptr;
     QPlainTextEdit* mConsole = nullptr;

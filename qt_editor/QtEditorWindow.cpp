@@ -1,6 +1,8 @@
 #include "QtEditorWindow.h"
 #include "QtGameViewWidget.h"
 #include "QtCodeWorkspace.h"
+#include "QtMapEditorDock.h"
+#include "QtDatabaseEditorDock.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Scene.h"
@@ -12,6 +14,9 @@
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/CommandHistory.h"
 #include "rpgmaker3d/ScriptManager.h"
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+#include "rpgmaker3d/RmlUiSystem.h"
+#endif
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -78,6 +83,13 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
         statusBar()->showMessage("Bereit. Code-Tab fuer Ruby/C++, Game View fuer 3D. F9 = RmlUi-HUD.");
         setSelectedEntity(-1);
         if (mCode) mCode->refresh();
+        if (mMapDockWidget) {
+            mMapDockWidget->refresh();
+            mView->setPaintMode(mMapDockWidget->paintEnabled());
+            mView->setPaintTile(mMapDockWidget->selectedTile());
+            mView->setPaintLayer(mMapDockWidget->selectedLayer());
+        }
+        if (mDbDockWidget) mDbDockWidget->refresh();
     });
     connect(mView, &QtGameViewWidget::entityPicked, this, [this](int id) {
         setSelectedEntity(id);
@@ -207,7 +219,15 @@ void QtEditorWindow::buildMenus() {
     mViewMenu->addSeparator();
     mViewMenu->addAction(mDockHierarchy->toggleViewAction());
     mViewMenu->addAction(mDockProperties->toggleViewAction());
+    if (mDockMap) mViewMenu->addAction(mDockMap->toggleViewAction());
+    if (mDockDatabase) mViewMenu->addAction(mDockDatabase->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    mViewMenu->addSeparator();
+    mViewMenu->addAction("RmlUi HUD umschalten (F9)", this, [this]() {
+        if (mEngine && mEngine->GetRmlUi()) mEngine->GetRmlUi()->ToggleVisible();
+    });
+#endif
 
     QMenu* mPlay = menuBar()->addMenu("&Playtest");
     mPlayAction = mPlay->addAction("Playtest starten/stoppen");
@@ -219,11 +239,11 @@ void QtEditorWindow::buildMenus() {
     mHelp->addAction("Ueber", this, [this]() {
         QMessageBox::about(this, "RPG Maker 3D Qt Editor",
             "Qt-basierter Editor (ImGui entfernt):\n"
-            "- Native Dock-Fenster (Hierarchie / Eigenschaften / Konsole)\n"
-            "- Game View als QOpenGLWidget (Engine Embedded)\n"
-            "- Code Workspace: Ruby-Spiellogik + C++ Engine-API\n"
-            "- Undo/Redo ueber CommandHistory\n"
-            "- Ingame-UI im GL-Kontext (RmlUi)");
+            "- Docks: Hierarchie, Eigenschaften, Map-Editor, Database, Konsole\n"
+            "- Game View (QOpenGLWidget) + Tile-Malen\n"
+            "- Code Workspace: Ruby/C++ mit Syntax-Highlighting\n"
+            "- RmlUi-Input-Bruecke im Game View (F9)\n"
+            "- Undo/Redo ueber CommandHistory");
     });
 
     auto* delView = new QShortcut(QKeySequence(Qt::Key_Delete), mView);
@@ -267,9 +287,46 @@ void QtEditorWindow::buildDocks() {
     mConsole->setMaximumBlockCount(2000);
     mDockConsole->setWidget(mConsole);
     addDockWidget(Qt::BottomDockWidgetArea, mDockConsole);
+
+    // Map-Editor Dock
+    mDockMap = new QDockWidget("Map-Editor", this);
+    mMapDockWidget = new QtMapEditorDock(mEngine.get(), mDockMap);
+    mDockMap->setWidget(mMapDockWidget);
+    addDockWidget(Qt::RightDockWidgetArea, mDockMap);
+    tabifyDockWidget(mDockProperties, mDockMap);
+
+    // Database Dock
+    mDockDatabase = new QDockWidget("Database", this);
+    mDbDockWidget = new QtDatabaseEditorDock(mEngine.get(), mDockDatabase);
+    mDockDatabase->setWidget(mDbDockWidget);
+    addDockWidget(Qt::RightDockWidgetArea, mDockDatabase);
+    tabifyDockWidget(mDockMap, mDockDatabase);
+    mDockProperties->raise();
+
+    connect(mMapDockWidget, &QtMapEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mDbDockWidget, &QtDatabaseEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mMapDockWidget, &QtMapEditorDock::paintStateChanged, this, [this]() {
+        if (!mView || !mMapDockWidget) return;
+        mView->setPaintMode(mMapDockWidget->paintEnabled());
+        mView->setPaintTile(mMapDockWidget->selectedTile());
+        mView->setPaintLayer(mMapDockWidget->selectedLayer());
+    });
+    connect(mMapDockWidget, &QtMapEditorDock::mapLoaded, this, [this]() {
+        setSelectedEntity(-1);
+        refreshHierarchy();
+    });
+    connect(mView, &QtGameViewWidget::tilePainted, this, [this](int x, int z, int tile) {
+        // sparsam loggen: nur gelegentlich
+        static int n = 0;
+        if ((++n % 8) == 0)
+            log(QString("Tile (%1,%2) = %3").arg(x).arg(z).arg(tile));
+    });
+
     log("Qt-Editor gestartet (ohne ImGui).");
-    log("  Tab 'Game View'  = 3D-Szene / Playtest");
-    log("  Tab 'Code'       = Ruby-Scripts + C++ Engine-API");
+    log("  Tab 'Game View'  = 3D-Szene / Playtest / Tile-Malen");
+    log("  Tab 'Code'       = Ruby-Scripts + C++ Engine-API (Syntax-HL)");
+    log("  Docks: Hierarchie | Eigenschaften | Map-Editor | Database | Konsole");
+    log("  F9 = RmlUi HUD umschalten (Input im Game View aktiv)");
     log("Datei -> Projekt oeffnen... um loszulegen.");
 }
 
@@ -517,6 +574,8 @@ void QtEditorWindow::afterProjectChanged() {
     setWindowTitle(QString("RPG Maker 3D - Qt Editor  [%1]")
         .arg(QString::fromStdString(mEngine->GetProject().GetInfo().name)));
     if (mCode) mCode->refresh();
+    if (mMapDockWidget) mMapDockWidget->refresh();
+    if (mDbDockWidget) mDbDockWidget->refresh();
 }
 
 // ---------------------------------------------------------------------------

@@ -24,6 +24,8 @@ class ScriptManager;
 
 namespace qt_editor {
 
+class QtSyntaxHighlighter;
+
 enum class CodeLanguage {
     Ruby,
     Cpp
@@ -93,6 +95,8 @@ private:
     QString mCurrentPath;
     QString mCurrentName;
 
+    QtSyntaxHighlighter* mHighlighter = nullptr;
+
     // C++ API-Referenz (eingebettet, read-only)
     struct CppDoc {
         QString name;
@@ -101,6 +105,7 @@ private:
     };
     std::vector<CppDoc> mCppDocs;
     void ensureCppDocs();
+    void updateHighlighter();
 };
 
 } // namespace qt_editor

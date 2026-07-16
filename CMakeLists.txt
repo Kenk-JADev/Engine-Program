@@ -167,6 +167,9 @@ if(RPGMAKER3D_EDITOR_QT)
         qt_editor/QtEditorWindow.cpp
         qt_editor/QtGameViewWidget.cpp
         qt_editor/QtCodeWorkspace.cpp
+        qt_editor/QtSyntaxHighlighter.cpp
+        qt_editor/QtMapEditorDock.cpp
+        qt_editor/QtDatabaseEditorDock.cpp
     )
 elseif(RPGMAKER3D_BUILD_EDITOR)
     message(STATUS "Editor ohne Qt: SDL main.cpp (kein ImGui-Editor, nur Engine-Fenster)")

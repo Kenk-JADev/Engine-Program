@@ -1,4 +1,5 @@
 #include "QtCodeWorkspace.h"
+#include "QtSyntaxHighlighter.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/ScriptManager.h"
@@ -145,6 +146,16 @@ void QtCodeWorkspace::buildUi() {
     mEditor->setLineWrapMode(QPlainTextEdit::NoWrap);
     mEditor->setTabStopDistance(4 * mEditor->fontMetrics().horizontalAdvance(' '));
     applyEditorFont();
+    mHighlighter = new QtSyntaxHighlighter(mEditor->document());
+    mHighlighter->setLanguage(HighlightLanguage::Ruby);
+    // Dunkler Editor-Hintergrund (Syntax-Farben sind darauf abgestimmt)
+    mEditor->setStyleSheet(
+        "QPlainTextEdit {"
+        "  background-color: #1e1e1e;"
+        "  color: #d4d4d4;"
+        "  selection-background-color: #264f78;"
+        "  border: 1px solid #3c3c3c;"
+        "}");
     connect(mEditor, &QPlainTextEdit::textChanged, this, &QtCodeWorkspace::onTextChanged);
     rightLay->addWidget(mEditor, 1);
 
@@ -396,13 +407,22 @@ void QtCodeWorkspace::setLanguage(int index) {
     }
     mSnippetCombo->blockSignals(false);
 
+    updateHighlighter();
     refresh();
+}
+
+void QtCodeWorkspace::updateHighlighter() {
+    if (!mHighlighter) return;
+    mHighlighter->setLanguage(mLanguage == CodeLanguage::Cpp
+        ? HighlightLanguage::Cpp
+        : HighlightLanguage::Ruby);
 }
 
 void QtCodeWorkspace::refresh() {
     if (mLanguage == CodeLanguage::Ruby) populateRubyList();
     else populateCppList();
     updateDirtyLabel();
+    updateHighlighter();
 }
 
 void QtCodeWorkspace::populateRubyList() {
