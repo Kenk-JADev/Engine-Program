@@ -161,20 +161,32 @@ if(RPGMAKER3D_EDITOR_QT)
     if(NOT RPGMAKER3D_BUILD_EDITOR)
         message(FATAL_ERROR "RPGMAKER3D_EDITOR_QT benoetigt RPGMAKER3D_BUILD_EDITOR=ON")
     endif()
-    find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
-    message(STATUS "Qt-Editor: Qt ${Qt6_VERSION} (${Qt6_DIR})")
-    list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
-    list(APPEND CORE_SOURCES
-        qt_editor/QtMain.cpp
-        qt_editor/QtEditorWindow.cpp
-        qt_editor/QtGameViewWidget.cpp
-        qt_editor/QtCodeWorkspace.cpp
-        qt_editor/QtSyntaxHighlighter.cpp
-        qt_editor/QtMapEditorDock.cpp
-        qt_editor/QtDatabaseEditorDock.cpp
-    )
-elseif(RPGMAKER3D_BUILD_EDITOR)
-    message(STATUS "Editor ohne Qt: SDL main.cpp (kein ImGui-Editor, nur Engine-Fenster)")
+    # Soft-find: CI ohne installiertes Qt (oder Workflow noch ohne aqt) faellt
+    # sauber auf SDL-main zurueck, statt Configure hart abzubrechen.
+    find_package(Qt6 QUIET COMPONENTS Widgets OpenGLWidgets)
+    if(Qt6_FOUND)
+        message(STATUS "Qt-Editor: Qt ${Qt6_VERSION} (${Qt6_DIR})")
+        list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
+        list(APPEND CORE_SOURCES
+            qt_editor/QtMain.cpp
+            qt_editor/QtEditorWindow.cpp
+            qt_editor/QtGameViewWidget.cpp
+            qt_editor/QtCodeWorkspace.cpp
+            qt_editor/QtSyntaxHighlighter.cpp
+            qt_editor/QtMapEditorDock.cpp
+            qt_editor/QtDatabaseEditorDock.cpp
+        )
+    else()
+        message(WARNING
+            "RPGMAKER3D_EDITOR_QT=ON, aber Qt6 wurde nicht gefunden. "
+            "Fallback: SDL main.cpp ohne Qt-Editor. "
+            "Installiere Qt 6 und setze CMAKE_PREFIX_PATH, oder siehe "
+            "BUILD-WINDOWS-WORKFLOW.yml / docs/QT-EDITOR.md (aqtinstall).")
+        set(RPGMAKER3D_EDITOR_QT OFF CACHE BOOL "Qt editor (auto-disabled: Qt6 not found)" FORCE)
+    endif()
+endif()
+if(NOT RPGMAKER3D_EDITOR_QT AND RPGMAKER3D_BUILD_EDITOR)
+    message(STATUS "Editor-Host: SDL main.cpp (kein Qt, kein ImGui-Editor)")
 endif()
 
 set(ALL_SOURCES
