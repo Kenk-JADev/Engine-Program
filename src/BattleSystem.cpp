@@ -80,6 +80,8 @@ void BattleSystem::Clear() {
     mEnemies.clear();
     mTurn = 0;
     mTimer = 0.0f;
+    mLastExp = 0;
+    mLastGold = 0;
 }
 
 void BattleSystem::Update(float dt) {
@@ -97,6 +99,10 @@ void BattleSystem::Update(float dt) {
             break;
         case BattleState::Input:
             // waiting for external SetAction
+            if (mNextAction.type != BattleActionType::None) {
+                mState = BattleState::Turn;
+                mTimer = 0;
+            }
             break;
         case BattleState::Turn:
             ProcessTurn();
@@ -179,6 +185,34 @@ void BattleSystem::ProcessTurn() {
             if (onMessage) onMessage(subject->name + " attacks " + target->name + " for " + std::to_string(dmg) + " damage!");
             if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
         }
+    } else if (action.type==BattleActionType::Skill) {
+        Battler* target = nullptr;
+        if (isActorTurn && action.targetIndex >= 0 && action.targetIndex < (int)mEnemies.size())
+            target = &mEnemies[action.targetIndex];
+        int power = 40;
+        std::string sname = "Skill";
+        if (const auto* sk = Database::Get().GetSkill(action.skillId)) {
+            power = sk->power; sname = sk->name;
+            subject->mp = std::max(0, subject->mp - sk->mpCost);
+        }
+        if (target && !target->isDead) {
+            if (power >= 0) {
+                int dmg = std::max(1, power + subject->atk/2 - target->def/2);
+                target->ApplyDamage(dmg);
+                if (onMessage) onMessage(subject->name + " uses " + sname + " for " + std::to_string(dmg) + "!");
+            } else {
+                // heal
+                int heal = -power;
+                subject->Recover(heal, 0);
+                if (onMessage) onMessage(subject->name + " uses " + sname + " +" + std::to_string(heal) + " HP");
+            }
+        }
+    } else if (action.type==BattleActionType::Item) {
+        if (const auto* it = Database::Get().GetItem(action.itemId)) {
+            subject->Recover(it->hpRecovery, it->mpRecovery);
+            Game::Get().Party().GainItem(it->id, -1);
+            if (onMessage) onMessage(subject->name + " uses " + it->name);
+        }
     } else if (action.type==BattleActionType::Guard) {
         if (onMessage) onMessage(subject->name + " guards!");
     } else if (action.type==BattleActionType::Escape) {
@@ -200,7 +234,19 @@ void BattleSystem::CheckVictory() {
     if (allEnemiesDead) {
         mState = BattleState::Victory;
         mTimer = 0;
-        if (onMessage) onMessage("Victory!");
+        mLastExp = 0; mLastGold = 0;
+        for (auto& e : mEnemies) {
+            if (const auto* d = Database::Get().GetEnemy(e.id)) {
+                mLastExp += d->exp;
+                mLastGold += d->gold;
+            } else {
+                mLastExp += 5; mLastGold += 3;
+            }
+        }
+        Game::Get().Party().GainGold(mLastGold);
+        for (auto& a : Game::Get().Party().Members()) a.exp += mLastExp;
+        if (onMessage) onMessage("Victory! EXP +" + std::to_string(mLastExp) +
+                                 " Gold +" + std::to_string(mLastGold));
         return;
     }
     bool allActorsDead = true;

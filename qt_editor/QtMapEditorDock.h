@@ -56,6 +56,7 @@ private slots:
     void onFillLayer();
     void onTileClicked(int tileId);
     void onBrushModeChanged(int index);
+    void onToggleSolid();
 
 private:
     void buildUi();
@@ -86,6 +87,7 @@ private:
     bool mPaintEnabled = true;
     int mBrushMode = 0; // 0 paint, 1 rect
     QComboBox* mBrushCombo = nullptr;
+    QPushButton* mSolidBtn = nullptr;
     bool mSyncing = false;
 };
 

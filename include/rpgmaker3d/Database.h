@@ -223,6 +223,7 @@ public:
     const ActorData* GetActor(int id) const;
     const ItemData* GetItem(int id) const;
     const EnemyData* GetEnemy(int id) const;
+    const SkillData* GetSkill(int id) const;
     const TroopData* GetTroop(int id) const;
     const StateData* GetState(int id) const;
 

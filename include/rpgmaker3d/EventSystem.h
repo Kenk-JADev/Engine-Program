@@ -201,6 +201,8 @@ public:
 
     void AddCommonEvent(const CommonEvent& ev);
     CommonEvent* GetCommonEvent(int id);
+    std::vector<CommonEvent>& GetCommonEvents() { return mCommonEvents; }
+    const std::vector<CommonEvent>& GetCommonEvents() const { return mCommonEvents; }
 
     /// Wire engine callbacks (message UI, audio, transfer, etc.)
     void BindRuntimeCallbacks();

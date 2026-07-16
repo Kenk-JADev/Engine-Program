@@ -111,7 +111,26 @@ void QtEventEditorDock::buildUi() {
     connect(bDel, &QPushButton::clicked, this, &QtEventEditorDock::onDeleteEvent);
     connect(bSave, &QPushButton::clicked, this, &QtEventEditorDock::onSaveEvents);
     connect(bReload, &QPushButton::clicked, this, &QtEventEditorDock::onReloadEvents);
-    tb->addWidget(bNew); tb->addWidget(bDel); tb->addWidget(bSave); tb->addWidget(bReload);
+    auto* bCE = new QPushButton("Common+", this);
+    bCE->setToolTip("Common Event anlegen (Autorun wenn Switch gesetzt)");
+    connect(bCE, &QPushButton::clicked, this, [this]() {
+        auto& es = rpg::EventSystem::Get();
+        rpg::CommonEvent ce;
+        ce.id = 1;
+        for (int i = 1; i < 999; ++i) {
+            if (!es.GetCommonEvent(i)) { ce.id = i; break; }
+        }
+        ce.name = "CE" + std::to_string(ce.id);
+        ce.trigger = rpg::EventTrigger::Autorun;
+        ce.switchId = 1; // laeuft wenn Switch 1 an
+        rpg::EventCommand cmd;
+        cmd.code = rpg::EventCommandCode::ShowText;
+        cmd.text = "Common Event " + std::to_string(ce.id);
+        ce.list.push_back(cmd);
+        es.AddCommonEvent(ce);
+        emit logMessage(QString("Common Event %1 (Switch %2)").arg(ce.id).arg(ce.switchId));
+    });
+    tb->addWidget(bNew); tb->addWidget(bDel); tb->addWidget(bSave); tb->addWidget(bReload); tb->addWidget(bCE);
     tb->addStretch(1);
     root->addLayout(tb);
 

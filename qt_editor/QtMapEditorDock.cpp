@@ -126,6 +126,10 @@ void QtMapEditorDock::buildUi() {
     paintBtns->addWidget(mEraserBtn);
     paintBtns->addWidget(clearBtn);
     paintBtns->addWidget(fillBtn);
+    mSolidBtn = new QPushButton("Solid", paintBox);
+    mSolidBtn->setToolTip("Tile solid (Kollision) umschalten");
+    connect(mSolidBtn, &QPushButton::clicked, this, &QtMapEditorDock::onToggleSolid);
+    paintBtns->addWidget(mSolidBtn);
     paintLay->addLayout(paintBtns);
     paintLay->addWidget(mTileInfo);
     paintLay->addWidget(mTilesetLabel);
@@ -490,15 +494,43 @@ void QtMapEditorDock::rebuildTilePalette() {
         } else {
             btn->setText(QString::number(i));
         }
+        bool isSolid = false;
+        if (const auto* info = tileset->GetTileInfo(i)) isSolid = info->solid;
         if (i == mSelectedTile)
-            btn->setStyleSheet("border: 2px solid #e0a020; background:#3a3020;");
+            btn->setStyleSheet(isSolid ? "border: 2px solid #e0a020; background:#803030;"
+                                       : "border: 2px solid #e0a020; background:#3a3020;");
         else
-            btn->setStyleSheet("border: 1px solid #444;");
+            btn->setStyleSheet(isSolid ? "border: 1px solid #a04040; background:#402020;"
+                                       : "border: 1px solid #444;");
         connect(btn, &QToolButton::clicked, this, [this, i]() { onTileClicked(i); });
         mTileGrid->addWidget(btn, i / colsPerRow, i % colsPerRow);
     }
     if (mSelectedTile >= 0)
         mTileInfo->setText(QString("Tile: %1").arg(mSelectedTile));
+}
+
+void QtMapEditorDock::onToggleSolid() {
+    if (!mEngine || mSelectedTile < 0) {
+        emit logMessage("Solid: bitte ein Tile waehlen (nicht Radierer).");
+        return;
+    }
+    auto tileset = mEngine->GetMap().GetTileset();
+    if (!tileset) return;
+    const rpg::TileInfo* info = tileset->GetTileInfo(mSelectedTile);
+    rpg::TileInfo ti;
+    if (info) ti = *info;
+    ti.id = mSelectedTile;
+    ti.solid = !ti.solid;
+    tileset->SetTileInfo(mSelectedTile, ti);
+    // auch in Database flags
+    auto& tss = rpg::Database::Get().Tilesets();
+    if (!tss.empty()) {
+        auto& flags = tss[0].flags;
+        if ((int)flags.size() <= mSelectedTile) flags.resize(mSelectedTile + 1, 0);
+        flags[mSelectedTile] = ti.solid ? 1 : 0;
+    }
+    emit logMessage(QString("Tile %1 solid=%2").arg(mSelectedTile).arg(ti.solid ? "ja" : "nein"));
+    rebuildTilePalette();
 }
 
 void QtMapEditorDock::onBrushModeChanged(int index) {

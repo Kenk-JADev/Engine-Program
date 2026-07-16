@@ -797,6 +797,11 @@ const EnemyData* Database::GetEnemy(int id) const {
     return nullptr;
 }
 
+const SkillData* Database::GetSkill(int id) const {
+    for (const auto& e : mSkills) if (e.id==id) return &e;
+    return nullptr;
+}
+
 const TroopData* Database::GetTroop(int id) const {
     for (const auto& e : mTroops) if (e.id==id) return &e;
     return nullptr;

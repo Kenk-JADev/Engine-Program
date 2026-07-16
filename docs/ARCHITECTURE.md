@@ -125,3 +125,18 @@ Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht 
 | Troops/States | `database/Troops.json`, `States.json` |
 
 Hotkeys im Default-Script: **F1** Save, **F2** Load, **F3** Testkampf.
+
+### Battle-Input (Playtest/Player)
+| Taste | Aktion |
+|-------|--------|
+| **1** / **A** | Angriff |
+| **2** / **S** | Skill (ID 1) |
+| **3** / **I** | Item (ID 1) |
+| **4** | Flucht |
+
+### Map-Kollision
+Tile-Flag **solid** (Map-Dock: Button „Solid“) → `TilesetData.flags` → `GameMap::IsPassable`.
+
+### Common Events
+`maps/CommonEvents.json`, Trigger Autorun wenn `switchId` an (oder 0=immer bei Autorun).
+Button **Common+** im Event-Dock.

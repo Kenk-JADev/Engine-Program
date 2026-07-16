@@ -185,6 +185,19 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         tileset->Load("assets/textures/tileset_demo.png", 32, 32); // wird checker fallback
     }
     mMap->SetTileset(tileset);
+    // Passability-Flags aus Database auf Tileset anwenden
+    if (!Database::Get().Tilesets().empty()) {
+        const auto& flags = Database::Get().Tilesets()[0].flags;
+        for (size_t i = 0; i < flags.size(); ++i) {
+            if (flags[i]) {
+                rpg::TileInfo ti;
+                if (const auto* old = tileset->GetTileInfo((int)i)) ti = *old;
+                ti.id = (int)i;
+                ti.solid = true;
+                tileset->SetTileInfo((int)i, ti);
+            }
+        }
+    }
 
     // Bind GameMap for collision checks
     Game::Get().Map().BindMap(mMap.get());
@@ -587,10 +600,26 @@ void Engine::Update(float dt) {
         }
 
         Game::Get().Update(dt);
-        if (!GameUI::Get().Pause().IsVisible()) {
+        if (!GameUI::Get().Pause().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);
         }
-        // EventSystem also updated inside Game::Update; keep battle/ruby
+        // Battle commands: 1/A Attack, 2/S Skill, 3/I Item, 4 Escape
+        if (BattleSystem::Get().NeedsInput()) {
+            BattleAction act;
+            act.subjectIndex = 0;
+            act.targetIndex = 0;
+            bool set = false;
+            if (mInput->IsKeyPressed(Key::Num1) || mInput->IsKeyPressed(Key::A)) {
+                act.type = BattleActionType::Attack; set = true;
+            } else if (mInput->IsKeyPressed(Key::Num2) || mInput->IsKeyPressed(Key::S)) {
+                act.type = BattleActionType::Skill; act.skillId = 1; set = true;
+            } else if (mInput->IsKeyPressed(Key::Num3) || mInput->IsKeyPressed(Key::I)) {
+                act.type = BattleActionType::Item; act.itemId = 1; set = true;
+            } else if (mInput->IsKeyPressed(Key::Num4)) {
+                act.type = BattleActionType::Escape; set = true;
+            }
+            if (set) BattleSystem::Get().SetAction(act);
+        }
         BattleSystem::Get().Update(dt);
         if (mRubyVM) mRubyVM->Update(dt);
     }

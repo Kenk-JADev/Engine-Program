@@ -493,6 +493,29 @@ void EventSystem::Update(float dt, const Vec3& playerPos) {
         [](const std::unique_ptr<EventInterpreter>& i) { return !i->IsRunning(); }),
         mInterpreters.end());
 
+    // Common Events (Autorun/Parallel) – RPG Maker Style
+    for (auto& ce : mCommonEvents) {
+        if (ce.list.empty()) continue;
+        bool run = false;
+        if (ce.trigger == EventTrigger::Autorun || ce.trigger == EventTrigger::Parallel) {
+            if (ce.switchId <= 0 || Game::Get().Switches().Get(ce.switchId))
+                run = true;
+        }
+        if (!run) continue;
+        // Avoid stacking same common event if already running (id as negative)
+        int cid = -ce.id;
+        bool already = false;
+        for (auto& it : mInterpreters)
+            if (it->GetEventId() == cid && it->IsRunning()) { already = true; break; }
+        if (already && ce.trigger != EventTrigger::Parallel) continue;
+        if (already && ce.trigger == EventTrigger::Parallel) continue; // one instance
+        auto interpreter = std::make_unique<EventInterpreter>();
+        WireInterpreter(*interpreter);
+        interpreter->Setup(ce.list, cid);
+        mInterpreters.push_back(std::move(interpreter));
+        RPG_LOG_INFO("CommonEvent " + std::to_string(ce.id) + " (" + ce.name + ")");
+    }
+
     for (auto& ev : mEvents) {
         if (!ev.enabled || !ev.IsValid()) continue;
         RefreshEventPage(ev);
@@ -567,6 +590,19 @@ bool EventSystem::IsWaitingForMessage() const {
 }
 
 void EventSystem::EnsureDemoEvent() {
+    // Sample Common Event (switch 1 triggers parallel? autorun when switch 1 ON)
+    if (mCommonEvents.empty()) {
+        CommonEvent ce;
+        ce.id = 1;
+        ce.name = "Welcome CE";
+        ce.trigger = EventTrigger::None; // call manually / switch later
+        ce.switchId = 0;
+        EventCommand c;
+        c.code = EventCommandCode::ShowText;
+        c.text = "Common Event: Willkommen! (Scripts steuern das Spiel)";
+        ce.list.push_back(c);
+        mCommonEvents.push_back(ce);
+    }
     if (!mEvents.empty()) return;
 
     MapEvent ev;
@@ -843,6 +879,82 @@ void EventSystem::LoadMapEvents(int mapId, const std::string& projectPath) {
             EnsureDemoEvent();
         } else {
             RPG_LOG_INFO("LoadMapEvents map " + std::to_string(mapId) + " loaded " + std::to_string(mEvents.size()) + " events from " + loadedPath);
+            // CommonEvents
+            try {
+                std::string cpath = projectPath + "/maps/CommonEvents.json";
+                if (std::filesystem::exists(cpath)) {
+                    std::ifstream cf(cpath);
+                    std::stringstream ss; ss << cf.rdbuf();
+                    std::string content = ss.str();
+                    mCommonEvents.clear();
+                    size_t pos = 0;
+                    while ((pos = content.find("\"id\"", pos)) != std::string::npos) {
+                        CommonEvent ce;
+                        int id=0, trig=0, sw=0;
+                        // naive parse
+                        try {
+                            size_t c = content.find(':', pos);
+                            id = std::stoi(content.substr(c+1));
+                        } catch(...) {}
+                        ce.id = id;
+                        size_t np = content.find("\"name\"", pos);
+                        size_t next = content.find("\"id\"", pos+4);
+                        if (np != std::string::npos && (next==std::string::npos || np < next)) {
+                            size_t q1 = content.find('"', content.find(':', np)+1);
+                            size_t q2 = content.find('"', q1+1);
+                            if (q1!=std::string::npos && q2!=std::string::npos)
+                                ce.name = content.substr(q1+1, q2-q1-1);
+                        }
+                        size_t tp = content.find("\"trigger\"", pos);
+                        if (tp != std::string::npos && (next==std::string::npos || tp < next)) {
+                            try { ce.trigger = (EventTrigger)std::stoi(content.substr(content.find(':',tp)+1)); } catch(...) {}
+                        }
+                        size_t sp = content.find("\"switchId\"", pos);
+                        if (sp != std::string::npos && (next==std::string::npos || sp < next)) {
+                            try { ce.switchId = std::stoi(content.substr(content.find(':',sp)+1)); } catch(...) {}
+                        }
+                        // commands: find "list"
+                        size_t lp = content.find("\"list\"", pos);
+                        if (lp != std::string::npos && (next==std::string::npos || lp < next)) {
+                            size_t b = content.find('[', lp);
+                            size_t e = content.find(']', b);
+                            // parse code entries
+                            size_t cp = b;
+                            while (cp != std::string::npos && cp < e) {
+                                cp = content.find("\"code\"", cp);
+                                if (cp==std::string::npos || cp > e) break;
+                                EventCommand cmd;
+                                try { cmd.code = (EventCommandCode)std::stoi(content.substr(content.find(':',cp)+1)); } catch(...) {}
+                                size_t tx = content.find("\"text\"", cp);
+                                if (tx != std::string::npos && tx < e) {
+                                    size_t q1 = content.find('"', content.find(':', tx)+1);
+                                    size_t q2 = q1+1;
+                                    std::string text;
+                                    while (q2 < content.size() && content[q2] != '"') {
+                                        if (content[q2]=='\\' && q2+1<content.size()) { text.push_back(content[q2+1]); q2+=2; }
+                                        else { text.push_back(content[q2]); q2++; }
+                                    }
+                                    cmd.text = text;
+                                }
+                                auto grabP = [&](const char* k, int& out) {
+                                    size_t p = content.find(k, cp);
+                                    if (p!=std::string::npos && p < (cp+200)) {
+                                        try { out = std::stoi(content.substr(content.find(':',p)+1)); } catch(...) {}
+                                    }
+                                };
+                                grabP("\"p1\"", cmd.param1);
+                                grabP("\"p2\"", cmd.param2);
+                                grabP("\"p3\"", cmd.param3);
+                                ce.list.push_back(cmd);
+                                cp = content.find("\"code\"", cp+6);
+                            }
+                        }
+                        if (ce.id > 0) mCommonEvents.push_back(ce);
+                        pos += 4;
+                    }
+                    RPG_LOG_INFO("Loaded CommonEvents: " + std::to_string(mCommonEvents.size()));
+                }
+            } catch (...) {}
         }
     } catch (const std::exception& e) {
         RPG_LOG_ERROR(std::string("LoadMapEvents failed for map ") + std::to_string(mapId) + ": " + e.what() + " - using demo");
@@ -940,6 +1052,36 @@ void EventSystem::SaveMapEvents(int mapId, const std::string& projectPath) const
         f << "}\n";
         f.close();
         RPG_LOG_INFO("SaveMapEvents map " + std::to_string(mapId) + " saved " + std::to_string(mEvents.size()) + " events to " + path);
+        // Common Events (projektweit)
+        try {
+            std::filesystem::create_directories(projectPath + "/maps");
+            std::string cpath = projectPath + "/maps/CommonEvents.json";
+            std::ofstream cf(cpath);
+            cf << "[\n";
+            for (size_t i = 0; i < mCommonEvents.size(); ++i) {
+                const auto& ce = mCommonEvents[i];
+                cf << "  {\"id\":" << ce.id << ",\"name\":\"" << ce.name
+                   << "\",\"trigger\":" << (int)ce.trigger
+                   << ",\"switchId\":" << ce.switchId
+                   << ",\"list\":[";
+                for (size_t j = 0; j < ce.list.size(); ++j) {
+                    const auto& c = ce.list[j];
+                    if (j) cf << ",";
+                    cf << "{\"code\":" << (int)c.code << ",\"text\":\"";
+                    for (char ch : c.text) {
+                        if (ch=='\\'||ch=='"') cf << '\\';
+                        cf << ch;
+                    }
+                    cf << "\",\"p1\":" << c.param1 << ",\"p2\":" << c.param2
+                       << ",\"p3\":" << c.param3 << "}";
+                }
+                cf << "]}";
+                if (i+1<mCommonEvents.size()) cf << ",";
+                cf << "\n";
+            }
+            cf << "]\n";
+            RPG_LOG_INFO("Saved CommonEvents: " + std::to_string(mCommonEvents.size()));
+        } catch (...) {}
     } catch (const std::exception& e) {
         RPG_LOG_ERROR(std::string("SaveMapEvents failed: ") + e.what());
     }
