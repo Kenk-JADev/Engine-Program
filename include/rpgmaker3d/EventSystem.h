@@ -156,6 +156,17 @@ public:
     std::function<void()> onClearScreenTexts;
     std::function<void(int itemId, int amount)> onChangeItems;
     std::function<void(int actorId, int hp)> onChangeActorHP;
+    // RPG Maker Kern-Befehle
+    std::function<void(int troopId)> onBattleProcessing;
+    std::function<void(const std::vector<int>& itemIds)> onShopProcessing;
+    std::function<void(int slot)> onOpenSave;
+    std::function<void(int slot)> onOpenLoad;
+    std::function<void()> onGameOver;
+    std::function<void()> onReturnToTitle;
+    std::function<void(int commonEventId)> onCallCommonEvent;
+    std::function<void(int actorId)> onRecoverAll;
+    std::function<void(int actorId, int exp)> onChangeExp;
+    std::function<void(int actorId, int level)> onChangeLevel;
 
 private:
     bool ExecuteCommand(const EventCommand& cmd);
@@ -169,6 +180,9 @@ private:
     int mBranchDepth = 0;
     bool mBranchResult = true;
 };
+
+// Optional: Ruby-Script-Runner fuer Event-Befehl "Script" (Engine setzt das)
+void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn);
 
 class EventSystem {
 public:

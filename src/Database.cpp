@@ -20,6 +20,8 @@ void Database::Clear() {
     mArmors.clear();
     mSkills.clear();
     mEnemies.clear();
+    mTroops.clear();
+    mStates.clear();
     mTilesets.clear();
     mMapInfos.clear();
     mSystem = SystemData();
@@ -88,6 +90,26 @@ void Database::CreateDefaults() {
         mEnemies.push_back(bat);
     }
 
+    // Troops (Gegner-Gruppen)
+    if (mTroops.empty()) {
+        TroopData t1; t1.id=1; t1.name="Slime x1"; t1.members={1};
+        mTroops.push_back(t1);
+        TroopData t2; t2.id=2; t2.name="Slime + Bat"; t2.members={1,2};
+        mTroops.push_back(t2);
+        TroopData t3; t3.id=3; t3.name="Bat x2"; t3.members={2,2};
+        mTroops.push_back(t3);
+    }
+
+    // States
+    if (mStates.empty()) {
+        StateData poison; poison.id=1; poison.name="Poison"; poison.hpDrainRate=0.05f; poison.removeAtBattleEnd=true;
+        mStates.push_back(poison);
+        StateData sleep; sleep.id=2; sleep.name="Sleep"; sleep.restriction=4; sleep.removeAtBattleEnd=true;
+        mStates.push_back(sleep);
+        StateData guard; guard.id=3; guard.name="Guard"; guard.restriction=0; guard.holdTurn=1;
+        mStates.push_back(guard);
+    }
+
     // Tilesets
     if (mTilesets.empty()) {
         TilesetData td; td.id=1; td.name="World"; td.tilesetName="tileset_demo.png";
@@ -106,6 +128,8 @@ void Database::CreateDefaults() {
         map1.bgsAutoPlay = true;
         map1.scrollType = 0;
         map1.encounterStep = 30;
+        map1.encounterList[0] = 1; // troop 1
+        map1.encounterList[1] = 2;
         map1.backgroundColor = Color(0, 0, 0, 1);
         map1.fogColor = Color(0.5f, 0.5f, 0.5f, 1.0f);
         mMapInfos.push_back(map1);
@@ -596,6 +620,43 @@ bool Database::Save(const std::string& projectPath) const {
             }
             f << "]\n";
         }
+        // Troops.json
+        {
+            std::ofstream f(dbDir + "/Troops.json");
+            f << "[\n";
+            for (size_t i=0;i<mTroops.size();++i) {
+                const auto& tr = mTroops[i];
+                f << "  {\"id\":" << tr.id
+                  << ",\"name\":\"" << Escape(tr.name) << "\""
+                  << ",\"members\":[";
+                for (size_t j=0;j<tr.members.size();++j) {
+                    if (j) f << ",";
+                    f << tr.members[j];
+                }
+                f << "]}";
+                if (i+1<mTroops.size()) f << ",";
+                f << "\n";
+            }
+            f << "]\n";
+        }
+        // States.json
+        {
+            std::ofstream f(dbDir + "/States.json");
+            f << "[\n";
+            for (size_t i=0;i<mStates.size();++i) {
+                const auto& s = mStates[i];
+                f << "  {\"id\":" << s.id
+                  << ",\"name\":\"" << Escape(s.name) << "\""
+                  << ",\"restriction\":" << s.restriction
+                  << ",\"priority\":" << s.priority
+                  << ",\"hpDrainRate\":" << s.hpDrainRate
+                  << "}";
+                if (i+1<mStates.size()) f << ",";
+                f << "\n";
+            }
+            f << "]\n";
+        }
+
         // Weapons.json
         {
             std::ofstream f(dbDir + "/Weapons.json");
@@ -733,6 +794,16 @@ const ItemData* Database::GetItem(int id) const {
 }
 const EnemyData* Database::GetEnemy(int id) const {
     for (const auto& e : mEnemies) if (e.id==id) return &e;
+    return nullptr;
+}
+
+const TroopData* Database::GetTroop(int id) const {
+    for (const auto& e : mTroops) if (e.id==id) return &e;
+    return nullptr;
+}
+
+const StateData* Database::GetState(int id) const {
+    for (const auto& e : mStates) if (e.id==id) return &e;
     return nullptr;
 }
 

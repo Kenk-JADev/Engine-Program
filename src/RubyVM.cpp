@@ -9,6 +9,8 @@
 #include "rpgmaker3d/Model.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/BattleSystem.h"
+#include "rpgmaker3d/Database.h"
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -315,6 +317,16 @@ static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
         key = Key::E;
     } else if (keyName == "q" || keyName == "Q") {
         key = Key::Q;
+    } else if (keyName == "h" || keyName == "H") {
+        key = Key::H;
+    } else if (keyName == "f1") {
+        key = Key::F1;
+    } else if (keyName == "f2") {
+        key = Key::F2;
+    } else if (keyName == "f3") {
+        key = Key::F3;
+    } else if (keyName == "f5") {
+        key = Key::F5;
     }
 
     return mrb_bool_value(engine->GetInput().IsKeyDown(key));
@@ -989,6 +1001,70 @@ static mrb_value rb_game_map_setup(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+
+// --- RPG Maker Kern: Save / Load / Battle / Switches / Variables ---
+static mrb_value rb_game_save(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int slot = 1;
+    mrb_get_args(mrb, "|i", &slot);
+    bool ok = Game::Get().Save((int)slot);
+    return mrb_bool_value(ok);
+}
+static mrb_value rb_game_load(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int slot = 1;
+    mrb_get_args(mrb, "|i", &slot);
+    bool ok = Game::Get().Load((int)slot);
+    return mrb_bool_value(ok);
+}
+static mrb_value rb_game_switch_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_bool_value(Game::Get().Switches().Get((int)id));
+}
+static mrb_value rb_game_switch_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id; mrb_bool val;
+    mrb_get_args(mrb, "ib", &id, &val);
+    Game::Get().Switches().Set((int)id, val);
+    return mrb_nil_value();
+}
+static mrb_value rb_game_var_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_fixnum_value(Game::Get().Variables().Get((int)id));
+}
+static mrb_value rb_game_var_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id, val;
+    mrb_get_args(mrb, "ii", &id, &val);
+    Game::Get().Variables().Set((int)id, (int)val);
+    return mrb_nil_value();
+}
+static mrb_value rb_battle_start(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int troopId = 1;
+    mrb_get_args(mrb, "|i", &troopId);
+    std::vector<int> enemies;
+    if (const auto* tr = Database::Get().GetTroop((int)troopId))
+        enemies = tr->members;
+    if (enemies.empty()) enemies = {1};
+    BattleSystem::Get().Setup(enemies, true, false);
+    BattleSystem::Get().onMessage = [](const std::string& msg) {
+        GameUI::Get().ShowMessage(msg);
+    };
+    BattleAction act; act.type = BattleActionType::Attack;
+    BattleSystem::Get().SetAction(act);
+    GameUI::Get().ShowMessage("Battle!");
+    return mrb_nil_value();
+}
+static mrb_value rb_battle_in_battle(mrb_state* mrb, mrb_value self) {
+    (void)self; (void)mrb;
+    return mrb_bool_value(BattleSystem::Get().IsInBattle());
+}
+
 void RubyVM::BindUI() {
     struct RClass* uiModule = mrb_define_module(mMrb, "UI");
 
@@ -1014,6 +1090,14 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, gameModule, "move_picture", rb_ui_move_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4));
     mrb_define_module_function(mMrb, gameModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
     mrb_define_module_function(mMrb, gameModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "save", rb_game_save, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "load", rb_game_load, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "switch", rb_game_switch_get, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameModule, "set_switch", rb_game_switch_set, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, gameModule, "variable", rb_game_var_get, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameModule, "set_variable", rb_game_var_set, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, gameModule, "start_battle", rb_battle_start, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "in_battle?", rb_battle_in_battle, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gameModule, "map_visible", rb_game_map_visible, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gameModule, "set_map_visible", rb_game_map_set_visible, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gameModule, "map_id", rb_game_map_id, MRB_ARGS_NONE());
@@ -1469,7 +1553,9 @@ void RubyVM::BindMap() {}
 void RubyVM::BindActor() {}
 void RubyVM::BindCamera() {}
 void RubyVM::BindGame() {}
+
 void RubyVM::BindUI() {}
+
 
 } // namespace rpg
 

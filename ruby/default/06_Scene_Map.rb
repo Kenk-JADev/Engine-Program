@@ -6,7 +6,7 @@ class Scene_Map < Scene_Base
     # Dauerhafte HUD-Zeilen (duration 0 = infinite) -> RmlUi spiegelt die letzte Zeile
     # und GameUI haelt alle ScreenTexts
     refresh_hud
-    UI.show_screen_text("WASD bewegen | E sprechen | H Hilfe | F5 Stop", 0.5, 0.94, 0.55, 0.75, 1.0, 0.0)
+    UI.show_screen_text("WASD|E|H Hilfe|F1 Save|F2 Load|F3 Kampf|F5 Stop", 0.5, 0.94, 0.55, 0.75, 1.0, 0.0)
     Engine.log("Scene_Map aktiv – Scripts steuern HUD/Dialoge")
   end
 
@@ -22,7 +22,7 @@ class Scene_Map < Scene_Base
   def update
     # Hilfe
     if Input.key_down?(:h)
-      UI.show_screen_text("Hilfe: WASD | E NPC | Esc Pause | F5 Playtest Stop", 0.5, 0.12, 0.4, 0.9, 1.0, 3.0)
+      UI.show_screen_text("F1 Save | F2 Load | F3 Kampf | E NPC | F5 Stop", 0.5, 0.12, 0.4, 0.9, 1.0, 3.0)
     end
     # Leichte HUD-Aktualisierung (nicht jedes Frame clearen – teuer)
     @hud_t = (@hud_t || 0) + 1

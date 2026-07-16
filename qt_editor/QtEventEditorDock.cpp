@@ -85,6 +85,9 @@ const CmdOpt kCmdOpts[] = {
     {rpg::EventCommandCode::ChangeActorHP, "Change Actor HP"},
     {rpg::EventCommandCode::RecoverAll, "Recover All"},
     {rpg::EventCommandCode::ShowChoices, "Show Choices"},
+    {rpg::EventCommandCode::ChangeExp, "Change EXP"},
+    {rpg::EventCommandCode::ChangeLevel, "Change Level"},
+    {rpg::EventCommandCode::RecoverAll, "Recover All"},
 };
 
 } // namespace

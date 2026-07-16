@@ -4,13 +4,25 @@
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/AudioManager.h"
 #include "rpgmaker3d/JsonUtils.h"
+#include "rpgmaker3d/BattleSystem.h"
+#include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/Engine.h"
+#include "rpgmaker3d/RubyVM.h"
 #include <fstream>
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <cstdio>
 #include <filesystem>
 
 namespace rpg {
+
+// Optional: Event-Befehl "Script" -> Ruby (von Engine gesetzt)
+static std::function<void(const std::string&)> s_scriptRunner;
+
+void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn) {
+    s_scriptRunner = std::move(fn);
+}
 
 const EventPage* MapEvent::GetCurrentPage() const {
     if (pages.empty()) return nullptr;
@@ -53,6 +65,14 @@ void EventInterpreter::Update(float dt) {
     while (mRunning && mIndex < mList.size() && executed < 12) {
         if (mPausedForMessage) return;
         const auto& cmd = mList[mIndex];
+        // Wenn Branch false: bis EndBranch ueberspringen
+        if (!mBranchResult && mBranchDepth > 0 &&
+            cmd.code != EventCommandCode::EndBranch &&
+            cmd.code != EventCommandCode::ConditionalBranch) {
+            mIndex++;
+            executed++;
+            continue;
+        }
         bool cont = ExecuteCommand(cmd);
         mIndex++;
         executed++;
@@ -167,11 +187,69 @@ bool EventInterpreter::ExecuteCommand(const EventCommand& cmd) {
             }
             return true;
         }
+        case EventCommandCode::BattleProcessing: {
+            // param1 = troopId (0 = text parse / random troop 1)
+            int troopId = cmd.param1 > 0 ? cmd.param1 : 1;
+            if (!cmd.text.empty()) {
+                try { troopId = std::stoi(cmd.text); } catch (...) {}
+            }
+            if (onBattleProcessing) onBattleProcessing(troopId);
+            return true;
+        }
+        case EventCommandCode::ShopProcessing: {
+            std::vector<int> items;
+            if (!cmd.text.empty()) {
+                std::stringstream ss(cmd.text);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    try { items.push_back(std::stoi(item)); } catch (...) {}
+                }
+            }
+            if (items.empty()) {
+                if (cmd.param1 > 0) items.push_back(cmd.param1);
+                if (cmd.param2 > 0) items.push_back(cmd.param2);
+                if (cmd.param3 > 0) items.push_back(cmd.param3);
+            }
+            if (items.empty()) items = {1, 2}; // default potions
+            if (onShopProcessing) onShopProcessing(items);
+            return true;
+        }
+        case EventCommandCode::RecoverAll: {
+            if (onRecoverAll) onRecoverAll(cmd.param1 > 0 ? cmd.param1 : 1);
+            return true;
+        }
+        case EventCommandCode::ChangeExp: {
+            if (onChangeExp) onChangeExp(cmd.param1 > 0 ? cmd.param1 : 1, cmd.param2);
+            return true;
+        }
+        case EventCommandCode::ChangeLevel: {
+            if (onChangeLevel) onChangeLevel(cmd.param1 > 0 ? cmd.param1 : 1, cmd.param2);
+            return true;
+        }
         case EventCommandCode::Comment:
             return true;
         case EventCommandCode::ConditionalBranch: {
+            // param1=switchId, param2=expected (0/1). text="var:ID:OP:VAL" optional
             mBranchDepth++;
             mBranchResult = true;
+            if (cmd.param1 > 0) {
+                bool sw = Game::Get().Switches().Get(cmd.param1);
+                mBranchResult = (cmd.param2 != 0) ? sw : !sw;
+            }
+            if (!cmd.text.empty() && cmd.text.rfind("var:", 0) == 0) {
+                // var:ID:>=:VAL
+                int vid = 0, val = 0;
+                char op[4] = {0};
+                if (sscanf(cmd.text.c_str(), "var:%d:%2[^:]:%d", &vid, op, &val) >= 3) {
+                    int cur = Game::Get().Variables().Get(vid);
+                    if (std::string(op) == ">=") mBranchResult = cur >= val;
+                    else if (std::string(op) == "<=") mBranchResult = cur <= val;
+                    else if (std::string(op) == "==") mBranchResult = cur == val;
+                    else if (std::string(op) == "!=") mBranchResult = cur != val;
+                    else if (std::string(op) == ">") mBranchResult = cur > val;
+                    else if (std::string(op) == "<") mBranchResult = cur < val;
+                }
+            }
             return true;
         }
         case EventCommandCode::EndBranch: {
@@ -257,6 +335,92 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     };
     interp.onScript = [](const std::string& code) {
         RPG_LOG_INFO("[Event] Script: " + code);
+        // Ausfuehrung ueber globalen Ruby-Hook (Engine setzt ihn)
+        if (s_scriptRunner) s_scriptRunner(code);
+    };
+    interp.onBattleProcessing = [](int troopId) {
+        std::vector<int> enemies;
+        if (const auto* troop = Database::Get().GetTroop(troopId)) {
+            enemies = troop->members;
+        } else {
+            enemies = {1}; // fallback slime
+        }
+        BattleSystem::Get().Setup(enemies, true, false);
+        BattleSystem::Get().onMessage = [](const std::string& m) {
+            GameUI::Get().ShowMessage(m);
+        };
+        BattleSystem::Get().onVictory = []() {
+            GameUI::Get().ShowMessage("Sieg!");
+            GameUI::Get().AddScreenText("VICTORY", Vec2(0.5f, 0.4f), Color(1,0.9f,0.2f,1), 3.0f);
+        };
+        BattleSystem::Get().onDefeat = []() {
+            GameUI::Get().ShowMessage("Niederlage...");
+        };
+        // Auto-Angriff falls keine UI: erster Input-Frame Attack
+        BattleAction act;
+        act.type = BattleActionType::Attack;
+        act.subjectIndex = 0;
+        act.targetIndex = 0;
+        BattleSystem::Get().SetAction(act);
+        RPG_LOG_INFO("[Event] Battle troop=" + std::to_string(troopId) +
+                     " enemies=" + std::to_string(enemies.size()));
+        GameUI::Get().ShowMessage("Kampf startet! (Troop " + std::to_string(troopId) + ")");
+    };
+    interp.onShopProcessing = [](const std::vector<int>& itemIds) {
+        std::string list = "Shop: ";
+        for (size_t i = 0; i < itemIds.size(); ++i) {
+            const auto* it = Database::Get().GetItem(itemIds[i]);
+            if (i) list += ", ";
+            list += it ? it->name : ("#" + std::to_string(itemIds[i]));
+            if (it) list += " (" + std::to_string(it->price) + "G)";
+        }
+        list += "\n(E kauft erstes Item wenn genug Gold)";
+        GameUI::Get().ShowMessage(list);
+        // Einfacher Auto-Kauf: erstes Item wenn Gold reicht
+        if (!itemIds.empty()) {
+            const auto* it = Database::Get().GetItem(itemIds[0]);
+            if (it && Game::Get().Party().GetGold() >= it->price) {
+                Game::Get().Party().GainGold(-it->price);
+                Game::Get().Party().GainItem(it->id, 1);
+                RPG_LOG_INFO("[Shop] Bought " + it->name);
+            }
+        }
+    };
+    interp.onRecoverAll = [](int actorId) {
+        auto* a = Game::Get().Party().GetActor(actorId);
+        if (a) { a->RecoverAll(); RPG_LOG_INFO("[Event] RecoverAll actor " + std::to_string(actorId)); }
+        else {
+            for (auto& m : Game::Get().Party().Members()) m.RecoverAll();
+        }
+        GameUI::Get().ShowMessage("HP/MP vollstaendig wiederhergestellt!");
+    };
+    interp.onChangeExp = [](int actorId, int exp) {
+        auto* a = Game::Get().Party().GetActor(actorId);
+        if (a) {
+            a->exp += exp;
+            RPG_LOG_INFO("[Event] EXP +" + std::to_string(exp));
+            GameUI::Get().AddScreenText("EXP +" + std::to_string(exp), Vec2(0.5f, 0.2f), Color(0.5f,1,0.5f,1), 2.0f);
+        }
+    };
+    interp.onChangeLevel = [](int actorId, int level) {
+        auto* a = Game::Get().Party().GetActor(actorId);
+        if (a) {
+            a->level = std::max(1, level);
+            RPG_LOG_INFO("[Event] Level -> " + std::to_string(a->level));
+            GameUI::Get().ShowMessage(a->name + " ist nun Level " + std::to_string(a->level) + "!");
+        }
+    };
+    interp.onOpenSave = [](int slot) {
+        if (Game::Get().Save(slot > 0 ? slot : 1))
+            GameUI::Get().ShowMessage("Spiel gespeichert (Slot " + std::to_string(slot > 0 ? slot : 1) + ").");
+        else
+            GameUI::Get().ShowMessage("Speichern fehlgeschlagen.");
+    };
+    interp.onOpenLoad = [](int slot) {
+        if (Game::Get().Load(slot > 0 ? slot : 1))
+            GameUI::Get().ShowMessage("Spiel geladen (Slot " + std::to_string(slot > 0 ? slot : 1) + ").");
+        else
+            GameUI::Get().ShowMessage("Kein Spielstand gefunden.");
     };
     // NEW: Screen text callbacks
     interp.onShowScreenText = [](const std::string& txt, float x, float y, float r, float g, float b, float dur) {

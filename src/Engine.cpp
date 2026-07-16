@@ -110,6 +110,15 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     mScriptManager = std::make_unique<ScriptManager>();
     mScriptManager->SetRubyVM(mRubyVM.get());
 
+    // Event-Befehl Script -> RubyVM (Script-Editor Codes)
+    EventSystem_SetScriptRunner([this](const std::string& code) {
+        if (mRubyVM) {
+            if (!mRubyVM->ExecuteString(code, "<event-script>")) {
+                RPG_LOG_ERROR(std::string("[Event Script] ") + mRubyVM->GetLastError());
+            }
+        }
+    });
+
     mAudio = std::make_unique<AudioManager>();
     if (!mAudio->Initialize()) {
         RPG_LOG_WARN("Audio initialization failed - continuing without audio");

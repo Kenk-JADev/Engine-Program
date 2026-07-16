@@ -10,7 +10,8 @@ class Game
 
   def update(delta_time)
     @time += delta_time
-    # Custom Hooks fuer Events (C++ EventSystem kann Script-Befehle ausloesen)
+    # F1/F2/F3 Menue (Save/Load/Battle) – siehe 14_Menu_Save.rb
+    GameMenu.update if defined?(GameMenu)
   end
 
   def on_gold_gained(amount)

@@ -3,12 +3,15 @@
 #include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/EventSystem.h"
+#include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Database.h"
 #include <fstream>
+#include <sstream>
 #include <filesystem>
 #include <cmath>
+#include <cstdlib>
 
 namespace rpg {
 
@@ -391,30 +394,114 @@ void Game::NewGameAt(const Vec3& worldPos, int mapId) {
 bool Game::Save(int slot) {
     try {
         std::filesystem::create_directories("saves");
-        std::string path = "saves/save" + std::to_string(slot) + ".sav";
-        std::ofstream f(path, std::ios::binary);
+        std::string path = "saves/save" + std::to_string(slot) + ".json";
+        std::ofstream f(path);
         if (!f) return false;
-        int gold = mParty.GetGold();
-        f.write((char*)&gold, sizeof(gold));
-        Vec3 pos = mPlayer.GetPosition();
-        f.write((char*)&pos, sizeof(pos));
+        const Vec3 pos = mPlayer.GetPosition();
+        f << "{\n";
+        f << "  \"version\": 1,\n";
+        f << "  \"gold\": " << mParty.GetGold() << ",\n";
+        f << "  \"mapId\": " << mMap.GetMapId() << ",\n";
+        f << "  \"pos\": [" << pos.x << "," << pos.y << "," << pos.z << "],\n";
+        f << "  \"actors\": [\n";
+        auto& members = mParty.Members();
+        for (size_t i = 0; i < members.size(); ++i) {
+            const auto& a = members[i];
+            f << "    {\"id\":" << a.actorId << ",\"name\":\"" << a.name
+              << "\",\"level\":" << a.level << ",\"hp\":" << a.hp
+              << ",\"mp\":" << a.mp << ",\"exp\":" << a.exp << "}";
+            if (i + 1 < members.size()) f << ",";
+            f << "\n";
+        }
+        f << "  ],\n";
+        // switches (first 64)
+        f << "  \"switches\": [";
+        for (int i = 0; i < 64; ++i) {
+            if (i) f << ",";
+            f << (mSwitches.Get(i) ? "1" : "0");
+        }
+        f << "],\n";
+        f << "  \"variables\": [";
+        for (int i = 0; i < 64; ++i) {
+            if (i) f << ",";
+            f << mVariables.Get(i);
+        }
+        f << "]\n}\n";
         f.close();
-        RPG_LOG_INFO("Game saved to "+path);
+        RPG_LOG_INFO("Game saved to " + path);
         return true;
     } catch (...) { return false; }
 }
+
 bool Game::Load(int slot) {
     try {
-        std::string path = "saves/save" + std::to_string(slot) + ".sav";
-        std::ifstream f(path, std::ios::binary);
+        std::string path = "saves/save" + std::to_string(slot) + ".json";
+        // fallback binary old
+        if (!std::filesystem::exists(path)) {
+            path = "saves/save" + std::to_string(slot) + ".sav";
+            std::ifstream fb(path, std::ios::binary);
+            if (!fb) return false;
+            int gold; fb.read((char*)&gold, sizeof(gold));
+            mParty.GainGold(gold - mParty.GetGold());
+            Vec3 pos; fb.read((char*)&pos, sizeof(pos));
+            mPlayer.SetPosition(pos);
+            mGameStarted = true;
+            RPG_LOG_INFO("Game loaded (legacy) from " + path);
+            return true;
+        }
+        std::ifstream f(path);
         if (!f) return false;
-        int gold; f.read((char*)&gold, sizeof(gold));
+        std::stringstream ss; ss << f.rdbuf();
+        std::string c = ss.str();
+        auto findNum = [&](const char* key, float def) -> float {
+            auto p = c.find(std::string("\"") + key + "\"");
+            if (p == std::string::npos) return def;
+            auto col = c.find(':', p);
+            try { return std::stof(c.substr(col + 1)); } catch (...) { return def; }
+        };
+        int gold = (int)findNum("gold", (float)mParty.GetGold());
         mParty.GainGold(gold - mParty.GetGold());
-        Vec3 pos; f.read((char*)&pos, sizeof(pos));
-        mPlayer.SetPosition(pos);
-        f.close();
+        int mapId = (int)findNum("mapId", 1);
+        // pos array
+        auto pp = c.find("\"pos\"");
+        if (pp != std::string::npos) {
+            auto b = c.find('[', pp);
+            auto e = c.find(']', b);
+            if (b != std::string::npos && e != std::string::npos) {
+                std::stringstream ps(c.substr(b + 1, e - b - 1));
+                char sep; float x=0,y=0,z=0;
+                ps >> x >> sep >> y >> sep >> z;
+                mPlayer.SetPosition(Vec3(x, y, z));
+            }
+        }
+        if (mapId > 0) mMap.Setup(mapId);
+        // switches
+        auto sp = c.find("\"switches\"");
+        if (sp != std::string::npos) {
+            auto b = c.find('[', sp); auto e = c.find(']', b);
+            if (b != std::string::npos && e != std::string::npos) {
+                std::stringstream ss2(c.substr(b+1, e-b-1));
+                std::string item; int idx=0;
+                while (std::getline(ss2, item, ',') && idx < 64) {
+                    mSwitches.Set(idx, item.find('1') != std::string::npos);
+                    ++idx;
+                }
+            }
+        }
+        auto vp = c.find("\"variables\"");
+        if (vp != std::string::npos) {
+            auto b = c.find('[', vp); auto e = c.find(']', b);
+            if (b != std::string::npos && e != std::string::npos) {
+                std::stringstream ss2(c.substr(b+1, e-b-1));
+                std::string item; int idx=0;
+                while (std::getline(ss2, item, ',') && idx < 64) {
+                    try { mVariables.Set(idx, std::stoi(item)); } catch (...) {}
+                    ++idx;
+                }
+            }
+        }
         mGameStarted = true;
-        RPG_LOG_INFO("Game loaded from "+path);
+        RPG_LOG_INFO("Game loaded from " + path);
         return true;
     } catch (...) { return false; }
 }
@@ -423,12 +510,77 @@ void Game::Update(float dt) {
     if (!mGameStarted) return;
     mMap.Update(dt);
 
-    // Lock player while a message/event is blocking
+    // Lock player while a message/event is blocking or battle is running
     bool busy = EventSystem::Get().IsWaitingForMessage() ||
-                GameUI::Get().Message().IsBusy();
+                GameUI::Get().Message().IsBusy() ||
+                BattleSystem::Get().IsInBattle();
     mPlayer.SetLocked(busy);
 
     EventSystem::Get().Update(dt, mPlayer.GetPosition());
+
+    // Random Encounter (RPG Maker Style): Schritte zaehlen wenn Map encounterStep > 0
+    if (!busy && !BattleSystem::Get().IsInBattle()) {
+        static Vec3 s_lastPos(0,0,0);
+        static float s_stepAccum = 0.f;
+        static int s_stepsToEncounter = 0;
+        const Vec3 pos = mPlayer.GetPosition();
+        float moved = glm::length(Vec3(pos.x - s_lastPos.x, 0, pos.z - s_lastPos.z));
+        s_lastPos = pos;
+        if (moved > 0.001f) {
+            s_stepAccum += moved;
+            // ~1 "Schritt" pro 1 Welt-Einheit
+            while (s_stepAccum >= 1.0f) {
+                s_stepAccum -= 1.0f;
+                if (s_stepsToEncounter <= 0) {
+                    int step = 30;
+                    int mapId = mMap.GetMapId();
+                    for (const auto& mi : Database::Get().MapInfos()) {
+                        if (mi.id == mapId) {
+                            step = mi.encounterStep > 0 ? mi.encounterStep : 0;
+                            break;
+                        }
+                    }
+                    if (step <= 0) break; // keine Encounters auf dieser Map
+                    // Zufalls-Abstand 50%..150% von encounterStep
+                    s_stepsToEncounter = step / 2 + (int)(step * (0.5f + (float)(rand() % 100) / 100.f));
+                }
+                s_stepsToEncounter--;
+                if (s_stepsToEncounter <= 0) {
+                    // Troop aus Map encounterList oder Default-Troop 1
+                    int troopId = 1;
+                    int mapId = mMap.GetMapId();
+                    for (const auto& mi : Database::Get().MapInfos()) {
+                        if (mi.id == mapId) {
+                            for (int k = 0; k < 8; ++k) {
+                                if (mi.encounterList[k] > 0) { troopId = mi.encounterList[k]; break; }
+                            }
+                            break;
+                        }
+                    }
+                    std::vector<int> enemies;
+                    if (const auto* tr = Database::Get().GetTroop(troopId))
+                        enemies = tr->members;
+                    if (enemies.empty()) enemies = {1};
+                    BattleSystem::Get().Setup(enemies, true, false);
+                    BattleSystem::Get().onMessage = [](const std::string& m) {
+                        GameUI::Get().ShowMessage(m);
+                    };
+                    BattleSystem::Get().onVictory = []() {
+                        GameUI::Get().ShowMessage("Sieg! Enemies besiegt.");
+                    };
+                    BattleAction act;
+                    act.type = BattleActionType::Attack;
+                    act.subjectIndex = 0;
+                    act.targetIndex = 0;
+                    BattleSystem::Get().SetAction(act);
+                    GameUI::Get().ShowMessage("Ein Kampf beginnt!");
+                    RPG_LOG_INFO("Random encounter troop=" + std::to_string(troopId));
+                    s_stepsToEncounter = 0;
+                    break;
+                }
+            }
+        }
+    }
 }
 
 } // namespace rpg

@@ -109,3 +109,19 @@ in `RubyVM::BindUI`). RmlUi ist nur der Renderer fuer das Game-Fenster.
 3. C++ Player/Events/BattleSystem
 
 Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht im Player.
+
+
+## 8. RPG-Maker-Kern (Runtime)
+
+| Feature | Wie |
+|---------|-----|
+| Scenes | Ruby `SceneManager` + `Scene_Title`/`Map`/`Battle` |
+| Dialoge | Event `ShowText` / Ruby `UI.show_message` → GameUI → RmlUi |
+| Switches/Variables | `Game.switch` / `Game.set_switch` / `variable` |
+| Save/Load | `Game.save(slot)` / `Game.load` → `saves/saveN.json` |
+| Battle | Event `BattleProcessing` / `Game.start_battle(troopId)` / Random Encounter |
+| Shop | Event `ShopProcessing` (kauft erstes Item wenn Gold reicht) |
+| Script-Befehl | Event `Script` → RubyVM (Script-Editor-Code) |
+| Troops/States | `database/Troops.json`, `States.json` |
+
+Hotkeys im Default-Script: **F1** Save, **F2** Load, **F3** Testkampf.
