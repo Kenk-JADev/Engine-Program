@@ -1,4 +1,9 @@
-# GitHub Actions Workflow für den Windows-Build mit mruby/MSVC
+# TEMPLATE: Inhalt von .github/workflows/Main.yml (Qt-Editor CI).
+# Der Arena-Bot darf Workflow-Dateien oft nicht pushen (workflows permission).
+# Maintainer: diese Datei nach .github/workflows/Main.yml kopieren und pushen.
+#
+# GitHub Actions Workflow für den Windows-Build mit mruby/MSVC + Qt-Editor
+# Qt-DLLs sind /MD -> vcpkg-Triplet x64-windows (nicht -static /MT).
 
 name: Build Windows EXE
 
@@ -30,13 +35,26 @@ jobs:
       - name: Setup MSVC (für mruby MSVC Build)
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Install Qt for editor
+        shell: pwsh
+        run: |
+          python -m pip install aqtinstall
+          # MSVC 2022 64-bit Desktop Qt (passend zu windows-latest / VS Enterprise)
+          aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt"
+          $qtDir = "$env:GITHUB_WORKSPACE/qt/6.9.1/msvc2022_64"
+          if (-not (Test-Path "$qtDir/bin/qmake.exe")) {
+            throw "Qt installation missing: $qtDir"
+          }
+          echo "QT_DIR=$qtDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Qt installed at $qtDir"
+
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
           path: |
             ${{ github.workspace }}/vcpkg
             ${{ github.workspace }}/vcpkg_installed
-          key: vcpkg-${{ runner.os }}-sdl2-glm-static-v5-ruby-msvc
+          key: vcpkg-${{ runner.os }}-sdl2-glm-x64-windows-md-v1-ruby-msvc
           restore-keys: |
             vcpkg-${{ runner.os }}-
 
@@ -47,7 +65,8 @@ jobs:
             git clone https://github.com/Microsoft/vcpkg.git
             .\vcpkg\bootstrap-vcpkg.bat
           }
-          .\vcpkg\vcpkg.exe install sdl2:x64-windows-static glm:x64-windows-static
+          # Dynamisches Triplet (/MD) – kompatibel mit Qt-DLLs
+          .\vcpkg\vcpkg.exe install sdl2:x64-windows glm:x64-windows
 
       - name: Build mruby with MSVC
         shell: pwsh
@@ -79,10 +98,9 @@ jobs:
             $env:LD = "link.exe"
             $env:AR = "lib.exe"
 
-            # Die Engine und x64-windows-static verwenden /MT.
-            # mruby muss dieselbe C-Runtime nutzen, sonst entstehen __imp_* Fehler.
-            $env:CFLAGS = "/nologo /W3 /MT /O2 /D_CRT_SECURE_NO_WARNINGS /we4013"
-            $env:CXXFLAGS = "/nologo /W3 /MT /O2 /D_CRT_SECURE_NO_WARNINGS /EHs"
+            # /MD = gleiche CRT wie Qt-DLLs und vcpkg x64-windows
+            $env:CFLAGS = "/nologo /W3 /MD /O2 /D_CRT_SECURE_NO_WARNINGS /we4013"
+            $env:CXXFLAGS = "/nologo /W3 /MD /O2 /D_CRT_SECURE_NO_WARNINGS /EHs"
 
             Write-Host "MSVC Compiler: $(where.exe cl)"
             Write-Host "MSVC Linker: $((Get-Command link.exe -CommandType Application -ErrorAction Stop).Source)"
@@ -130,13 +148,18 @@ jobs:
           python -m pip install glad2
           python -m glad --api gl:core=3.3 --out-path third_party/glad_generated c
 
-      - name: Configure CMake (mit Ruby ON, MSVC mruby)
+      - name: Configure CMake (Qt-Editor + Ruby ON)
         shell: pwsh
         run: |
+          if (-not $env:QT_DIR) { throw "QT_DIR not set" }
           cmake -B build -S . `
             -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-            -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows-static" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows" `
+            -DCMAKE_PREFIX_PATH="$env:QT_DIR" `
+            -DRPGMAKER3D_EDITOR_QT=ON `
+            -DRPGMAKER3D_BUILD_EDITOR=ON `
+            -DRPGMAKER3D_ENABLE_IMGUI=OFF `
             -DRPGMAKER3D_ENABLE_RUBY=ON `
             -DRPGMAKER3D_BUILD_PLAYER=ON `
             -DRPGMAKER3D_ENABLE_CONSOLE=ON `
@@ -146,19 +169,23 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          Write-Host "=== Build mit Ruby ON ==="
+          Write-Host "=== Build mit Qt-Editor + Ruby ON ==="
           cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_first.log
           $firstResult = $LASTEXITCODE
 
           Get-Content build_first.log | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
 
           if ($firstResult -ne 0) {
-            Write-Host "Build mit Ruby ON fehlgeschlagen, Fallback OFF..."
+            Write-Host "Build mit Ruby ON fehlgeschlagen, Fallback Ruby OFF (Qt bleibt an)..."
 
             cmake -B build -S . `
               -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
-              -DVCPKG_TARGET_TRIPLET=x64-windows-static `
-              -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows-static" `
+              -DVCPKG_TARGET_TRIPLET=x64-windows `
+              -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows" `
+              -DCMAKE_PREFIX_PATH="$env:QT_DIR" `
+              -DRPGMAKER3D_EDITOR_QT=ON `
+              -DRPGMAKER3D_BUILD_EDITOR=ON `
+              -DRPGMAKER3D_ENABLE_IMGUI=OFF `
               -DRPGMAKER3D_ENABLE_RUBY=OFF `
               -DRPGMAKER3D_BUILD_PLAYER=ON `
               -DRPGMAKER3D_ENABLE_CONSOLE=ON `
@@ -168,7 +195,7 @@ jobs:
             Get-Content build_second.log | Select-Object -Last 300 | ForEach-Object { Write-Host $_ }
 
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "Auch Fallback OFF fehlgeschlagen!"
+              Write-Host "Auch Fallback fehlgeschlagen!"
               exit 1
             }
           }
@@ -189,11 +216,30 @@ jobs:
         shell: pwsh
         run: |
           $out = "build/Release"
+          if (-not (Test-Path $out)) { throw "Release output missing: $out" }
+
           if (Test-Path assets) { Copy-Item -Recurse -Force assets $out/assets }
           if (Test-Path SampleProject) { Copy-Item -Recurse -Force SampleProject $out/SampleProject -ErrorAction SilentlyContinue }
           if (Test-Path ruby) { Copy-Item -Recurse -Force ruby $out/ruby -ErrorAction SilentlyContinue }
           if (Test-Path docs) { Copy-Item -Recurse -Force docs $out/docs -ErrorAction SilentlyContinue }
           if (Test-Path resources/icon.ico) { Copy-Item -Force resources/icon.ico $out/ -ErrorAction SilentlyContinue }
+
+          # Qt-DLLs + Plugins neben die Editor-EXE
+          $windeploy = Join-Path $env:QT_DIR "bin\windeployqt.exe"
+          $editorExe = Join-Path $out "RPGMaker3D.exe"
+          if ((Test-Path $windeploy) -and (Test-Path $editorExe)) {
+            Write-Host "Running windeployqt on $editorExe"
+            & $windeploy --release --no-translations --compiler-runtime $editorExe
+          } else {
+            Write-Host "WARN: windeployqt skipped (windeploy=$windeploy editor=$editorExe)"
+          }
+
+          # SDL2 DLL (x64-windows dynamic)
+          $sdlDll = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin/SDL2.dll"
+          if (Test-Path $sdlDll) {
+            Copy-Item -Force $sdlDll $out/
+            Write-Host "Copied SDL2.dll"
+          }
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
@@ -202,6 +248,14 @@ jobs:
           path: |
             build/Release/RPGMaker3D.exe
             build/Release/RPGMaker3D_Player.exe
+            build/Release/*.dll
+            build/Release/platforms
+            build/Release/styles
+            build/Release/imageformats
+            build/Release/iconengines
+            build/Release/tls
+            build/Release/networkinformation
+            build/Release/generic
             build/Release/assets
             build/Release/SampleProject
             build/Release/ruby

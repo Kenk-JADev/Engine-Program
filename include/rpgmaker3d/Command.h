@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 #include "Types.h"
 
 namespace rpg {
@@ -71,6 +72,29 @@ private:
     EntityID mID;
     std::string mName;
     Transform mTransform;
+};
+
+// Mehrere Tiles in einem Undo-Schritt (Rechteck-Pinsel / Fill)
+class BatchTileCommand : public ICommand {
+public:
+    struct Change {
+        int layer = 0;
+        int x = 0;
+        int z = 0;
+        int oldTile = -1;
+        int newTile = -1;
+    };
+
+    explicit BatchTileCommand(std::vector<Change> changes, std::string name = "Paint Tiles");
+
+    void Execute(Engine& engine) override;
+    void Undo(Engine& engine) override;
+    std::string GetName() const override { return mName; }
+    size_t Size() const { return mChanges.size(); }
+
+private:
+    std::vector<Change> mChanges;
+    std::string mName;
 };
 
 } // namespace rpg

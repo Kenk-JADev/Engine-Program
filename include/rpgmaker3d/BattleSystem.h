@@ -68,8 +68,12 @@ public:
     bool IsInBattle() const { return mState != BattleState::None && mState != BattleState::End; }
 
     void SetAction(const BattleAction& action) { mNextAction = action; }
+    bool NeedsInput() const { return mState == BattleState::Input; }
+    int GetTurn() const { return mTurn; }
     std::vector<Battler>& Actors() { return mActors; }
     std::vector<Battler>& Enemies() { return mEnemies; }
+    int LastExp() const { return mLastExp; }
+    int LastGold() const { return mLastGold; }
 
     // Callbacks für UI/Audio
     std::function<void(const std::string&)> onMessage;
@@ -90,6 +94,8 @@ private:
     int mTurn = 0;
     bool mCanEscape = true;
     bool mCanLose = false;
+    int mLastExp = 0;
+    int mLastGold = 0;
 };
 
 } // namespace rpg

@@ -490,6 +490,27 @@ void ScriptManager::ReloadFromDisk() {
         }
         // Sort by name to ensure load order 00_, 01_, etc.
         std::sort(mScripts.begin(), mScripts.end(), [](auto& a, auto& b){ return a->name < b->name; });
+
+        // plugins/ optional
+        try {
+            std::string plugDir = mScriptsDirectory + "/plugins";
+            if (std::filesystem::exists(plugDir)) {
+                for (auto& entry : std::filesystem::directory_iterator(plugDir)) {
+                    if (!entry.is_regular_file()) continue;
+                    if (entry.path().extension() != ".rb") continue;
+                    auto script = std::make_shared<Script>();
+                    script->name = "plugins/" + entry.path().filename().string();
+                    script->path = entry.path().string();
+                    std::ifstream f(script->path);
+                    std::stringstream ss; ss << f.rdbuf();
+                    script->content = ss.str();
+                    script->isCore = false;
+                    mScripts.push_back(script);
+                    RPG_LOG_INFO("Loaded plugin: " + script->name);
+                }
+                std::sort(mScripts.begin(), mScripts.end(), [](auto& a, auto& b){ return a->name < b->name; });
+            }
+        } catch (...) {}
     } catch (...) {
         RPG_LOG_WARN("Could not load scripts from directory");
     }
@@ -499,10 +520,14 @@ void ScriptManager::ExecuteAllScripts() {
     for (auto& script : mScripts) {
         RPG_LOG_INFO("Execute script: " + script->name);
         if (mRubyVM) {
+            bool ok = false;
             if (!script->path.empty() && std::filesystem::exists(script->path)) {
-                mRubyVM->ExecuteFile(script->path);
+                ok = mRubyVM->ExecuteFile(script->path);
             } else if (!script->content.empty()) {
-                mRubyVM->ExecuteString(script->content);
+                ok = mRubyVM->ExecuteString(script->content, script->name);
+            }
+            if (!ok && mRubyVM->HasError()) {
+                RPG_LOG_ERROR("Script failed: " + script->name + " -> " + mRubyVM->GetLastError());
             }
         }
     }

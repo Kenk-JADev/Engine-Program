@@ -7,11 +7,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Optionen
 option(RPGMAKER3D_ENABLE_RUBY "Enable mruby scripting support" OFF)
-option(RPGMAKER3D_BUILD_EDITOR "Build integrated editor (ImGui)" ON)
+option(RPGMAKER3D_BUILD_EDITOR "Build editor host (Qt)" ON)
 option(RPGMAKER3D_BUILD_PLAYER "Build standalone game player" ON)
 option(RPGMAKER3D_ENABLE_CONSOLE "Keep console window on Windows (for debugging)" ON)
-option(RPGMAKER3D_ENABLE_RMLUI "Enable RmlUi UI system (ImGui successor, PoC)" ON)
-option(RPGMAKER3D_EDITOR_QT "Build Qt-based editor (native windows, QOpenGLWidget game view)" OFF)
+option(RPGMAKER3D_ENABLE_RMLUI "Enable RmlUi UI system" ON)
+# Default ON: Qt ist der Editor-Host. CI installiert Qt via aqtinstall (siehe .github/workflows/Main.yml).
+# Lokal ohne Qt: -DRPGMAKER3D_EDITOR_QT=OFF
+option(RPGMAKER3D_EDITOR_QT "Build Qt-based editor (native windows, QOpenGLWidget + Code Workspace)" ON)
+option(RPGMAKER3D_ENABLE_IMGUI "Legacy ImGui overlay for GameUI (off by default; ImGui editor removed)" OFF)
 
 if(RPGMAKER3D_EDITOR_QT AND MSVC AND VCPKG_TARGET_TRIPLET MATCHES ".*-static")
     message(WARNING
@@ -65,7 +68,7 @@ if(RPGMAKER3D_ENABLE_RMLUI)
 endif()
 
 message(STATUS "==== RPG Maker 3D Engine v${PROJECT_VERSION} ====")
-message(STATUS "Editor: ${RPGMAKER3D_BUILD_EDITOR}, Ruby: ${RPGMAKER3D_ENABLE_RUBY}")
+message(STATUS "Editor: ${RPGMAKER3D_BUILD_EDITOR}, Qt: ${RPGMAKER3D_EDITOR_QT}, ImGui: ${RPGMAKER3D_ENABLE_IMGUI}, Ruby: ${RPGMAKER3D_ENABLE_RUBY}")
 
 # Pfade zu lokalen Dependencies
 set(SDL2_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL2/install" CACHE PATH "SDL2 install root")
@@ -100,7 +103,6 @@ set(CORE_LIB_SOURCES
     src/Camera.cpp
     src/Framebuffer.cpp
     src/Logger.cpp
-    src/AudioPreview.cpp
     src/Command.cpp
     src/CommandHistory.cpp
     src/Prefab.cpp
@@ -111,8 +113,6 @@ set(CORE_LIB_SOURCES
     src/ParticleSystem.cpp
     src/RubyVM.cpp
     src/ScriptManager.cpp
-    src/EditorStyle.cpp
-    src/EditorToolbar.cpp
     src/Platform.cpp
     src/Database.cpp
     src/EventSystem.cpp
@@ -140,9 +140,9 @@ if(RPGMAKER3D_ENABLE_RMLUI)
     list(APPEND THIRDPARTY_SOURCES third_party/rmlui_glue/RmlUiRenderGL3.cpp)
 endif()
 
-if(RPGMAKER3D_BUILD_EDITOR)
+# ImGui-Editor ist entfernt. Optional nur noch GameUI-Overlay (legacy).
+if(RPGMAKER3D_ENABLE_IMGUI)
     list(APPEND CORE_SOURCES
-        src/Editor.cpp
         third_party/imgui/imgui.cpp
         third_party/imgui/imgui_demo.cpp
         third_party/imgui/imgui_draw.cpp
@@ -151,21 +151,44 @@ if(RPGMAKER3D_BUILD_EDITOR)
         third_party/imgui/backends/imgui_impl_sdl2.cpp
         third_party/imgui/backends/imgui_impl_opengl3.cpp
     )
+    # AudioPreview war ImGui-Panel – nur mit ImGui bauen
+    list(APPEND CORE_SOURCES src/AudioPreview.cpp)
+    list(APPEND CORE_LIB_SOURCES src/AudioPreview.cpp)
 endif()
 
 if(RPGMAKER3D_EDITOR_QT)
-    # Qt-Editor ersetzt den SDL/ImGui-Main-Loop durch eine native Qt-App.
+    # Qt-Editor: nativer Host (ersetzt SDL-main + ImGui-Editor)
     if(NOT RPGMAKER3D_BUILD_EDITOR)
         message(FATAL_ERROR "RPGMAKER3D_EDITOR_QT benoetigt RPGMAKER3D_BUILD_EDITOR=ON")
     endif()
-    find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
-    message(STATUS "Qt-Editor: Qt ${Qt6_VERSION} (${Qt6_DIR})")
-    list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
-    list(APPEND CORE_SOURCES
-        qt_editor/QtMain.cpp
-        qt_editor/QtEditorWindow.cpp
-        qt_editor/QtGameViewWidget.cpp
-    )
+    # Soft-find: CI ohne installiertes Qt (oder Workflow noch ohne aqt) faellt
+    # sauber auf SDL-main zurueck, statt Configure hart abzubrechen.
+    find_package(Qt6 QUIET COMPONENTS Widgets OpenGLWidgets)
+    if(Qt6_FOUND)
+        message(STATUS "Qt-Editor: Qt ${Qt6_VERSION} (${Qt6_DIR})")
+        list(REMOVE_ITEM CORE_SOURCES src/main.cpp)
+        list(APPEND CORE_SOURCES
+            qt_editor/QtMain.cpp
+            qt_editor/QtEditorWindow.cpp
+            qt_editor/QtGameViewWidget.cpp
+            qt_editor/QtCodeWorkspace.cpp
+            qt_editor/QtSyntaxHighlighter.cpp
+            qt_editor/QtMapEditorDock.cpp
+            qt_editor/QtDatabaseEditorDock.cpp
+            qt_editor/QtEventEditorDock.cpp
+            qt_editor/QtAssetBrowserDock.cpp
+        )
+    else()
+        message(WARNING
+            "RPGMAKER3D_EDITOR_QT=ON, aber Qt6 wurde nicht gefunden. "
+            "Fallback: SDL main.cpp ohne Qt-Editor. "
+            "Installiere Qt 6 und setze CMAKE_PREFIX_PATH, oder siehe "
+            "BUILD-WINDOWS-WORKFLOW.yml / docs/QT-EDITOR.md (aqtinstall).")
+        set(RPGMAKER3D_EDITOR_QT OFF CACHE BOOL "Qt editor (auto-disabled: Qt6 not found)" FORCE)
+    endif()
+endif()
+if(NOT RPGMAKER3D_EDITOR_QT AND RPGMAKER3D_BUILD_EDITOR)
+    message(STATUS "Editor-Host: SDL main.cpp (kein Qt, kein ImGui-Editor)")
 endif()
 
 set(ALL_SOURCES
@@ -213,6 +236,12 @@ endif()
 if(RPGMAKER3D_BUILD_EDITOR)
     target_compile_definitions(${PROJECT_NAME} PRIVATE
         RPGMAKER3D_BUILD_EDITOR
+    )
+endif()
+
+if(RPGMAKER3D_ENABLE_IMGUI)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        RPGMAKER3D_ENABLE_IMGUI
     )
 endif()
 
@@ -520,11 +549,8 @@ if(RPGMAKER3D_BUILD_PLAYER)
         ${CORE_LIB_SOURCES}
     )
 
-    if(RPGMAKER3D_BUILD_EDITOR)
-        # Der Player benötigt Editor.cpp, da Engine.cpp dessen
-        # Destruktor referenzieren kann. Runtime bleibt editorMode=false.
+    if(RPGMAKER3D_ENABLE_IMGUI)
         list(APPEND PLAYER_SOURCES
-            src/Editor.cpp
             third_party/imgui/imgui.cpp
             third_party/imgui/imgui_demo.cpp
             third_party/imgui/imgui_draw.cpp
@@ -562,6 +588,10 @@ if(RPGMAKER3D_BUILD_PLAYER)
         GLM_ENABLE_EXPERIMENTAL
         _CRT_SECURE_NO_WARNINGS
     )
+
+    if(RPGMAKER3D_ENABLE_IMGUI)
+        target_compile_definitions(${PROJECT_NAME}_Player PRIVATE RPGMAKER3D_ENABLE_IMGUI)
+    endif()
 
     if(MSVC)
         target_compile_options(${PROJECT_NAME}_Player PRIVATE /utf-8)

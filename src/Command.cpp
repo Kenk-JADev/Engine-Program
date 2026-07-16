@@ -66,4 +66,17 @@ void DeleteEntityCommand::Undo(Engine& engine) {
     (void)mID;
 }
 
+BatchTileCommand::BatchTileCommand(std::vector<Change> changes, std::string name)
+    : mChanges(std::move(changes)), mName(std::move(name)) {}
+
+void BatchTileCommand::Execute(Engine& engine) {
+    for (const auto& c : mChanges)
+        engine.GetMap().SetTile(c.layer, c.x, c.z, c.newTile);
+}
+
+void BatchTileCommand::Undo(Engine& engine) {
+    for (const auto& c : mChanges)
+        engine.GetMap().SetTile(c.layer, c.x, c.z, c.oldTile);
+}
+
 } // namespace rpg

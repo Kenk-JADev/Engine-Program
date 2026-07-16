@@ -1,15 +1,25 @@
 #include "QtEditorWindow.h"
 #include "QtGameViewWidget.h"
+#include "QtCodeWorkspace.h"
+#include "QtMapEditorDock.h"
+#include "QtDatabaseEditorDock.h"
+#include "QtEventEditorDock.h"
+#include "QtAssetBrowserDock.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Scene.h"
 #include "rpgmaker3d/Project.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Model.h"
-#include "rpgmaker3d/ParticleSystem.h" // kompletter Typ fuer GetComponent<ParticleEmitterComponent>
+#include "rpgmaker3d/ParticleSystem.h"
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/CommandHistory.h"
+#include "rpgmaker3d/ScriptManager.h"
+#include "rpgmaker3d/EventSystem.h"
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+#include "rpgmaker3d/RmlUiSystem.h"
+#endif
 
 #include <QApplication>
 #include <QCloseEvent>
@@ -29,6 +39,7 @@
 #include <QPlainTextEdit>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTimer>
 #include <QToolBar>
 #include <QTreeWidget>
@@ -59,9 +70,7 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
 
     mEngine = std::make_unique<rpg::Engine>();
 
-    mView = new QtGameViewWidget(mEngine.get(), this);
-    setCentralWidget(mView);
-
+    buildCentral();
     buildDocks();
     buildMenus();
     buildToolbar();
@@ -72,11 +81,21 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
 
     connect(mView, &QtGameViewWidget::engineReady, this, [this]() {
         log("Engine initialisiert (Embedded-Modus, Qt GL-Kontext).");
-        statusBar()->showMessage("Bereit. Linksklick im View = Objekt auswaehlen, F9 = RmlUi-HUD.");
-        setSelectedEntity(-1); // baut Hierarchie + Eigenschaften initial auf
+        log("ImGui-Editor entfernt – Qt ist der einzige Editor-Host.");
+        log("Tabs: Game View (3D) | Code (Ruby / C++ API).");
+        statusBar()->showMessage("Bereit. Code-Tab fuer Ruby/C++, Game View fuer 3D. F9 = RmlUi-HUD.");
+        setSelectedEntity(-1);
+        if (mCode) mCode->refresh();
+        if (mMapDockWidget) {
+            mMapDockWidget->refresh();
+            mView->setPaintMode(mMapDockWidget->paintEnabled());
+            mView->setPaintTile(mMapDockWidget->selectedTile());
+            mView->setPaintLayer(mMapDockWidget->selectedLayer());
+        }
+        if (mDbDockWidget) mDbDockWidget->refresh();
     });
     connect(mView, &QtGameViewWidget::entityPicked, this, [this](int id) {
-        setSelectedEntity(id); // auch -1: Klick ins Leere deselektiert
+        setSelectedEntity(id);
     });
     connect(mView, &QtGameViewWidget::engineInitFailed, this, [this](QString msg) {
         log("FEHLER: " + msg);
@@ -84,7 +103,6 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
     });
     connect(qApp, &QApplication::aboutToQuit, this, &QtEditorWindow::onAboutToQuit);
 
-    // Game-Loop: ~60 Hz Logik-Update, dann Repaint des GL-Views
     mClock = new QElapsedTimer();
     mClock->start();
     mTimer = new QTimer(this);
@@ -92,7 +110,6 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
     connect(mTimer, &QTimer::timeout, this, &QtEditorWindow::onTick);
     mTimer->start();
 
-    // UI-Sync: Hierarchie/Property-Werte/Menue-Texte (2 Hz reicht)
     mUiTimer = new QTimer(this);
     mUiTimer->setInterval(500);
     connect(mUiTimer, &QTimer::timeout, this, &QtEditorWindow::onUiTick);
@@ -100,6 +117,41 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
 }
 
 QtEditorWindow::~QtEditorWindow() = default;
+
+// ---------------------------------------------------------------------------
+// Zentral: Game View + Code Workspace (ersetzt ImGui Game Scene)
+// ---------------------------------------------------------------------------
+
+void QtEditorWindow::buildCentral() {
+    mCentralTabs = new QTabWidget(this);
+    mCentralTabs->setDocumentMode(true);
+    mCentralTabs->setTabPosition(QTabWidget::North);
+    mCentralTabs->setMovable(false);
+
+    mView = new QtGameViewWidget(mEngine.get(), mCentralTabs);
+    mCode = new QtCodeWorkspace(mEngine.get(), mCentralTabs);
+
+    mCentralTabs->addTab(mView, "Game View");
+    mCentralTabs->addTab(mCode, "Code (Ruby / C++)");
+    setCentralWidget(mCentralTabs);
+
+    connect(mCentralTabs, &QTabWidget::currentChanged,
+            this, &QtEditorWindow::onCentralTabChanged);
+    connect(mCode, &QtCodeWorkspace::logMessage, this, [this](const QString& m) {
+        log(m);
+    });
+}
+
+void QtEditorWindow::onCentralTabChanged(int index) {
+    if (index == 0 && mView) {
+        mView->setFocus(Qt::OtherFocusReason);
+        statusBar()->showMessage("Game View – WASD/Maus navigieren, Linksklick = Selektion, F5/Play = Playtest.");
+    } else if (index == 1 && mCode) {
+        mCode->setFocus(Qt::OtherFocusReason);
+        mCode->refresh();
+        statusBar()->showMessage("Code Workspace – Ruby-Spiellogik editieren, C++ Engine-API als Referenz.");
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Menues / Toolbar
@@ -117,11 +169,13 @@ void QtEditorWindow::buildMenus() {
     mFile->addAction("Szene laden...", this, [this]() { actionLoadSceneFrom(); });
     mFile->addAction("Szene speichern unter...", this, [this]() { actionSaveSceneAs(); });
     mFile->addSeparator();
+    mFile->addAction("Scripts speichern", this, [this]() {
+        if (mCode) mCode->saveAll();
+    });
+    mFile->addSeparator();
     mFile->addAction("&Beenden", this, &QWidget::close);
 
     QMenu* mEdit = menuBar()->addMenu("&Bearbeiten");
-    // Keine setShortcut()-Shortcuts hier: Strg+Z/Strg+Y/Entf duerfen Textfelder
-    // nicht klauen. Echte QShortcuts haengen am Game-View und am Hierarchie-Dock.
     mUndoAction = mEdit->addAction("Rueckgaengig", this, [this]() { actionUndo(); });
     mRedoAction = mEdit->addAction("Wiederholen", this, [this]() { actionRedo(); });
     mEdit->addSeparator();
@@ -135,28 +189,68 @@ void QtEditorWindow::buildMenus() {
     mCreate->addAction("Ebene", this, [this]() { actionCreatePlane(); });
     mCreate->addAction("Licht", this, [this]() { actionCreateLight(); });
 
+    QMenu* mCodeMenu = menuBar()->addMenu("&Code");
+    mCodeMenu->addAction("Code-Workspace oeffnen", this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
+    });
+    mCodeMenu->addAction("Ruby-Scripts speichern", this, [this]() {
+        if (mCode) mCode->saveAll();
+    });
+    mCodeMenu->addAction("Ruby ausfuehren (aktuell)", this, [this]() {
+        if (mCode) mCode->runCurrent();
+    });
+    mCodeMenu->addAction("Alle Ruby-Scripts ausfuehren", this, [this]() {
+        if (mCode) mCode->runAll();
+    });
+    mCodeMenu->addSeparator();
+    mCodeMenu->addAction("Zu Ruby wechseln", this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
+        if (mCode) mCode->setLanguage(0);
+    });
+    mCodeMenu->addAction("Zu C++ Referenz wechseln", this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
+        if (mCode) mCode->setLanguage(1);
+    });
+
     QMenu* mViewMenu = menuBar()->addMenu("&Ansicht");
+    mShowGameViewAction = mViewMenu->addAction("Game View", this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mView);
+    });
+    mShowCodeAction = mViewMenu->addAction("Code Workspace", this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
+    });
+    mViewMenu->addSeparator();
     mViewMenu->addAction(mDockHierarchy->toggleViewAction());
     mViewMenu->addAction(mDockProperties->toggleViewAction());
+    if (mDockMap) mViewMenu->addAction(mDockMap->toggleViewAction());
+    if (mDockDatabase) mViewMenu->addAction(mDockDatabase->toggleViewAction());
+    if (mDockEvents) mViewMenu->addAction(mDockEvents->toggleViewAction());
+    if (mDockAssets) mViewMenu->addAction(mDockAssets->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    mViewMenu->addSeparator();
+    mViewMenu->addAction("RmlUi HUD umschalten (F9)", this, [this]() {
+        if (mEngine && mEngine->GetRmlUi()) mEngine->GetRmlUi()->ToggleVisible();
+    });
+#endif
 
     QMenu* mPlay = menuBar()->addMenu("&Playtest");
     mPlayAction = mPlay->addAction("Playtest starten/stoppen");
     mPlayAction->setCheckable(true);
+    mPlayAction->setShortcut(QKeySequence(Qt::Key_F5));
     connect(mPlayAction, &QAction::toggled, this, &QtEditorWindow::onPlaytestToggled);
 
     QMenu* mHelp = menuBar()->addMenu("&Hilfe");
     mHelp->addAction("Ueber", this, [this]() {
         QMessageBox::about(this, "RPG Maker 3D Qt Editor",
-            "Qt-basierter Editor (Migration aus ImGui):\n"
-            "- Echte, separate Dock-Fenster (Hierarchie/Eigenschaften/Konsole)\n"
-            "- Game-View als QOpenGLWidget (Engine im Embedded-Modus)\n"
-            "- Undo/Redo laeuft ueber die CommandHistory der Engine\n"
-            "- Ingame-UI bleibt unveraendert im GL-Kontext (RmlUi)");
+            "Qt-basierter Editor (ImGui entfernt):\n"
+            "- Docks: Hierarchie, Map, Database, Events, Code, Konsole\n"
+            "- Game View (QOpenGLWidget) + Tile-Malen\n"
+            "- Code Workspace: Ruby/C++ mit Syntax-Highlighting\n"
+            "- RmlUi-Input-Bruecke im Game View (F9)\n"
+            "- Undo/Redo ueber CommandHistory");
     });
 
-    // Entf-Shortcut nur im Game-View und in der Hierarchie (Widget-Kontext),
-    // damit Textfelder ungestoert bleiben.
     auto* delView = new QShortcut(QKeySequence(Qt::Key_Delete), mView);
     delView->setContext(Qt::WidgetShortcut);
     connect(delView, &QShortcut::activated, this, [this]() { deleteSelected(); });
@@ -178,7 +272,6 @@ void QtEditorWindow::buildMenus() {
 }
 
 void QtEditorWindow::buildDocks() {
-    // Hierarchie: live Liste der Scene-Entities
     mDockHierarchy = new QDockWidget("Hierarchie", this);
     mHierarchy = new QTreeWidget(mDockHierarchy);
     mHierarchy->setHeaderLabels(QStringList() << "Objekt" << "ID");
@@ -189,7 +282,6 @@ void QtEditorWindow::buildDocks() {
     connect(mHierarchy, &QTreeWidget::itemSelectionChanged,
             this, [this]() { onHierarchySelectionChanged(); });
 
-    // Eigenschaften: Container, Inhalt wird bei Selektionswechsel neu gebaut
     mDockProperties = new QDockWidget("Eigenschaften", this);
     mDockProperties->setWidget(new QLabel("Kein Objekt ausgewaehlt.", mDockProperties));
     addDockWidget(Qt::RightDockWidgetArea, mDockProperties);
@@ -200,7 +292,66 @@ void QtEditorWindow::buildDocks() {
     mConsole->setMaximumBlockCount(2000);
     mDockConsole->setWidget(mConsole);
     addDockWidget(Qt::BottomDockWidgetArea, mDockConsole);
-    log("Qt-Editor gestartet. (Datei -> Projekt oeffnen... um loszulegen)");
+
+    // Map-Editor Dock
+    mDockMap = new QDockWidget("Map-Editor", this);
+    mMapDockWidget = new QtMapEditorDock(mEngine.get(), mDockMap);
+    mDockMap->setWidget(mMapDockWidget);
+    addDockWidget(Qt::RightDockWidgetArea, mDockMap);
+    tabifyDockWidget(mDockProperties, mDockMap);
+
+    // Database Dock
+    mDockDatabase = new QDockWidget("Database", this);
+    mDbDockWidget = new QtDatabaseEditorDock(mEngine.get(), mDockDatabase);
+    mDockDatabase->setWidget(mDbDockWidget);
+    addDockWidget(Qt::RightDockWidgetArea, mDockDatabase);
+    tabifyDockWidget(mDockMap, mDockDatabase);
+
+    mDockEvents = new QDockWidget("Events", this);
+    mEventDockWidget = new QtEventEditorDock(mEngine.get(), mDockEvents);
+    mDockEvents->setWidget(mEventDockWidget);
+    addDockWidget(Qt::RightDockWidgetArea, mDockEvents);
+    tabifyDockWidget(mDockDatabase, mDockEvents);
+
+    mDockAssets = new QDockWidget("Assets", this);
+    mAssetDockWidget = new QtAssetBrowserDock(mEngine.get(), mDockAssets);
+    mDockAssets->setWidget(mAssetDockWidget);
+    addDockWidget(Qt::LeftDockWidgetArea, mDockAssets);
+    tabifyDockWidget(mDockHierarchy, mDockAssets);
+
+    mDockProperties->raise();
+
+    connect(mMapDockWidget, &QtMapEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mDbDockWidget, &QtDatabaseEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mEventDockWidget, &QtEventEditorDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mAssetDockWidget, &QtAssetBrowserDock::logMessage, this, [this](const QString& m) { log(m); });
+    connect(mEventDockWidget, &QtEventEditorDock::eventsChanged, this, [this]() {
+        // nothing heavy – hierarchy is entities, not events
+    });
+    connect(mMapDockWidget, &QtMapEditorDock::paintStateChanged, this, [this]() {
+        if (!mView || !mMapDockWidget) return;
+        mView->setPaintMode(mMapDockWidget->paintEnabled());
+        mView->setPaintTile(mMapDockWidget->selectedTile());
+        mView->setPaintLayer(mMapDockWidget->selectedLayer());
+        mView->setBrushMode(mMapDockWidget->brushMode());
+    });
+    connect(mMapDockWidget, &QtMapEditorDock::mapLoaded, this, [this]() {
+        setSelectedEntity(-1);
+        refreshHierarchy();
+    });
+    connect(mView, &QtGameViewWidget::tilePainted, this, [this](int x, int z, int tile) {
+        // sparsam loggen: nur gelegentlich
+        static int n = 0;
+        if ((++n % 8) == 0)
+            log(QString("Tile (%1,%2) = %3").arg(x).arg(z).arg(tile));
+    });
+
+    log("Qt-Editor gestartet (ohne ImGui).");
+    log("  Tab 'Game View'  = 3D-Szene / Playtest / Tile-Malen");
+    log("  Tab 'Code'       = Ruby-Scripts + C++ Engine-API (Syntax-HL)");
+    log("  Docks: Hierarchie | Eigenschaften | Map | Database | Events | Konsole");
+    log("  F9 = RmlUi HUD umschalten (Input im Game View aktiv)");
+    log("Datei -> Projekt oeffnen... um loszulegen.");
 }
 
 void QtEditorWindow::buildToolbar() {
@@ -217,14 +368,33 @@ void QtEditorWindow::buildToolbar() {
     tb->addSeparator();
     addBtn("Speichern", &QtEditorWindow::actionSaveProject);
     tb->addSeparator();
+
+    QAction* codeTab = tb->addAction("Code");
+    connect(codeTab, &QAction::triggered, this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
+    });
+    QAction* gameTab = tb->addAction("Game View");
+    connect(gameTab, &QAction::triggered, this, [this]() {
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mView);
+    });
+    QAction* gizmo = tb->addAction("Gizmo");
+    gizmo->setCheckable(true);
+    gizmo->setChecked(true);
+    gizmo->setToolTip("Translate-Gizmo an selektiertem Objekt (X/Y/Z Achsen ziehen)");
+    connect(gizmo, &QAction::toggled, this, [this](bool on) {
+        if (mView) mView->setGizmoMode(on ? 1 : 0);
+        log(on ? "Gizmo: Translate an" : "Gizmo aus");
+    });
+    tb->addSeparator();
+
     QAction* play = tb->addAction("Play");
     play->setCheckable(true);
     connect(play, &QAction::toggled, this, [this](bool on) {
-        if (mPlayAction) mPlayAction->setChecked(on); // sync mit Menue
+        if (mPlayAction) mPlayAction->setChecked(on);
         onPlaytestToggled(on);
     });
     connect(mPlayAction, &QAction::toggled, this, [play](bool on) {
-        play->setChecked(on); // Rueck-Sync Menue -> Toolbar
+        play->setChecked(on);
     });
 }
 
@@ -239,23 +409,28 @@ void QtEditorWindow::log(const QString& msg) {
 void QtEditorWindow::onTick() {
     if (!mView->IsEngineReady()) return;
 
-    const qint64 ms = mClock->restart(); // restart() liefert Millisekunden
+    const qint64 ms = mClock->restart();
     float dt = static_cast<float>(ms) / 1000.0f;
     if (dt <= 0.0f) dt = 0.016f;
     if (dt > 0.1f) dt = 0.1f;
 
     mEngine->Update(dt);
-    mView->update(); // -> paintGL -> Engine::Render
+    // Nur repainten wenn Game View sichtbar (spart GPU im Code-Tab)
+    if (mCentralTabs && mCentralTabs->currentWidget() == mView) {
+        mView->update();
+    }
 
-    // FPS in Statuszeile (0.5s Fenster)
     mFpsAccum += dt;
     mFpsFrames++;
     if (mFpsAccum >= 0.5f) {
         const int fps = static_cast<int>(mFpsFrames / mFpsAccum + 0.5f);
         mFpsAccum = 0.0f;
         mFpsFrames = 0;
-        mStatusInfo->setText(QString("FPS: %1  |  Playtest: %2  |  Projekt: %3")
+        const char* tab = (mCentralTabs && mCentralTabs->currentWidget() == mCode)
+            ? "Code" : "Game";
+        mStatusInfo->setText(QString("FPS: %1  |  Tab: %2  |  Playtest: %3  |  Projekt: %4")
             .arg(fps)
+            .arg(tab)
             .arg(mEngine->IsPlaying() ? "an" : "aus")
             .arg(QString::fromStdString(mEngine->GetProject().GetInfo().name)));
     }
@@ -264,7 +439,6 @@ void QtEditorWindow::onTick() {
 void QtEditorWindow::onUiTick() {
     if (!mView->IsEngineReady()) return;
 
-    // Undo/Redo-Texte + Enable (mit Kommando-Name wie im ImGui-Editor)
     auto& history = mEngine->GetCommandHistory();
     const bool canUndo = history.CanUndo();
     const bool canRedo = history.CanRedo();
@@ -278,7 +452,6 @@ void QtEditorWindow::onUiTick() {
         : QString("Wiederholen  [Strg+Y]"));
     mDeleteAction->setEnabled(mSelectedEntity >= 0 && selectedEntityExists());
 
-    // Selektierte Entity kann durch Undo/Delete verschwunden sein
     if (mSelectedEntity >= 0 && !selectedEntityExists())
         setSelectedEntity(-1);
 
@@ -288,11 +461,28 @@ void QtEditorWindow::onUiTick() {
 
 void QtEditorWindow::onPlaytestToggled(bool on) {
     if (!mView->IsEngineReady()) return;
+    if (on && mCode) {
+        // Scripts vor Playtest speichern (damit Runtime den aktuellen Stand hat)
+        mCode->saveAll();
+    }
     mEngine->SetPlaying(on);
     log(on ? "Playtest gestartet." : "Playtest gestoppt.");
+    if (on && mCentralTabs) {
+        mCentralTabs->setCurrentWidget(mView);
+    }
+    if (mCode) mCode->refresh(); // read-only waehrend Playtest
 }
 
 void QtEditorWindow::closeEvent(QCloseEvent* event) {
+    if (mCode && mCode->hasUnsavedChanges()) {
+        const auto r = QMessageBox::question(this, "Beenden",
+            "Ungespeicherte Script-Aenderungen. Trotzdem beenden?",
+            QMessageBox::Yes | QMessageBox::No);
+        if (r != QMessageBox::Yes) {
+            event->ignore();
+            return;
+        }
+    }
     if (mTimer) mTimer->stop();
     if (mUiTimer) mUiTimer->stop();
     event->accept();
@@ -301,14 +491,13 @@ void QtEditorWindow::closeEvent(QCloseEvent* event) {
 void QtEditorWindow::onAboutToQuit() {
     if (mTimer) mTimer->stop();
     if (mUiTimer) mUiTimer->stop();
-    // GL-Ressourcen (RmlUi, Texturen, Framebuffers) brauchen current context
     if (mView) mView->makeCurrent();
     if (mEngine) mEngine->Shutdown();
     if (mView) mView->doneCurrent();
 }
 
 // ---------------------------------------------------------------------------
-// Datei-Aktionen (Spiegel von Editor::DrawMenuBar / SaveMap / LoadMap)
+// Datei-Aktionen
 // ---------------------------------------------------------------------------
 
 void QtEditorWindow::actionNewProject() {
@@ -326,6 +515,8 @@ void QtEditorWindow::actionNewProject() {
         QMessageBox::warning(this, "Neues Projekt", "Projekt konnte nicht angelegt werden.");
         return;
     }
+    mEngine->GetScriptManager().CreateDefaultScripts(path.toStdString());
+    mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
     log("Neues Projekt angelegt: " + path);
     afterProjectChanged();
 }
@@ -342,6 +533,11 @@ void QtEditorWindow::actionOpenProject() {
         return;
     }
     rpg::Database::Get().Load(path.toStdString());
+    mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
+    if (mEngine->GetScriptManager().GetScripts().empty()) {
+        mEngine->GetScriptManager().CreateDefaultScripts(path.toStdString());
+        mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
+    }
     log("Projekt geladen: " + path);
     loadScenePackage();
     afterProjectChanged();
@@ -354,6 +550,7 @@ void QtEditorWindow::actionSaveProject() {
             "Kein Projekt geladen - bitte zuerst ein Projekt anlegen oder oeffnen.");
         return;
     }
+    if (mCode) mCode->saveAll();
     saveScenePackage();
     log("Projekt gespeichert: " + QString::fromStdString(mEngine->GetProject().GetProjectPath()));
 }
@@ -381,7 +578,6 @@ void QtEditorWindow::actionLoadSceneFrom() {
 }
 
 void QtEditorWindow::loadScenePackage() {
-    // Wie Editor::LoadMap: Szenen-JSON bevorzugt, sonst binaere Map
     auto& proj = mEngine->GetProject();
     const std::string scenePath = proj.GetProjectPath() + "/scene.json";
     if (!mEngine->LoadScene(scenePath)) {
@@ -394,27 +590,32 @@ void QtEditorWindow::loadScenePackage() {
     } else {
         log("Szene geladen: " + QString::fromStdString(scenePath));
     }
-    // Selektions-Reset uebernimmt afterProjectChanged() (ruft setSelectedEntity(-1))
 }
 
 void QtEditorWindow::saveScenePackage() {
-    // Wie Editor::SaveMap: Scene + Map + Database + Project
     auto& proj = mEngine->GetProject();
     const std::string pp = proj.GetProjectPath();
     mEngine->SaveScene(pp + "/scene.json");
     mEngine->GetMap().Save(proj.GetMapPath(1));
     rpg::Database::Get().Save(pp);
+    const int mapId = rpg::Database::Get().System().startMapId;
+    rpg::EventSystem::Get().SaveMapEvents(mapId > 0 ? mapId : 1, pp);
     proj.Save();
 }
 
 void QtEditorWindow::afterProjectChanged() {
-    setSelectedEntity(-1); // inkl. Hierarchie-/Properties-Refresh + Highlight-Aus
+    setSelectedEntity(-1);
     setWindowTitle(QString("RPG Maker 3D - Qt Editor  [%1]")
         .arg(QString::fromStdString(mEngine->GetProject().GetInfo().name)));
+    if (mCode) mCode->refresh();
+    if (mMapDockWidget) mMapDockWidget->refresh();
+    if (mDbDockWidget) mDbDockWidget->refresh();
+    if (mEventDockWidget) mEventDockWidget->refresh();
+    if (mAssetDockWidget) mAssetDockWidget->refresh();
 }
 
 // ---------------------------------------------------------------------------
-// Erstellen / Bearbeiten (CommandHistory -> undobar, wie ImGui-Editor)
+// Erstellen / Bearbeiten
 // ---------------------------------------------------------------------------
 
 void QtEditorWindow::createSimpleEntity(int kind) {
@@ -428,17 +629,17 @@ void QtEditorWindow::createSimpleEntity(int kind) {
 
     auto& scene = mEngine->GetScene();
     auto* transform = scene.AddComponent<rpg::TransformComponent>(id);
-    if (kind == 0) { // Cube
+    if (kind == 0) {
         transform->transform.position = rpg::Vec3(0, 0.5f, 0);
         auto* model = scene.AddComponent<rpg::ModelRendererComponent>(id);
         model->model = std::make_shared<rpg::Model>();
         model->model->AddMesh(rpg::MeshFactory::CreateCube(1.0f));
-    } else if (kind == 1) { // Plane
+    } else if (kind == 1) {
         transform->transform.position = rpg::Vec3(0, 0.1f, 0);
         auto* model = scene.AddComponent<rpg::ModelRendererComponent>(id);
         model->model = std::make_shared<rpg::Model>();
         model->model->AddMesh(rpg::MeshFactory::CreatePlane(2.0f));
-    } else { // Light
+    } else {
         transform->transform.position = rpg::Vec3(0, 3.0f, 0);
         auto* light = scene.AddComponent<rpg::LightComponent>(id);
         light->color = rpg::Color(1.0f, 1.0f, 0.0f, 1.0f);
@@ -447,6 +648,7 @@ void QtEditorWindow::createSimpleEntity(int kind) {
 
     log(QString("Erstellt: %1 (ID %2)").arg(names[kind]).arg(static_cast<int>(id)));
     setSelectedEntity(static_cast<int>(id));
+    if (mCentralTabs) mCentralTabs->setCurrentWidget(mView);
 }
 
 void QtEditorWindow::actionCreateCube()  { createSimpleEntity(0); }
@@ -497,7 +699,7 @@ void QtEditorWindow::refreshHierarchy() {
     ids.reserve(scene.GetEntities().size());
     for (rpg::EntityID id : scene.GetEntities()) ids.push_back(static_cast<int>(id));
 
-    if (ids == mLastHierarchyIds) return; // nichts geaendert
+    if (ids == mLastHierarchyIds) return;
     mLastHierarchyIds = ids;
 
     mHierarchy->blockSignals(true);
@@ -508,7 +710,6 @@ void QtEditorWindow::refreshHierarchy() {
         item->setText(1, QString::number(id));
         item->setData(0, kIdRole, id);
     }
-    // Selektion wiederherstellen
     if (mSelectedEntity >= 0) {
         for (int i = 0; i < mHierarchy->topLevelItemCount(); ++i) {
             QTreeWidgetItem* item = mHierarchy->topLevelItem(i);
@@ -530,7 +731,6 @@ void QtEditorWindow::onHierarchySelectionChanged() {
 
 void QtEditorWindow::setSelectedEntity(int id) {
     mSelectedEntity = id;
-    // Highlight im 3D-View (generische Engine-API; RenderScene zeichnet die Box)
     if (mView && mView->IsEngineReady())
         mEngine->SetSelectedEntity(id);
     refreshHierarchy();
@@ -547,7 +747,6 @@ bool QtEditorWindow::selectedEntityExists() const {
     if (mSelectedEntity < 0) return false;
     for (int id : mLastHierarchyIds)
         if (id == mSelectedEntity) return true;
-    // Hierarchie evtl. veraltet -> direkt in der Scene pruefen
     auto& scene = mEngine->GetScene();
     for (rpg::EntityID id : scene.GetEntities())
         if (static_cast<int>(id) == mSelectedEntity) return true;
@@ -566,14 +765,15 @@ QWidget* QtEditorWindow::buildPropertiesWidget() {
     auto* layout = new QVBoxLayout(root);
 
     if (!valid) {
-        layout->addWidget(new QLabel("Kein Objekt ausgewaehlt.\n\n"
+        layout->addWidget(new QLabel(
+            "Kein Objekt ausgewaehlt.\n\n"
             "Objekt in der Hierarchie anklicken, oder\n"
-            "ueber 'Erstellen' ein neues Objekt anlegen.", root));
+            "ueber 'Erstellen' ein neues Objekt anlegen.\n\n"
+            "Fuer Ruby/C++-Code: Tab 'Code' oeffnen.", root));
         layout->addStretch(1);
         return root;
     }
 
-    // --- Basis ---
     auto* baseBox = new QGroupBox("Basis", root);
     auto* baseForm = new QFormLayout(baseBox);
     mNameEdit = new QLineEdit(QString::fromStdString(scene.GetEntityName(id)), baseBox);
@@ -583,12 +783,11 @@ QWidget* QtEditorWindow::buildPropertiesWidget() {
     connect(mNameEdit, &QLineEdit::editingFinished, this, [this, id]() {
         if (!selectedEntityExists()) return;
         mEngine->GetScene().SetEntityName(id, mNameEdit->text().toStdString());
-        mLastHierarchyIds.clear(); // Hierarchie-Refresh erzwingen
+        mLastHierarchyIds.clear();
         refreshHierarchy();
         log(QString("Umbenannt: ID %1 -> '%2'").arg(static_cast<int>(id)).arg(mNameEdit->text()));
     });
 
-    // --- Transform ---
     auto* tComp = scene.GetComponent<rpg::TransformComponent>(id);
     if (tComp) {
         auto* tBox = new QGroupBox("Transform", root);
@@ -616,7 +815,6 @@ QWidget* QtEditorWindow::buildPropertiesWidget() {
               tComp->transform.scale.z, 0.001, 100000.0, 0.1);
         layout->addWidget(tBox);
 
-        // Rotation im Engine-Code in Radiant (glm::rotate) -> UI zeigt Radiant.
         const auto writeBack = [this, id]() {
             if (mSyncingProps || !selectedEntityExists()) return;
             auto* tc = mEngine->GetScene().GetComponent<rpg::TransformComponent>(id);
@@ -639,7 +837,6 @@ QWidget* QtEditorWindow::buildPropertiesWidget() {
         }
     }
 
-    // --- Komponenten-Uebersicht ---
     auto* compBox = new QGroupBox("Komponenten", root);
     auto* compLay = new QVBoxLayout(compBox);
     const struct { rpg::ComponentType type; const char* name; } compTypes[] = {
@@ -700,7 +897,6 @@ void QtEditorWindow::syncPropertyValues() {
     const auto syncRow = [](QDoubleSpinBox** dst, const rpg::Vec3& v) {
         const double vals[3] = {v.x, v.y, v.z};
         for (int i = 0; i < 3; ++i) {
-            // Nur syncen wenn der User das Feld gerade nicht bearbeitet
             if (dst[i] && !dst[i]->hasFocus()) dst[i]->setValue(vals[i]);
         }
     };

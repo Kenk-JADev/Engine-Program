@@ -113,6 +113,26 @@ struct EnemyData {
     std::vector<int> dropItems; // item ids
 };
 
+// Truppe (Gegner-Gruppe fuer Random Encounters / Battle Processing)
+struct TroopData {
+    int id = 0;
+    std::string name = "Troop";
+    std::vector<int> members; // enemy ids
+};
+
+// Status-Effekt (Poison, Sleep, ...)
+struct StateData {
+    int id = 0;
+    std::string name = "Poison";
+    std::string description;
+    int restriction = 0; // 0=none 1=attack enemy 2=attack anyone 3=attack ally 4=cannot move
+    int priority = 50;
+    bool removeAtBattleEnd = true;
+    int autoRemovalTiming = 0; // 0=none 1=action end 2=turn end
+    int holdTurn = 0;
+    float hpDrainRate = 0.0f; // 0..1 per turn
+};
+
 struct TilesetData {
     int id = 0;
     std::string name = "World";
@@ -194,6 +214,8 @@ public:
     std::vector<ArmorData>& Armors() { return mArmors; }
     std::vector<SkillData>& Skills() { return mSkills; }
     std::vector<EnemyData>& Enemies() { return mEnemies; }
+    std::vector<TroopData>& Troops() { return mTroops; }
+    std::vector<StateData>& States() { return mStates; }
     std::vector<TilesetData>& Tilesets() { return mTilesets; }
     std::vector<MapInfo>& MapInfos() { return mMapInfos; }
     SystemData& System() { return mSystem; }
@@ -201,6 +223,9 @@ public:
     const ActorData* GetActor(int id) const;
     const ItemData* GetItem(int id) const;
     const EnemyData* GetEnemy(int id) const;
+    const SkillData* GetSkill(int id) const;
+    const TroopData* GetTroop(int id) const;
+    const StateData* GetState(int id) const;
 
     void CreateDefaults();
 
@@ -213,6 +238,8 @@ private:
     std::vector<ArmorData> mArmors;
     std::vector<SkillData> mSkills;
     std::vector<EnemyData> mEnemies;
+    std::vector<TroopData> mTroops;
+    std::vector<StateData> mStates;
     std::vector<TilesetData> mTilesets;
     std::vector<MapInfo> mMapInfos;
     SystemData mSystem;
