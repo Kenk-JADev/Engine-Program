@@ -66,6 +66,7 @@ private:
     void reconcileChoices(int headerIndex, const rpg::EventCommand& edited);
     void reconcileBranch(int headerIndex, const rpg::EventCommand& edited);
     rpg::EventPage& page(int i) { return mEvent.pages[(size_t)i]; }
+    const rpg::EventPage& page(int i) const { return mEvent.pages[(size_t)i]; }
 
     rpg::MapEvent mEvent;
     int mPage = 0;

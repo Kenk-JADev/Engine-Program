@@ -67,7 +67,7 @@ QtSoundTestDialog::QtSoundTestDialog(rpg::Engine* engine, QWidget* parent)
         pl->setContentsMargins(4, 4, 4, 4);
         mLists[i] = new QListWidget(page);
         pl->addWidget(mLists[i]);
-        mTabs->addTab(page, QL(tabNames[i]));
+        mTabs->addTab(page, QString::fromLatin1(tabNames[i])); // QStringLiteral braucht Literale!
         // Doppelklick = sofort abspielen (XP-Verhalten)
         connect(mLists[i], &QListWidget::itemDoubleClicked,
                 this, [this](QListWidgetItem*) { onPlay(); });

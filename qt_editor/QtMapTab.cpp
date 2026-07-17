@@ -7,6 +7,7 @@
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Tileset.h"
+#include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Project.h"
@@ -259,8 +260,8 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     };
     for (int i = 0; i < 4; ++i) {
         mModeBtns[i] = new QToolButton(this);
-        mModeBtns[i]->setText(QL(labels[i]));
-        mModeBtns[i]->setToolTip(QL(tips[i]));
+        mModeBtns[i]->setText(QString::fromLatin1(labels[i])); // QStringLiteral braucht Literale!
+        mModeBtns[i]->setToolTip(QString::fromLatin1(tips[i]));
         mModeBtns[i]->setCheckable(true);
         mModeBtns[i]->setAutoRaise(true);
         mModeGroup->addButton(mModeBtns[i], i);

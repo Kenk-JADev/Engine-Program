@@ -1533,6 +1533,10 @@ void RubyVM::BindActor() {
 
 #else // !RPGMAKER3D_ENABLE_RUBY
 
+// ==================== No-Ruby-Stubs ====================
+// Targets ohne mruby linken dank dieser No-Op-Definitionen sauber.
+// WICHTIG: Bei neuen oeffentlichen RubyVM-Methoden hier einen Stub ergaenzen
+// (CollectGarbage fehlte einmal -> LNK2019 im Player).
 namespace rpg {
 
 RubyVM::RubyVM() = default;
@@ -1563,6 +1567,8 @@ bool RubyVM::Update(float deltaTime) {
     return false;
 }
 
+void RubyVM::CollectGarbage() {} // ScriptManager ruft das ungeschuetzt
+
 bool RubyVM::CaptureException(const std::string&) { return false; }
 
 void RubyVM::BindEngine() {}
@@ -1572,10 +1578,8 @@ void RubyVM::BindMap() {}
 void RubyVM::BindActor() {}
 void RubyVM::BindCamera() {}
 void RubyVM::BindGame() {}
-
 void RubyVM::BindUI() {}
-
 
 } // namespace rpg
 
-#endif
+#endif // RPGMAKER3D_ENABLE_RUBY
