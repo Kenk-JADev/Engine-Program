@@ -773,22 +773,20 @@ void Engine::RenderScene() {
             }
         }
         mRenderer->EndShadowPass();
-        // Viewport / FBO restore – CRITICAL FIX für Editor Scene
-        if (mEditorMode && mSceneFramebuffer) {
-            mSceneFramebuffer->Bind();
-            glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
-        } else if (mWindow) {
+        // Haupt-Scene auf den sichtbaren Framebuffer (Screen/Widget) rendern.
+        // Der Offscreen-mSceneFramebuffer war nur fuer den entfernten ImGui-
+        // Scene-View gedacht; ihn hier zu nutzen liess den Game View im Editor
+        // leer erscheinen (Scene landete im Offscreen-Buffer, nie am Bildschirm).
+        if (mWindow) {
             glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
         }
 
         // === POINT LIGHT CUBEMAP SHADOWS (falls aktiviert) ===
         if (mRenderer->IsPointShadowsEnabled()) {
             mRenderer->RenderPointShadows(*mScene);
-            // Nach Cubemap Shadow Pass wieder Scene FBO binden
-            if (mEditorMode && mSceneFramebuffer) {
-                mSceneFramebuffer->Bind();
-                glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
-            } else if (mWindow) {
+            // Nach Cubemap Shadow Pass wieder auf den sichtbaren Framebuffer
+            // (Screen/Widget) rendern, nicht in den Offscreen-mSceneFramebuffer.
+            if (mWindow) {
                 glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
             }
         }
