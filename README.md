@@ -106,6 +106,19 @@ Event-Dialog** (Seiten, Bedingungen, Grafik, Autonome Bewegung, Optionen,
 Auslöser und die Befehlsliste mit `@>`-Einrückung). Der Befehlsdialog bietet
 alle XP-Befehle auf drei Seiten.
 
+## Datenbank (XP-Dialog)
+
+Ribbon **Werkzeuge → Datenbank** (oder der Button im Datenbank-Dock) öffnet den
+**XP-artigen Datenbank-Dialog** mit den 13 Tabs **Akteure, Klassen,
+Fertigkeiten, Gegenstände, Waffen, Rüstungen, Gegner, Trupps, Status,
+Animationen, Tilesets, Gemeinsame Events und System** — links die nummerierte
+Liste („001: …") mit **Maximum ändern …**, rechts die Eigenschaften, unten
+**OK / Abbrechen / Anwenden**. Der System-Tab enthält wie in XP Anfangsgruppe,
+Elemente (mit Maximum), Systemgrafiken, BGM/ME, 12 Soundeffekte und alle
+Begriffe (HP, SP, STR … Ausrüsten). Die Anfangsgruppe steuert direkt die
+Start-Party im Spiel. Alles wird im Projekt unter `database/*.json`
+gespeichert.
+
 ## Umlaute (ä ö ü Ä Ö Ü ß)
 
 UI und Spiel sind UTF-8-durchgängig (MSVC baut mit `/utf-8`); Nachrichten,

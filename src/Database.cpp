@@ -154,6 +154,19 @@ void Database::CreateDefaults() {
     for (int i=0;i<100;++i) mSystem.switches[i]="Switch "+std::to_string(i+1);
     mSystem.variables.resize(100);
     for (int i=0;i<100;++i) mSystem.variables[i]="Variable "+std::to_string(i+1);
+    // XP-Standard-Elemente (wie im XP Datenbank-System-Tab)
+    if (mSystem.elements.empty()) {
+        mSystem.elements = {"Feuer","Eis","Donner","Wasser","Erde","Wind",
+                            "Licht","Dunkelheit","gegen Untote","gegen Schlangen",
+                            "gegen Wassertiere","gegen Bestien","gegen Kobolde",
+                            "gegen Vögel","gegen Teufel","gegen Engel"};
+    }
+    if (mSystem.initialParty.empty()) mSystem.initialParty = {1};
+    if (mSystem.animations.empty()) {
+        mSystem.animations.resize(10);
+        for (int i = 0; i < 10; ++i)
+            mSystem.animations[i] = "Animation " + std::to_string(i + 1);
+    }
 }
 
 namespace {
@@ -341,6 +354,54 @@ rpg::TilesetData ParseTilesetObject(const std::string& obj) {
     return t;
 }
 
+rpg::TroopData ParseTroopObject(const std::string& obj) {
+    using namespace rpg::JsonUtils;
+    rpg::TroopData t;
+    int id = 0;
+    if (TryParseInt(obj, "id", 0, id)) t.id = id;
+    std::string name;
+    if (TryParseString(obj, "name", 0, name)) t.name = name;
+    // members: Array aus Gegner-IDs
+    std::string arr;
+    if (FindArrayForKey(obj, "members", 0, arr)) {
+        size_t start = arr.find('[');
+        size_t end = arr.rfind(']');
+        if (start != std::string::npos && end != std::string::npos && end > start) {
+            std::string inner = arr.substr(start + 1, end - start - 1);
+            std::stringstream ss(inner);
+            std::string token;
+            while (std::getline(ss, token, ',')) {
+                size_t s = 0;
+                while (s < token.size() && std::isspace((unsigned char)token[s])) ++s;
+                size_t e = token.size();
+                while (e > s && std::isspace((unsigned char)token[e - 1])) --e;
+                if (s < e) { try { t.members.push_back(std::stoi(token.substr(s, e - s))); } catch (...) {} }
+            }
+        }
+    }
+    return t;
+}
+
+rpg::StateData ParseStateObject(const std::string& obj) {
+    using namespace rpg::JsonUtils;
+    rpg::StateData s;
+    int id = 0;
+    if (TryParseInt(obj, "id", 0, id)) s.id = id;
+    std::string name;
+    if (TryParseString(obj, "name", 0, name)) s.name = name;
+    if (TryParseString(obj, "description", 0, name)) s.description = name;
+    int v = 0;
+    if (TryParseInt(obj, "restriction", 0, v)) s.restriction = v;
+    if (TryParseInt(obj, "priority", 0, v)) s.priority = v;
+    if (TryParseInt(obj, "autoRemovalTiming", 0, v)) s.autoRemovalTiming = v;
+    if (TryParseInt(obj, "holdTurn", 0, v)) s.holdTurn = v;
+    bool b = false;
+    if (TryParseBool(obj, "removeAtBattleEnd", 0, b)) s.removeAtBattleEnd = b;
+    float f = 0.f;
+    if (TryParseFloat(obj, "hpDrainRate", 0, f)) s.hpDrainRate = f;
+    return s;
+}
+
 rpg::MapInfo ParseMapInfoObject(const std::string& obj) {
     using namespace rpg::JsonUtils;
     rpg::MapInfo m;
@@ -464,6 +525,20 @@ bool Database::Load(const std::string& projectPath) {
             if (!tmp.empty()) { mTilesets = std::move(tmp); anyLoaded = true; }
         }
     }
+    // Troops
+    {
+        std::vector<TroopData> tmp;
+        if (LoadArrayFile(dbDir + "/Troops.json", tmp, ParseTroopObject, "Troops")) {
+            if (!tmp.empty()) { mTroops = std::move(tmp); anyLoaded = true; }
+        }
+    }
+    // States
+    {
+        std::vector<StateData> tmp;
+        if (LoadArrayFile(dbDir + "/States.json", tmp, ParseStateObject, "States")) {
+            if (!tmp.empty()) { mStates = std::move(tmp); anyLoaded = true; }
+        }
+    }
     // MapInfos
     {
         std::vector<MapInfo> tmp;
@@ -488,6 +563,81 @@ bool Database::Load(const std::string& projectPath) {
             if (TryParseInt(content, "startMapId", 0, v)) mSystem.startMapId = v;
             if (TryParseInt(content, "startX", 0, v)) mSystem.startX = v;
             if (TryParseInt(content, "startY", 0, v)) mSystem.startY = v;
+
+            // ---- XP System-Tab (Strings) ----
+            const auto readStr = [&](const char* key, std::string& dst) {
+                std::string s;
+                if (TryParseString(content, key, 0, s)) dst = s;
+            };
+            const auto readStrArray = [&](const char* key, std::vector<std::string>& dst) {
+                std::string arr2;
+                if (!FindArrayForKey(content, key, 0, arr2)) return;
+                std::vector<std::string> tmp;
+                size_t pos = 0;
+                while (true) {
+                    size_t q1 = arr2.find('\"', pos);
+                    if (q1 == std::string::npos) break;
+                    size_t q2 = arr2.find('\"', q1 + 1);
+                    if (q2 == std::string::npos) break;
+                    tmp.push_back(JsonUtils::Unescape(arr2.substr(q1 + 1, q2 - q1 - 1)));
+                    pos = q2 + 1;
+                }
+                dst = std::move(tmp);
+            };
+            const auto readIntArray = [&](const char* key, std::vector<int>& dst) {
+                std::string arr2;
+                if (!FindArrayForKey(content, key, 0, arr2)) return;
+                std::vector<int> tmp;
+                std::stringstream ss(arr2);
+                std::string num;
+                while (std::getline(ss, num, ',')) {
+                    try { tmp.push_back(std::stoi(num)); } catch (...) {}
+                }
+                dst = std::move(tmp);
+            };
+            readStrArray("elements", mSystem.elements);
+            readStrArray("animations", mSystem.animations);
+            readIntArray("initialParty", mSystem.initialParty);
+            readStr("windowskinName", mSystem.windowskinName);
+            readStr("titleGraphicName", mSystem.titleGraphicName);
+            readStr("gameoverGraphicName", mSystem.gameoverGraphicName);
+            readStr("battleTransitionName", mSystem.battleTransitionName);
+            readStr("battleBgm", mSystem.battleBgm);
+            readStr("titleBgm", mSystem.titleBgm);
+            readStr("gameoverMe", mSystem.gameoverMe);
+            readStr("battleEndMe", mSystem.battleEndMe);
+            readStr("cursorSe", mSystem.cursorSe);
+            readStr("decisionSe", mSystem.decisionSe);
+            readStr("cancelSe", mSystem.cancelSe);
+            readStr("buzzerSe", mSystem.buzzerSe);
+            readStr("equipSe", mSystem.equipSe);
+            readStr("shopSe", mSystem.shopSe);
+            readStr("saveSe", mSystem.saveSe);
+            readStr("loadSe", mSystem.loadSe);
+            readStr("battleStartSe", mSystem.battleStartSe);
+            readStr("escapeSe", mSystem.escapeSe);
+            readStr("actorCollapseSe", mSystem.actorCollapseSe);
+            readStr("enemyCollapseSe", mSystem.enemyCollapseSe);
+            readStr("wordWeapon", mSystem.wordWeapon);
+            readStr("wordShield", mSystem.wordShield);
+            readStr("wordHelmet", mSystem.wordHelmet);
+            readStr("wordBodyArmor", mSystem.wordBodyArmor);
+            readStr("wordAccessory", mSystem.wordAccessory);
+            readStr("wordHp", mSystem.wordHp);
+            readStr("wordSp", mSystem.wordSp);
+            readStr("wordStr", mSystem.wordStr);
+            readStr("wordDex", mSystem.wordDex);
+            readStr("wordAgi", mSystem.wordAgi);
+            readStr("wordInt", mSystem.wordInt);
+            readStr("wordAtk", mSystem.wordAtk);
+            readStr("wordPdef", mSystem.wordPdef);
+            readStr("wordMdef", mSystem.wordMdef);
+            readStr("wordAttack", mSystem.wordAttack);
+            readStr("wordSkill", mSystem.wordSkill);
+            readStr("wordDefend", mSystem.wordDefend);
+            readStr("wordItem", mSystem.wordItem);
+            readStr("wordEquip", mSystem.wordEquip);
+
             // switches / variables arrays
             std::string arr;
             if (FindArrayForKey(content, "switches", 0, arr)) {
@@ -647,8 +797,12 @@ bool Database::Save(const std::string& projectPath) const {
                 const auto& s = mStates[i];
                 f << "  {\"id\":" << s.id
                   << ",\"name\":\"" << Escape(s.name) << "\""
+                  << ",\"description\":\"" << Escape(s.description) << "\""
                   << ",\"restriction\":" << s.restriction
                   << ",\"priority\":" << s.priority
+                  << ",\"removeAtBattleEnd\":" << (s.removeAtBattleEnd ? "true" : "false")
+                  << ",\"autoRemovalTiming\":" << s.autoRemovalTiming
+                  << ",\"holdTurn\":" << s.holdTurn
                   << ",\"hpDrainRate\":" << s.hpDrainRate
                   << "}";
                 if (i+1<mStates.size()) f << ",";
@@ -772,7 +926,68 @@ bool Database::Save(const std::string& projectPath) const {
                 if (i) f << ",";
                 f << "\"" << Escape(mSystem.variables[i]) << "\"";
             }
-            f << "]\n";
+            f << "],\n";
+
+            // ---- XP System-Tab ----
+            const auto writeString = [&f](const char* key, const std::string& val, bool comma) {
+                f << "  \"" << key << "\":\"" << Escape(val) << "\"" << (comma ? ",\n" : "\n");
+            };
+            const auto writeStrArray = [&f](const char* key, const std::vector<std::string>& arr) {
+                f << "  \"" << key << "\":[";
+                for (size_t i=0;i<arr.size();++i) {
+                    if (i) f << ",";
+                    f << "\"" << Escape(arr[i]) << "\"";
+                }
+                f << "],\n";
+            };
+            writeStrArray("elements", mSystem.elements);
+            writeStrArray("animations", mSystem.animations);
+            f << "  \"initialParty\":[";
+            for (size_t i=0;i<mSystem.initialParty.size();++i) {
+                if (i) f << ",";
+                f << mSystem.initialParty[i];
+            }
+            f << "],\n";
+
+            writeString("windowskinName", mSystem.windowskinName, true);
+            writeString("titleGraphicName", mSystem.titleGraphicName, true);
+            writeString("gameoverGraphicName", mSystem.gameoverGraphicName, true);
+            writeString("battleTransitionName", mSystem.battleTransitionName, true);
+            writeString("battleBgm", mSystem.battleBgm, true);
+            writeString("titleBgm", mSystem.titleBgm, true);
+            writeString("gameoverMe", mSystem.gameoverMe, true);
+            writeString("battleEndMe", mSystem.battleEndMe, true);
+            writeString("cursorSe", mSystem.cursorSe, true);
+            writeString("decisionSe", mSystem.decisionSe, true);
+            writeString("cancelSe", mSystem.cancelSe, true);
+            writeString("buzzerSe", mSystem.buzzerSe, true);
+            writeString("equipSe", mSystem.equipSe, true);
+            writeString("shopSe", mSystem.shopSe, true);
+            writeString("saveSe", mSystem.saveSe, true);
+            writeString("loadSe", mSystem.loadSe, true);
+            writeString("battleStartSe", mSystem.battleStartSe, true);
+            writeString("escapeSe", mSystem.escapeSe, true);
+            writeString("actorCollapseSe", mSystem.actorCollapseSe, true);
+            writeString("enemyCollapseSe", mSystem.enemyCollapseSe, true);
+            writeString("wordWeapon", mSystem.wordWeapon, true);
+            writeString("wordShield", mSystem.wordShield, true);
+            writeString("wordHelmet", mSystem.wordHelmet, true);
+            writeString("wordBodyArmor", mSystem.wordBodyArmor, true);
+            writeString("wordAccessory", mSystem.wordAccessory, true);
+            writeString("wordHp", mSystem.wordHp, true);
+            writeString("wordSp", mSystem.wordSp, true);
+            writeString("wordStr", mSystem.wordStr, true);
+            writeString("wordDex", mSystem.wordDex, true);
+            writeString("wordAgi", mSystem.wordAgi, true);
+            writeString("wordInt", mSystem.wordInt, true);
+            writeString("wordAtk", mSystem.wordAtk, true);
+            writeString("wordPdef", mSystem.wordPdef, true);
+            writeString("wordMdef", mSystem.wordMdef, true);
+            writeString("wordAttack", mSystem.wordAttack, true);
+            writeString("wordSkill", mSystem.wordSkill, true);
+            writeString("wordDefend", mSystem.wordDefend, true);
+            writeString("wordItem", mSystem.wordItem, true);
+            writeString("wordEquip", mSystem.wordEquip, false); // letztes Feld (kein Komma)
             f << "}\n";
         }
 

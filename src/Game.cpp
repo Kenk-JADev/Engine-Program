@@ -65,7 +65,14 @@ void GameActor::RecoverAll() {
 // --- GameParty ---
 void GameParty::SetupStartingMembers() {
     Clear();
-    AddActor(1);
+    // XP: Anfangsgruppe kommt aus Datenbank -> System -> "Initial Party"
+    const auto& party = Database::Get().System().initialParty;
+    if (!party.empty()) {
+        for (int id : party) if (id > 0) AddActor(id);
+    } else {
+        AddActor(1);
+    }
+    if (mActors.empty()) AddActor(1); // Sicherheitsnetz
     mGold = 500;
 }
 void GameParty::AddActor(int actorId) {

@@ -4,6 +4,7 @@
 #include "QtMapTab.h"
 #include "QtMapEditorDock.h"
 #include "QtDatabaseEditorDock.h"
+#include "QtDatabaseDialog.h"
 #include "QtEventEditorDock.h"
 #include "QtAssetBrowserDock.h"
 
@@ -572,6 +573,14 @@ void QtEditorWindow::buildRibbon() {
     }
     // ---- Tab: Werkzeuge ------------------------------------------------------
     if (QWidget* p = ribbonPage(QStringLiteral("Werkzeuge"))) {
+        ribbonButton(p, QStringLiteral("Datenbank"), QStringLiteral("XP-Datenbank-Editor öffnen"),
+                     [this]() {
+                         if (!mView || !mView->IsEngineReady()) return;
+                         if (QtDatabaseDialog::EditDatabase(this, mEngine.get())) {
+                             if (mDbDockWidget) mDbDockWidget->refresh();
+                             log(QStringLiteral("Datenbank (XP-Dialog) gespeichert."));
+                         }
+                     });
         ribbonButton(p, QStringLiteral("Würfel"), QStringLiteral("Würfel erstellen"),
                      [this]() { actionCreateCube(); });
         ribbonButton(p, QStringLiteral("Ebene"), QStringLiteral("Ebene erstellen"),

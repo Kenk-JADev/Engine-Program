@@ -191,11 +191,64 @@ struct SystemData {
     int startMapId = 1;
     int startX = 0;
     int startY = 0;
-    std::vector<std::string> switches;
-    std::vector<std::string> variables;
+
+    // ---- XP System-Tab ----
+    // Anfaengliche Gruppe (Akteur-IDs)
+    std::vector<int> initialParty;
+    // Element-Namen (Liste wie im XP-System-Tab)
+    std::vector<std::string> elements;
+    // Animations-Namen (IDs = Index+1; Dateiname wird am Befehl angegeben)
+    std::vector<std::string> animations;
+
+    // Grafiken
+    std::string windowskinName = "001-Blue01";
+    std::string titleGraphicName = "001-Title01";
+    std::string gameoverGraphicName = "001-Gameover01";
+    std::string battleTransitionName = "003-Blind03";
+
+    // BGM / ME
     std::string battleBgm = "battle.ogg";
     std::string titleBgm = "title.ogg";
     std::string gameoverMe = "gameover.ogg";
+    std::string battleEndMe = "001-Victory01";
+
+    // Sound-Effekte (SE-Namen)
+    std::string cursorSe = "001-System01";
+    std::string decisionSe = "002-System02";
+    std::string cancelSe = "003-System03";
+    std::string buzzerSe = "004-System04";
+    std::string equipSe = "005-System05";
+    std::string shopSe = "006-System06";
+    std::string saveSe = "007-System07";
+    std::string loadSe = "008-System08";
+    std::string battleStartSe = "009-System09";
+    std::string escapeSe = "010-System10";
+    std::string actorCollapseSe = "011-System11";
+    std::string enemyCollapseSe = "012-System12";
+
+    // Woerter / Begriffe ("Words" im XP-System-Tab)
+    std::string wordWeapon = "Weapon";
+    std::string wordShield = "Shield";
+    std::string wordHelmet = "Helmet";
+    std::string wordBodyArmor = "Body Armor";
+    std::string wordAccessory = "Accessory";
+    std::string wordHp = "HP";
+    std::string wordSp = "SP";
+    std::string wordStr = "STR";
+    std::string wordDex = "DEX";
+    std::string wordAgi = "AGI";
+    std::string wordInt = "INT";
+    std::string wordAtk = "ATK";
+    std::string wordPdef = "PDEF";
+    std::string wordMdef = "MDEF";
+    std::string wordAttack = "Attack";
+    std::string wordSkill = "Skill";
+    std::string wordDefend = "Defend";
+    std::string wordItem = "Item";
+    std::string wordEquip = "Equip";
+
+    std::vector<std::string> switches;
+    std::vector<std::string> variables;
 };
 
 class Database {

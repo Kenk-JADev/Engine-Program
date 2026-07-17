@@ -1,4 +1,5 @@
 #include "QtDatabaseEditorDock.h"
+#include "QtDatabaseDialog.h"
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Database.h"
@@ -372,17 +373,33 @@ void QtDatabaseEditorDock::buildUi() {
     root->setContentsMargins(4, 4, 4, 4);
 
     auto* tb = new QHBoxLayout();
-    auto* btnSave = new QPushButton("Speichern", this);
-    auto* btnReload = new QPushButton("Neu laden", this);
-    auto* btnAdd = new QPushButton("Zeile +", this);
-    auto* btnRem = new QPushButton("Zeile -", this);
+    auto* btnOpen = new QPushButton(QStringLiteral("Datenbank-Editor öffnen (XP-Dialog) ..."), this);
+    btnOpen->setToolTip(QStringLiteral(
+        "XP-artigen Datenbank-Dialog öffnen: Akteure, Klassen, Fertigkeiten,\n"
+        "Gegenstände, Waffen, Rüstungen, Gegner, Trupps, Status, Animationen,\n"
+        "Tilesets, Gemeinsame Events, System (wie RPG Maker XP)."));
+    auto* btnSave = new QPushButton(QStringLiteral("Speichern"), this);
+    auto* btnReload = new QPushButton(QStringLiteral("Neu laden"), this);
+    auto* btnAdd = new QPushButton(QStringLiteral("Zeile +"), this);
+    auto* btnRem = new QPushButton(QStringLiteral("Zeile -"), this);
+    connect(btnOpen, &QPushButton::clicked, this, [this]() {
+        if (!mEngine || !mEngine->IsInitialized()) {
+            emit logMessage(QStringLiteral("Datenbank-Editor: Engine noch nicht bereit."));
+            return;
+        }
+        if (QtDatabaseDialog::EditDatabase(this, mEngine)) {
+            refresh();
+            emit logMessage(QStringLiteral("Datenbank gespeichert (XP-Dialog)."));
+        }
+    });
     connect(btnSave, &QPushButton::clicked, this, &QtDatabaseEditorDock::onSave);
     connect(btnReload, &QPushButton::clicked, this, &QtDatabaseEditorDock::onReload);
     connect(btnAdd, &QPushButton::clicked, this, &QtDatabaseEditorDock::onAddRow);
     connect(btnRem, &QPushButton::clicked, this, &QtDatabaseEditorDock::onRemoveRow);
+    tb->addWidget(btnOpen);
+    tb->addStretch(1);
     tb->addWidget(btnSave);
     tb->addWidget(btnReload);
-    tb->addStretch(1);
     tb->addWidget(btnAdd);
     tb->addWidget(btnRem);
     root->addLayout(tb);
