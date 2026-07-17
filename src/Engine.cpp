@@ -131,6 +131,24 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         }
     });
 
+    // Tasten-Provider fuer "Button Input Processing" (105) und Bedingung "Taste"
+    // XP-Codes: 2=unten, 4=links, 6=rechts, 8=oben,
+    //           11=A(Shift), 12=B(Esc), 13=C(Enter/E/Space), 15=L(Q), 16=R(Tab)
+    EventSystem_SetButtonProvider([this]() -> int {
+        if (!mInput) return 0;
+        if (mInput->IsKeyPressed(Key::Down))  return 2;
+        if (mInput->IsKeyPressed(Key::Left))  return 4;
+        if (mInput->IsKeyPressed(Key::Right)) return 6;
+        if (mInput->IsKeyPressed(Key::Up))    return 8;
+        if (mInput->IsKeyPressed(Key::LShift)) return 11;
+        if (mInput->IsKeyPressed(Key::Escape)) return 12;
+        if (mInput->IsKeyPressed(Key::Enter) || mInput->IsKeyPressed(Key::E) ||
+            mInput->IsKeyPressed(Key::Space)) return 13;
+        if (mInput->IsKeyPressed(Key::Q))     return 15;
+        if (mInput->IsKeyPressed(Key::Tab))   return 16;
+        return 0;
+    });
+
     mAudio = std::make_unique<AudioManager>();
     if (!mAudio->Initialize()) {
         RPG_LOG_WARN("Audio initialization failed - continuing without audio");
@@ -328,7 +346,7 @@ void Engine::SetPlaying(bool playing) {
             GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
             GameUI::Get().Pause().onSave = []() { Game::Get().Save(1); };
             GameUI::Get().Pause().onExitToTitle = [this]() { this->SetPlaying(false); };
-            GameUI::Get().ShowMessage(std::string("PLAYTEST\nWASD bewegen | E/Enter sprechen | Esc Pause | F5 Stop\nGehe zum Dorf-Aeltesten (NPC) und druecke E."));
+            GameUI::Get().ShowMessage(std::string("PLAYTEST\nWASD bewegen | E/Enter sprechen | Esc Pause\nGehe zum Dorfältesten (NPC) und drücke E."));
 
             if (mScriptManager) mScriptManager->ExecuteAllScripts();
             RPG_LOG_INFO("Playtest spawn at " + std::to_string(spawn.x) + "," +
@@ -611,19 +629,28 @@ void Engine::Update(float dt) {
 
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {
+        // Modale Eingaben (Choices, Zahleneingabe 103, Namenseingabe 303)
+        // haben Vorrang vor allem anderen und konsumieren die Tasten zuerst.
+        GameUI::Get().UpdateModalInput(*mInput);
+
+        const bool modalActive = GameUI::Get().IsNumberInputActive() ||
+                                 GameUI::Get().IsNameInputActive() ||
+                                 GameUI::Get().Message().HasChoices();
         // Pause menu
-        if (mInput->IsKeyPressed(Key::Escape)) {
+        if (!modalActive && mInput->IsKeyPressed(Key::Escape)) {
             if (GameUI::Get().Pause().IsVisible()) GameUI::Get().Pause().Hide();
             else if (!GameUI::Get().Message().IsBusy()) GameUI::Get().Pause().Show();
         }
         // Interact with nearby events (E or Enter) when not in dialog
-        if (!GameUI::Get().Message().IsBusy() && !GameUI::Get().Pause().IsVisible()) {
+        if (!modalActive && !GameUI::Get().Message().IsBusy() && !GameUI::Get().Pause().IsVisible()) {
             if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter)) {
                 EventSystem::Get().TryInteract(Game::Get().Player().GetPosition());
             }
         }
-        // Advance/close message with E/Enter/Space
-        if (GameUI::Get().Message().IsBusy()) {
+        // Advance/close message with E/Enter/Space (nicht waehrend Choices/Inputs)
+        if (!GameUI::Get().Message().HasChoices() &&
+            !GameUI::Get().IsNumberInputActive() && !GameUI::Get().IsNameInputActive() &&
+            GameUI::Get().Message().IsBusy()) {
             if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter) || mInput->IsKeyPressed(Key::Space)) {
                 GameUI::Get().Message().AdvanceInput();
             }
@@ -685,6 +712,11 @@ void Engine::Update(float dt) {
 void Engine::Render() {
     // Direkt in den aktuellen GL-Framebuffer rendern
     // (Qt: QOpenGLWidget FBO; Player: Default-Framebuffer)
+    // Qt-Fix: Das Host-FBO merken. Shadow-Passes binden eigene FBOs und duerfen
+    // am Ende NICHT hart 0 binden (sonst bleibt der Game View schwarz, weil die
+    // Szene in den Fenster-Backbuffer statt ins Widget-FBO laeuft).
+    int hostFBO = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &hostFBO);
     if (mWindow) {
         Camera& cam = mRenderer->GetCamera();
         const int w = mWindow->GetWidth();
@@ -695,6 +727,10 @@ void Engine::Render() {
         }
     }
     RenderScene();
+    // Sicherheitsnetz: falls ein Pass das FBO verbogen hat, zurueck zum Host
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(hostFBO));
+    if (mWindow && mWindow->GetWidth() > 0 && mWindow->GetHeight() > 0)
+        glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
 
     // GameUI-Draw ist ohne ImGui No-Op; Logik (Messages) laeuft weiter via Input.
 #ifdef RPGMAKER3D_ENABLE_IMGUI
@@ -911,10 +947,11 @@ void Engine::RenderScene() {
             markerMesh = MeshFactory::CreateCube(0.45f);
             meshesInit = true;
         }
-        // Player
+        // Player (Transparent-Flag 208 -> halbtransparent)
         Vec3 playerPos = Game::Get().Player().GetPosition();
         Mat4 playerMat = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0));
-        mRenderer->DrawMesh(playerMesh, playerMat, nullptr, Color(0.25f, 0.95f, 0.35f, 1.0f));
+        const float playerAlpha = Game::Get().Player().IsTransparent() ? 0.35f : 1.0f;
+        mRenderer->DrawMesh(playerMesh, playerMat, nullptr, Color(0.25f, 0.95f, 0.35f, playerAlpha));
         // Facing indicator
         Vec3 dir = Game::Get().Player().GetDirection();
         Mat4 nose = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0) + dir * 0.45f);
@@ -923,7 +960,7 @@ void Engine::RenderScene() {
 
         // Event NPC markers
         for (const auto& ev : EventSystem::Get().GetEvents()) {
-            if (!ev.enabled) continue;
+            if (!ev.enabled || ev.erased) continue;
             Vec3 ep = ev.worldPos;
             if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
             Mat4 em = glm::translate(Mat4(1.0f), ep + Vec3(0, 0.55f, 0));

@@ -15,6 +15,16 @@
 
 namespace rpg {
 
+// --- Actor-Helfer (Party oder einzeln) ---
+void ApplyToActorOrParty(int actorId, const std::function<void(GameActor&)>& fn) {
+    auto& party = Game::Get().Party();
+    if (actorId > 0) {
+        if (auto* a = party.GetActor(actorId)) fn(*a);
+    } else {
+        for (auto& a : party.Members()) fn(a);
+    }
+}
+
 // --- Self Switches ---
 std::string GameSelfSwitches::Key(int mapId, int eventId, char ch) {
     return std::to_string(mapId) + "_" + std::to_string(eventId) + "_" + ch;
@@ -354,6 +364,7 @@ void Game::NewGameAt(const Vec3& worldPos, int mapId) {
     mSwitches.Clear();
     mVariables.Clear();
     mSelfSwitches.Clear();
+    mSystem.Reset();
     mParty.SetupStartingMembers();
     int mid = mapId > 0 ? mapId : Database::Get().System().startMapId;
     mMap.Setup(mid);
@@ -509,17 +520,22 @@ bool Game::Load(int slot) {
 void Game::Update(float dt) {
     if (!mGameStarted) return;
     mMap.Update(dt);
+    mSystem.Update(dt); // Timer (Control Timer)
 
     // Lock player while a message/event is blocking or battle is running
     bool busy = EventSystem::Get().IsWaitingForMessage() ||
+                EventSystem::Get().IsBlockingEventRunning() ||
                 GameUI::Get().Message().IsBusy() ||
+                GameUI::Get().IsNumberInputActive() ||
+                GameUI::Get().IsNameInputActive() ||
                 BattleSystem::Get().IsInBattle();
     mPlayer.SetLocked(busy);
 
     EventSystem::Get().Update(dt, mPlayer.GetPosition());
 
     // Random Encounter (RPG Maker Style): Schritte zaehlen wenn Map encounterStep > 0
-    if (!busy && !BattleSystem::Get().IsInBattle()) {
+    // ChangeEncounter (136) deaktiviert Zufallskaempfe komplett
+    if (!busy && !BattleSystem::Get().IsInBattle() && mSystem.IsEncounterEnabled()) {
         static Vec3 s_lastPos(0,0,0);
         static float s_stepAccum = 0.f;
         static int s_stepsToEncounter = 0;

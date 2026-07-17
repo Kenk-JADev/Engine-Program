@@ -3,11 +3,14 @@
 
 #include <vector>
 #include <functional>
+#include <string>
 #include "Types.h"
 #include "Database.h"
 #include "Game.h"
 
 namespace rpg {
+
+struct EventCommand; // EventSystem.h (kein include-Loop)
 
 enum class BattleState {
     None,
@@ -75,6 +78,14 @@ public:
     int LastExp() const { return mLastExp; }
     int LastGold() const { return mLastGold; }
 
+    // Event-Befehle (Kampf-Seite 3): 601 ff. Auswertung + Abbruch
+    /// 0 = keiner, 1 = Sieg, 2 = Flucht, 3 = Niederlage (wird bei Setup zurueckgesetzt)
+    int GetLastOutcome() const { return mLastOutcome; }
+    /// Kampf abbrechen (Event-Befehl 340)
+    void Abort();
+    /// Event-Befehle 331..339 auf Kampfteilnehmer anwenden
+    void ApplyEventCommand(const EventCommand& cmd);
+
     // Callbacks für UI/Audio
     std::function<void(const std::string&)> onMessage;
     std::function<void(int enemyId)> onEnemyDefeated;
@@ -96,6 +107,7 @@ private:
     bool mCanLose = false;
     int mLastExp = 0;
     int mLastGold = 0;
+    int mLastOutcome = 0; // 0=keiner, 1=Sieg, 2=Flucht, 3=Niederlage
 };
 
 } // namespace rpg

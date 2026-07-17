@@ -83,9 +83,34 @@ cmake --build build -j
 ```
 
 Im Editor:
-- Tab **Game View** – 3D-Szene, Selektion, Playtest (F5)
-- Tab **Code** – Ruby-Scripts des Projekts + C++ Engine-API-Referenz
+- Tabs unten (Browser-Stil): **Spielansicht** (3D), **Landkarte** (2D), **Spiel** (Playtest), **Skript** (Ruby/C++)
+- Ribbon oben: **Datei / Werkzeuge / Ansicht / Fenster / Debug**
 - `Datei > Neues Projekt` / `Projekt öffnen`
+
+## Playtest
+
+- **F5** – speichert das Projekt und startet **`RPGMaker3D_Player.exe --project <Pfad>`**
+  (exakt wie beim Spieler; das Player-Target ist `RPGMAKER3D_BUILD_PLAYER=ON`, Standard)
+- **Umschalt+F5** – schneller eingebetteter Test direkt in der Spielansicht
+- Player von Hand: `RPGMaker3D_Player --project SampleProject` (oder Pfad als 1. Argument)
+
+## Events (XP-Befehlssatz)
+
+Der Event-Interpreter unterstützt den **vollständigen RPG-Maker-XP-Befehlssatz**
+(Codes 101–355, siehe `docs/EVENTS-XP.md`): Text, Auswahl mit „Wenn“-Zweigen,
+Zahlen-/Namenseingabe, Bedingungen (13 Typen), Schleifen, Bewegungsrouten,
+Bildschirmeffekte, Kampfverarbeitung mit Sieg/Flucht/Niederlage-Zweigen usw.
+
+Im Editor: Dock **Events** → Doppelklick auf ein Event öffnet den **XP-artigen
+Event-Dialog** (Seiten, Bedingungen, Grafik, Autonome Bewegung, Optionen,
+Auslöser und die Befehlsliste mit `@>`-Einrückung). Der Befehlsdialog bietet
+alle XP-Befehle auf drei Seiten.
+
+## Umlaute (ä ö ü Ä Ö Ü ß)
+
+UI und Spiel sind UTF-8-durchgängig (MSVC baut mit `/utf-8`); Nachrichten,
+Namen und Datenbanktexte dürfen Umlaute enthalten. In der Namenseingabe im
+Spiel lassen sich Umlaute per **Alt+A / Alt+O / Alt+U** tippen.
 
 ## Lizenz
 

@@ -2,6 +2,7 @@
 #include "rpgmaker3d/Game.h"
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Texture.h"
+#include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 // ImGui-Editor ist entfernt. GameUI-Overlay war historisch ImGui-basiert;
 // ohne RPGMAKER3D_ENABLE_IMGUI sind Draw()-Pfade No-Ops (RmlUi/Logic bleibt).
@@ -12,6 +13,7 @@
 #include <unordered_map>
 #include <filesystem>
 #include <cmath>
+#include <cctype>
 
 namespace rpg {
 
@@ -49,6 +51,16 @@ void MessageWindow::AdvanceInput() {
     if (mChoices.empty()) {
         mVisible = false;
     }
+}
+
+void MessageWindow::ConfirmChoice(int overrideIdx) {
+    if (mChoices.empty()) return;
+    // overrideIdx: -2 = aktuelle Auswahl, -1 = Abbruch, sonst direkter Index
+    int idx = (overrideIdx == -2) ? mSelectedChoice : overrideIdx;
+    auto cb = onChoice;
+    mChoices.clear();
+    mVisible = false;
+    if (cb) cb(idx);
 }
 
 void MessageWindow::Update(float dt) {
@@ -186,11 +198,142 @@ void GameUI::ShowMessage(const std::string& text) {
 void GameUI::ShowMessage(const std::string& text, const std::string& speaker, int position, const std::string& face) {
     mMessage.Show(text, speaker, position, face);
 }
-void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback) {
+void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback, bool cancelAllowed) {
     std::vector<ChoiceOption> choices;
     for (size_t i=0;i<options.size();++i) choices.push_back({options[i], (int)i});
     mMessage.onChoice = callback;
+    mChoiceCancelAllowed = cancelAllowed;
     mMessage.ShowWithChoices(text, choices);
+}
+
+// === Zahleneingabe (Event-Befehl 103) ===
+void GameUI::ShowNumberInput(const std::string& prompt, int digits, int initial, std::function<void(int)> onDone) {
+    mNumberActive = true;
+    mNumberPrompt = prompt;
+    mNumberDigits = digits > 0 && digits <= 8 ? digits : 4;
+    mNumberCursor = mNumberDigits - 1; // rechteste Ziffer zuerst (wie XP)
+    // Wert auf Ziffernzahl begrenzen
+    int maxVal = 1;
+    for (int i = 0; i < mNumberDigits; ++i) maxVal *= 10;
+    mNumberValue = initial % maxVal;
+    if (mNumberValue < 0) mNumberValue = 0;
+    mNumberDone = std::move(onDone);
+    RPG_LOG_INFO("[UI] Zahleneingabe aktiv (" + std::to_string(mNumberDigits) + " Stellen)");
+}
+
+// === Namenseingabe (Event-Befehl 303) ===
+void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial, int maxChars, std::function<void(const std::string&)> onDone) {
+    mNameActive = true;
+    mNamePrompt = prompt;
+    mNameInitial = initial;
+    mNameText = initial;
+    mNameMaxChars = maxChars > 0 && maxChars <= 16 ? maxChars : 8;
+    if ((int)mNameText.size() > mNameMaxChars) mNameText.resize(mNameMaxChars);
+    mNameDone = std::move(onDone);
+    RPG_LOG_INFO("[UI] Namenseingabe aktiv (max " + std::to_string(mNameMaxChars) + " Zeichen)");
+}
+
+void GameUI::UpdateModalInput(Input& input) {
+    // --- Choices haben oberste Prioritaet ---
+    if (mMessage.IsVisible() && mMessage.HasChoices() && mMessage.IsTextComplete()) {
+        const int count = mMessage.GetChoiceCount();
+        if (count > 0) {
+            int sel = mMessage.GetSelectedChoice();
+            if (input.IsKeyPressed(Key::Up) || input.IsKeyPressed(Key::W))
+                mMessage.SetSelectedChoice((sel + count - 1) % count);
+            if (input.IsKeyPressed(Key::Down) || input.IsKeyPressed(Key::S))
+                mMessage.SetSelectedChoice((sel + 1) % count);
+            if (input.IsKeyPressed(Key::Enter) || input.IsKeyPressed(Key::E) || input.IsKeyPressed(Key::Space))
+                mMessage.ConfirmChoice(); // aktuelle Auswahl
+            if (input.IsKeyPressed(Key::Escape) && mChoiceCancelAllowed)
+                mMessage.ConfirmChoice(-1); // Abbruch (nur wenn erlaubt, XP)
+        }
+        return;
+    }
+
+    // --- Zahleneingabe ---
+    if (mNumberActive) {
+        auto digitAt = [&](int pos) {
+            int div = 1;
+            for (int i = 0; i < pos; ++i) div *= 10;
+            return (mNumberValue / div) % 10;
+        };
+        auto setDigit = [&](int pos, int d) {
+            int div = 1;
+            for (int i = 0; i < pos; ++i) div *= 10;
+            mNumberValue += (d - digitAt(pos)) * div;
+        };
+        if (input.IsKeyPressed(Key::Left))
+            mNumberCursor = (mNumberCursor + 1) % mNumberDigits; // XP: Cursor wandert in Zehner-Richtung
+        if (input.IsKeyPressed(Key::Right))
+            mNumberCursor = (mNumberCursor + mNumberDigits - 1) % mNumberDigits;
+        if (input.IsKeyPressed(Key::Up))
+            setDigit(mNumberCursor, (digitAt(mNumberCursor) + 1) % 10);
+        if (input.IsKeyPressed(Key::Down))
+            setDigit(mNumberCursor, (digitAt(mNumberCursor) + 9) % 10);
+        // Direkte Zifferneingabe 0-9
+        for (int k = 0; k <= 9; ++k) {
+            Key key = static_cast<Key>(static_cast<int>(Key::Num0) + k);
+            if (input.IsKeyPressed(key)) {
+                setDigit(mNumberCursor, k);
+                mNumberCursor = (mNumberCursor + mNumberDigits - 1) % mNumberDigits; // weiter nach links->rechts
+            }
+        }
+        if (input.IsKeyPressed(Key::Enter) || input.IsKeyPressed(Key::E) || input.IsKeyPressed(Key::Space)) {
+            mNumberActive = false;
+            auto cb = std::move(mNumberDone);
+            if (cb) cb(mNumberValue);
+        }
+        return;
+    }
+
+    // --- Namenseingabe ---
+    if (mNameActive) {
+        const bool shift = input.IsKeyDown(Key::LShift);
+        // Buchstaben A-Z (inkl. deutscher Umlaute ueber Compose ist nicht moeglich;
+        // Umlaute sind per Alt+U/O/A vorgesehen)
+        for (int k = 0; k < 26; ++k) {
+            Key key = static_cast<Key>(static_cast<int>(Key::A) + k);
+            if (input.IsKeyPressed(key) && (int)mNameText.size() < mNameMaxChars) {
+                char c = (char)('A' + k);
+                if (!shift) c = (char)std::tolower(c);
+                mNameText.push_back(c);
+            }
+        }
+        // Ziffern
+        for (int k = 0; k <= 9; ++k) {
+            Key key = static_cast<Key>(static_cast<int>(Key::Num0) + k);
+            if (input.IsKeyPressed(key) && (int)mNameText.size() < mNameMaxChars)
+                mNameText.push_back((char)('0' + k));
+        }
+        // Umlaute (Alt+U = ue etc.): UTF-8 zwei Bytes
+        if (input.IsKeyDown(Key::LAlt) && (int)mNameText.size() + 1 < mNameMaxChars) {
+            if (input.IsKeyPressed(Key::A)) mNameText += "\xC3\x84"; // Ae
+            if (input.IsKeyPressed(Key::O)) mNameText += "\xC3\x96"; // Oe
+            if (input.IsKeyPressed(Key::U)) mNameText += "\xC3\x9C"; // Ue
+        }
+        if (input.IsKeyPressed(Key::Space) && (int)mNameText.size() < mNameMaxChars)
+            mNameText.push_back(' ');
+        if (input.IsKeyPressed(Key::Backspace)) {
+            if (!mNameText.empty()) {
+                // UTF-8-sicher: ggf. Fortsetzungsbytes (0x80..0xBF) mitentfernen
+                do { mNameText.pop_back(); }
+                while (!mNameText.empty() && ((unsigned char)mNameText.back() & 0xC0) == 0x80);
+            }
+        }
+        if (input.IsKeyPressed(Key::Enter)) {
+            mNameActive = false;
+            if (mNameText.empty()) mNameText = mNameInitial;
+            auto cb = std::move(mNameDone);
+            if (cb) cb(mNameText);
+        }
+        if (input.IsKeyPressed(Key::Escape)) {
+            mNameActive = false;
+            auto cb = std::move(mNameDone);
+            if (cb) cb(mNameInitial); // Abbruch = Name bleibt
+        }
+        return;
+    }
 }
 
 void GameUI::DrawPlayHud(bool playtest) {

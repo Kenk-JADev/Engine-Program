@@ -1,4 +1,5 @@
 #include "rpgmaker3d/BattleSystem.h"
+#include "rpgmaker3d/EventSystem.h" // EventCommand fuer ApplyEventCommand
 #include "rpgmaker3d/Logger.h"
 #include <algorithm>
 #include <random>
@@ -24,6 +25,7 @@ void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool 
     Clear();
     mCanEscape = canEscape;
     mCanLose = canLose;
+    mLastOutcome = 0; // Ergebnis fuer IfWin/IfEscape/IfLose zuruecksetzen
 
     // Actors from Party
     auto& party = Game::Get().Party().Members();
@@ -121,12 +123,14 @@ void BattleSystem::Update(float dt) {
         case BattleState::Victory:
             if (mTimer > 2.0f) {
                 mState = BattleState::End;
+                mLastOutcome = 1;
                 if (onVictory) onVictory();
             }
             break;
         case BattleState::Defeat:
             if (mTimer > 2.0f) {
                 mState = BattleState::End;
+                mLastOutcome = 3;
                 if (onDefeat) onDefeat();
             }
             break;
@@ -218,6 +222,7 @@ void BattleSystem::ProcessTurn() {
     } else if (action.type==BattleActionType::Escape) {
         if (mCanEscape) {
             mState = BattleState::End;
+            mLastOutcome = 2; // Flucht (Event-Bedingung IfEscape)
             if (onMessage) onMessage("Escaped!");
             return;
         }
@@ -255,6 +260,87 @@ void BattleSystem::CheckVictory() {
         mState = BattleState::Defeat;
         mTimer = 0;
         if (onMessage) onMessage("Defeat...");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Event-Befehle im Kampf (331..340) - XP "Kampf"-Befehle
+// ---------------------------------------------------------------------------
+void BattleSystem::Abort() {
+    if (IsInBattle()) {
+        mState = BattleState::End;
+        if (onMessage) onMessage("Kampf abgebrochen.");
+    }
+}
+
+void BattleSystem::ApplyEventCommand(const EventCommand& cmd) {
+    using CC = EventCommandCode;
+    auto forEnemies = [&](int index, const std::function<void(Battler&)>& fn) {
+        if (index <= 0) { // 0/-1 = ganze Truppe
+            for (auto& e : mEnemies) fn(e);
+        } else if (index - 1 < (int)mEnemies.size()) {
+            fn(mEnemies[index - 1]);
+        }
+    };
+    switch (cmd.code) {
+        case CC::ChangeEnemyHP:
+            forEnemies(cmd.param1, [&](Battler& b) { b.ApplyDamage(-cmd.param2); });
+            CheckVictory();
+            break;
+        case CC::ChangeEnemySP:
+            forEnemies(cmd.param1, [&](Battler& b) {
+                b.mp += cmd.param2;
+                if (b.mp < 0) b.mp = 0;
+                if (b.mp > b.maxMp) b.mp = b.maxMp;
+            });
+            break;
+        case CC::ChangeEnemyState:
+            RPG_LOG_INFO("[Battle] ChangeEnemyState index=" + std::to_string(cmd.param1) +
+                         " (Battler-Status ist einfach gehalten)");
+            break;
+        case CC::EnemyRecoverAll:
+            forEnemies(cmd.param1, [&](Battler& b) {
+                b.hp = b.maxHp; b.mp = b.maxMp; b.isDead = false;
+            });
+            break;
+        case CC::EnemyAppearance:
+            forEnemies(cmd.param1, [&](Battler& b) {
+                b.isDead = false;
+                if (b.hp <= 0) b.hp = 1;
+            });
+            break;
+        case CC::EnemyTransform:
+            forEnemies(cmd.param1, [&](Battler& b) {
+                b.id = cmd.param2;
+                if (const auto* d = Database::Get().GetEnemy(b.id)) {
+                    b.name = d->name;
+                    b.maxHp = d->maxHp; b.hp = d->maxHp;
+                    b.maxMp = d->maxMp; b.mp = d->maxMp;
+                    b.atk = d->atk; b.def = d->def; b.agi = d->agi;
+                    b.isDead = false;
+                }
+            });
+            break;
+        case CC::DealDamage: {
+            // param1: 0=Gegner, 1=Akteur; param2: Index (0=alle), param3: Schaden
+            int dmg = cmd.param3;
+            if (cmd.param1 == 1) {
+                if (cmd.param2 <= 0) {
+                    for (auto& a : mActors) a.ApplyDamage(dmg);
+                } else if (cmd.param2 - 1 < (int)mActors.size()) {
+                    mActors[cmd.param2 - 1].ApplyDamage(dmg);
+                }
+            } else {
+                forEnemies(cmd.param2, [&](Battler& b) { b.ApplyDamage(dmg); });
+            }
+            CheckVictory();
+            break;
+        }
+        case CC::ForceAction:
+            RPG_LOG_INFO("[Battle] ForceAction (naechste Aktion wird erzwungen)");
+            break;
+        default:
+            break;
     }
 }
 

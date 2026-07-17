@@ -97,6 +97,15 @@ public:
     const std::string& GetFullText() const { return mText; }
     const std::string& GetDisplayedText() const { return mDisplayed; }
     bool HasChoices() const { return !mChoices.empty(); }
+    int GetChoiceCount() const { return (int)mChoices.size(); }
+    int GetSelectedChoice() const { return mSelectedChoice; }
+    void SetSelectedChoice(int idx) {
+        if (idx >= 0 && idx < (int)mChoices.size()) mSelectedChoice = idx;
+    }
+    bool IsTextComplete() const { return mCharIndex >= mText.size(); }
+    const std::vector<ChoiceOption>& GetChoices() const { return mChoices; }
+    /// Auswahl bestaetigen (oder via overrideIdx abbrechen mit -1)
+    void ConfirmChoice(int overrideIdx = -2);
     const std::string& GetSpeakerName() const { return mSpeakerName; }
     const std::string& GetFaceName() const { return mFaceName; }
     int GetPosition() const { return mPosition; } // 0 bottom 1 mid 2 top
@@ -104,7 +113,7 @@ public:
     void Update(float dt);
     void Draw(); // ImGui rendering (optional, wenn RPGMAKER3D_ENABLE_IMGUI)
 
-    std::function<void(int)> onChoice; // choice index
+    std::function<void(int)> onChoice; // choice index (-1 = Abbruch)
 
 private:
     std::string mText;
@@ -167,7 +176,27 @@ public:
 
     void ShowMessage(const std::string& text);
     void ShowMessage(const std::string& text, const std::string& speaker, int position = 0, const std::string& face = "");
-    void ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback);
+    // cancelAllowed = XP "Bei Abbruch: Abbruch nicht erlaubt" -> Escape sperren
+    void ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback, bool cancelAllowed = true);
+
+    // === Zahleneingabe (Event-Befehl 103) ===
+    void ShowNumberInput(const std::string& prompt, int digits, int initial, std::function<void(int)> onDone);
+    bool IsNumberInputActive() const { return mNumberActive; }
+    int GetNumberInputValue() const { return mNumberValue; }
+    int GetNumberInputDigits() const { return mNumberDigits; }
+    int GetNumberInputCursor() const { return mNumberCursor; }
+    const std::string& GetNumberInputPrompt() const { return mNumberPrompt; }
+
+    // === Namenseingabe (Event-Befehl 303) ===
+    void ShowNameInput(const std::string& prompt, const std::string& initial, int maxChars, std::function<void(const std::string&)> onDone);
+    bool IsNameInputActive() const { return mNameActive; }
+    const std::string& GetNameInputText() const { return mNameText; }
+    int GetNameInputMaxChars() const { return mNameMaxChars; }
+    const std::string& GetNameInputPrompt() const { return mNamePrompt; }
+
+    /// Tastatursteuerung fuer Choices / Zahlen- / Namenseingabe.
+    /// Wird von Engine::Update im PlayMode vor dem Message-Advance aufgerufen.
+    void UpdateModalInput(class Input& input);
 
     /// Compact playtest/game HUD (HP/Gold/hints)
     void DrawPlayHud(bool playtest);
@@ -216,6 +245,25 @@ private:
     MessageWindow mMessage;
     TitleScreen mTitle;
     PauseMenu mPause;
+
+    // Choices: Abbruch per Escape erlaubt? (XP: "Abbruch nicht erlaubt")
+    bool mChoiceCancelAllowed = true;
+
+    // Zahleneingabe (103)
+    bool mNumberActive = false;
+    int mNumberValue = 0;
+    int mNumberDigits = 4;
+    int mNumberCursor = 0;
+    std::string mNumberPrompt;
+    std::function<void(int)> mNumberDone;
+
+    // Namenseingabe (303)
+    bool mNameActive = false;
+    std::string mNameText;
+    std::string mNameInitial;
+    int mNameMaxChars = 8;
+    std::string mNamePrompt;
+    std::function<void(const std::string&)> mNameDone;
 
     std::vector<ScreenText> mScreenTexts;
     int mNextScreenTextId = 1;

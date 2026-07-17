@@ -160,6 +160,11 @@ private:
     bool mPointShadowsEnabled = true;
     int mShadowMapSize = 2048;
     int mPointShadowSize = 1024;
+    // Gemerktes Host-FBO: In Qt (QOpenGLWidget) ist der sichtbare Framebuffer
+    // NICHT 0. Shadow-Passes muessen ihn danach wieder binden, sonst bleibt
+    // der Game View schwarz.
+    int mPrevDrawFBO = 0;
+    int mPrevViewport[4] = {0, 0, 0, 0};
     
     FogSettings mFog;
     Skybox mSkybox;

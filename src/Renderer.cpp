@@ -445,6 +445,11 @@ Mat4 Renderer::CalculateLightSpaceMatrix(float orthoSize, float nearPlane, float
 void Renderer::BeginShadowPass() {
     if (!mShadowsEnabled || !mShadowMap || !mShadowMap->IsValid() || !mShadowShader) return;
     CalculateLightSpaceMatrix();
+    // WICHTIG (Qt-Fix): aktuelles Host-FBO + Viewport merken. QOpenGLWidget
+    // rendert in ein eigenes FBO (!= 0); ein spaeteres BindFramebuffer(..., 0)
+    // wuerde die Szene unsichtbar in den Fenster-Backbuffer zeichnen.
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &mPrevDrawFBO);
+    glGetIntegerv(GL_VIEWPORT, mPrevViewport);
     mShadowMap->Bind();
     mShadowShader->Bind();
     mShadowShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
@@ -465,6 +470,9 @@ void Renderer::EndShadowPass() {
     glDisable(GL_CULL_FACE);
     mShadowMap->Unbind();
     if (mShadowShader) mShadowShader->Unbind();
+    // Host-FBO + Viewport wiederherstellen (Qt-Fix, siehe BeginShadowPass)
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(mPrevDrawFBO));
+    glViewport(mPrevViewport[0], mPrevViewport[1], mPrevViewport[2], mPrevViewport[3]);
 }
 
 void Renderer::DrawMeshDepth(const Mesh& mesh, const Mat4& transform) {
@@ -495,6 +503,9 @@ unsigned int Renderer::GetPointShadowCubemap(int index) const {
 
 void Renderer::RenderPointShadows(Scene& scene) {
     if (!mPointShadowsEnabled || !mPointShadowShader || mPointShadowMaps.empty()) return;
+    // Host-FBO merken (Qt-Fix): QOpenGLWidget-FBO ist != 0
+    int prevFBO = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
     Lighting& lighting = Lighting::Get();
     int shadowIdx = 0;
     for (size_t i = 0; i < lighting.GetPointLightCount() && shadowIdx < static_cast<int>(mPointShadowMaps.size()); ++i) {
@@ -545,9 +556,12 @@ void Renderer::RenderPointShadows(Scene& scene) {
             glDisable(GL_CULL_FACE);
             mPointShadowShader->Unbind();
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // Zurueck zum Host-FBO (Qt-Fix, NICHT hart 0)
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFBO));
         shadowIdx++;
     }
+    // Sicherheit: am Ende nochmals Host-FBO binden
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFBO));
 }
 
 void Renderer::BeginFrame(const Camera& camera) {

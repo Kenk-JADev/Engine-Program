@@ -5,6 +5,7 @@
 #include <vector>
 #include <array>
 #include <unordered_map>
+#include <functional>
 #include "Types.h"
 #include "Config.h"
 #include "Database.h"
@@ -46,6 +47,61 @@ private:
     static std::string Key(int mapId, int eventId, char ch);
 };
 
+// == Game System (Timer, Zugriffs-Flags, BGM-Merker) ==
+class GameSystem {
+public:
+    // Timer (Control Timer, 124)
+    void StartTimer(int seconds) { mTimerRemaining = (float)seconds; mTimerWorking = true; }
+    void StopTimer() { mTimerWorking = false; mTimerRemaining = 0.0f; }
+    bool IsTimerWorking() const { return mTimerWorking; }
+    int GetTimerSeconds() const { return (int)(mTimerRemaining + 0.999f); }
+    void Update(float dt) {
+        if (mTimerWorking && mTimerRemaining > 0.0f) {
+            mTimerRemaining -= dt;
+            if (mTimerRemaining <= 0.0f) { mTimerRemaining = 0.0f; mTimerWorking = false; }
+        }
+    }
+
+    // Zugriffs-Flags (134/135/136)
+    void SetSaveAccess(bool v) { mSaveAccess = v; }
+    bool HasSaveAccess() const { return mSaveAccess; }
+    void SetMenuAccess(bool v) { mMenuAccess = v; }
+    bool HasMenuAccess() const { return mMenuAccess; }
+    void SetEncounterEnabled(bool v) { mEncounterEnabled = v; }
+    bool IsEncounterEnabled() const { return mEncounterEnabled; }
+
+    // Windowskin / Battle BGM / ME (131/132/133/247/248)
+    void SetWindowskin(const std::string& n) { mWindowskin = n; }
+    const std::string& GetWindowskin() const { return mWindowskin; }
+    void SetBattleBgm(const std::string& n) { mBattleBgm = n; }
+    const std::string& GetBattleBgm() const { return mBattleBgm; }
+    void SetBattleEndMe(const std::string& n) { mBattleEndMe = n; }
+    const std::string& GetBattleEndMe() const { return mBattleEndMe; }
+    void MemorizeBgm(bool memorize) {
+        if (memorize) mMemorizedBgm = mBattleBgm;
+        else mBattleBgm = mMemorizedBgm;
+    }
+
+    void SetMenuCalling(bool v) { mMenuCalling = v; }
+    bool IsMenuCalling() const { return mMenuCalling; }
+    void Reset() {
+        mTimerWorking = false; mTimerRemaining = 0.0f;
+        mSaveAccess = mMenuAccess = mEncounterEnabled = true;
+    }
+
+private:
+    float mTimerRemaining = 0.0f;
+    bool mTimerWorking = false;
+    bool mSaveAccess = true;
+    bool mMenuAccess = true;
+    bool mEncounterEnabled = true;
+    bool mMenuCalling = false;
+    std::string mWindowskin;
+    std::string mBattleBgm;
+    std::string mBattleEndMe;
+    std::string mMemorizedBgm;
+};
+
 // == Game Actor (Instanz eines Datenbank-Aktors) ==
 struct GameActor {
     int actorId = 1;
@@ -56,6 +112,13 @@ struct GameActor {
     std::string name;
     int faceIndex = 0;
     std::vector<int> equips;
+    // XP-Erweiterungen (fuer Event-Befehle 31x/32x)
+    int classId = 1;
+    int weaponId = 0;
+    std::vector<int> armors;
+    std::vector<int> states;  // Status-Ids
+    std::vector<int> skills;  // Fertigkeits-Ids
+    std::string graphicName;
 
     void Setup(int id);
     void RecoverAll();
@@ -76,16 +139,24 @@ public:
     void GainItem(int itemId, int amount);
     int GetItemCount(int itemId) const;
 
+    // Waffen/Ruestungen (Event-Befehle 127/128)
+    void GainWeapon(int weaponId, int amount) { mWeapons[weaponId] += amount; if (mWeapons[weaponId] <= 0) mWeapons.erase(weaponId); }
+    int GetWeaponCount(int weaponId) const { auto it = mWeapons.find(weaponId); return it != mWeapons.end() ? it->second : 0; }
+    void GainArmor(int armorId, int amount) { mArmors[armorId] += amount; if (mArmors[armorId] <= 0) mArmors.erase(armorId); }
+    int GetArmorCount(int armorId) const { auto it = mArmors.find(armorId); return it != mArmors.end() ? it->second : 0; }
+
     std::vector<GameActor>& Members() { return mActors; }
     const std::vector<GameActor>& Members() const { return mActors; }
 
     GameActor* GetActor(int actorId);
-    void Clear() { mActors.clear(); mGold=0; mItems.clear(); }
+    void Clear() { mActors.clear(); mGold=0; mItems.clear(); mWeapons.clear(); mArmors.clear(); }
 
 private:
     std::vector<GameActor> mActors;
     int mGold = 500;
     std::unordered_map<int,int> mItems; // itemId -> count
+    std::unordered_map<int,int> mWeapons;
+    std::unordered_map<int,int> mArmors;
 };
 
 // == Game Player (3D) ==
@@ -112,6 +183,10 @@ public:
     void SetLocked(bool locked) { mLocked = locked; }
     bool IsLocked() const { return mLocked; }
 
+    /// Transparenz (Event-Befehl 208)
+    void SetTransparent(bool v) { mTransparent = v; }
+    bool IsTransparent() const { return mTransparent; }
+
 private:
     Vec3 mPosition{0,0,0};
     Vec3 mDirection{0,0,-1};
@@ -119,6 +194,7 @@ private:
     float mMoveSpeed = 4.5f;
     bool mIsMoving = false;
     bool mLocked = false;
+    bool mTransparent = false;
 };
 
 // == Forward for Map binding ==
@@ -173,6 +249,9 @@ private:
     bool mVisible = true;
 };
 
+/// Hilfsfunktion: Aktion auf einen Akteur (id>0) oder die ganze Party (id==0)
+void ApplyToActorOrParty(int actorId, const std::function<void(GameActor&)>& fn);
+
 // == Overall Game ==
 class Game {
 public:
@@ -192,6 +271,7 @@ public:
     GameParty& Party() { return mParty; }
     GamePlayer& Player() { return mPlayer; }
     GameMap& Map() { return mMap; }
+    GameSystem& System() { return mSystem; }
 
     bool IsGameStarted() const { return mGameStarted; }
     void SetGameStarted(bool v) { mGameStarted = v; }
@@ -204,6 +284,7 @@ private:
     GameParty mParty;
     GamePlayer mPlayer;
     GameMap mMap;
+    GameSystem mSystem;
     bool mGameStarted = false;
 };
 

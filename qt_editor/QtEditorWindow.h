@@ -1,11 +1,13 @@
 #pragma once
 // Qt-Editor-Hauptfenster: QMainWindow mit nativen Dock-Fenstern.
-// Der ImGui-Editor ist entfernt – Qt ist der einzige Editor-Host.
 //
-// Layout:
-//  - Zentral: QTabWidget mit "Game View" (3D) und "Code" (Ruby/C++)
-//  - Docks: Hierarchie, Eigenschaften, Konsole
-//  - Menues/Toolbars + QTimer-Game-Loop
+// Oberfläche (Engine-Design, dunkel):
+//  - Menüleiste + Schnellzugriffs-Toolbar + Ribbon mit Tabs
+//    (Datei / Werkzeuge / Ansicht / Fenster / Debug)
+//  - Zentral: QTabWidget mit Tabs UNTEN (Browser-Stil):
+//    "Spielansicht" (3D), "Landkarte" (2D), "Spiel" (Playtest), "Skript" (Code)
+//  - Docks: Hierarchie, Eigenschaften, Konsole, Map, Database, Events, Assets
+//  - Playtest startet die Player-exe mit dem Projektordner als Argument.
 
 #include <QMainWindow>
 #include <memory>
@@ -29,6 +31,7 @@ namespace qt_editor {
 
 class QtGameViewWidget;
 class QtCodeWorkspace;
+class QtMapTab;
 class QtMapEditorDock;
 class QtDatabaseEditorDock;
 class QtEventEditorDock;
@@ -45,7 +48,7 @@ protected:
 
 private slots:
     void onTick();               // Game-Loop (QTimer, ~60 Hz)
-    void onUiTick();             // UI-Sync (500 ms): Hierarchie/Properties/Menues
+    void onUiTick();             // UI-Sync (500 ms): Hierarchie/Properties/Menüs
     void onPlaytestToggled(bool on);
     void onAboutToQuit();        // sauberes Engine-Shutdown mit GL-Kontext
     void onCentralTabChanged(int index);
@@ -56,6 +59,9 @@ private slots:
     void actionSaveProject();
     void actionSaveSceneAs();
     void actionLoadSceneFrom();
+
+    // Playtest
+    void actionPlaytestPlayer();     // externe Player-exe (F5)
 
     // Erstellen / Bearbeiten
     void actionCreateCube();
@@ -68,8 +74,15 @@ private slots:
 private:
     void buildMenus();
     void buildDocks();
-    void buildToolbar();
+    void buildRibbon();
     void buildCentral();
+    QWidget* buildQuickAccessBar();
+    QWidget* buildPlayTab();
+    void addRibbonPage(const QString& title);
+    QWidget* ribbonPage(const QString& title);
+    void ribbonButton(QWidget* page, const QString& text, const QString& tip,
+                      std::function<void()> fn, bool checkable = false, bool checked = false);
+    QString findPlayerExecutable() const;
     QWidget* buildPropertiesWidget();
     void log(const QString& msg);
 
@@ -90,7 +103,11 @@ private:
     std::unique_ptr<rpg::Engine> mEngine;
     QTabWidget* mCentralTabs = nullptr;
     QtGameViewWidget* mView = nullptr;
+    QtMapTab* mMapTab = nullptr;
+    QWidget* mPlayTab = nullptr;
     QtCodeWorkspace* mCode = nullptr;
+    QTabWidget* mRibbonTabs = nullptr;
+
     QtMapEditorDock* mMapDockWidget = nullptr;
     QtDatabaseEditorDock* mDbDockWidget = nullptr;
     QtEventEditorDock* mEventDockWidget = nullptr;
@@ -115,13 +132,15 @@ private:
     QDoubleSpinBox* mScale[3] = {nullptr, nullptr, nullptr};
 
     QLabel* mStatusInfo = nullptr;
+    QLabel* mPlayTabStatus = nullptr;
 
-    // Menue-Aktionen
+    // Menü-Aktionen
     QAction* mUndoAction = nullptr;
     QAction* mRedoAction = nullptr;
     QAction* mDeleteAction = nullptr;
     QAction* mSaveAction = nullptr;
-    QAction* mPlayAction = nullptr;
+    QAction* mPlayAction = nullptr;       // eingebetteter Playtest (Shift+F5)
+    QAction* mPlayPlayerAction = nullptr; // externe Player-exe (F5)
     QAction* mShowGameViewAction = nullptr;
     QAction* mShowCodeAction = nullptr;
 

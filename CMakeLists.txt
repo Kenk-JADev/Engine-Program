@@ -173,10 +173,29 @@ if(RPGMAKER3D_EDITOR_QT)
             qt_editor/QtGameViewWidget.cpp
             qt_editor/QtCodeWorkspace.cpp
             qt_editor/QtSyntaxHighlighter.cpp
+            qt_editor/QtMapTab.cpp
             qt_editor/QtMapEditorDock.cpp
             qt_editor/QtDatabaseEditorDock.cpp
             qt_editor/QtEventEditorDock.cpp
+            qt_editor/QtEventCommandCatalog.cpp
+            qt_editor/QtEventCommandsDialog.cpp
+            qt_editor/QtEventCommandEditDialog.cpp
+            qt_editor/QtEventEditorDialog.cpp
             qt_editor/QtAssetBrowserDock.cpp
+            # Q_OBJECT-Header explizit auflisten, damit AUTOMOC sie findet
+            qt_editor/QtEditorWindow.h
+            qt_editor/QtGameViewWidget.h
+            qt_editor/QtCodeWorkspace.h
+            qt_editor/QtSyntaxHighlighter.h
+            qt_editor/QtMapTab.h
+            qt_editor/QtMapEditorDock.h
+            qt_editor/QtDatabaseEditorDock.h
+            qt_editor/QtEventEditorDock.h
+            qt_editor/QtEventCommandCatalog.h
+            qt_editor/QtEventCommandsDialog.h
+            qt_editor/QtEventCommandEditDialog.h
+            qt_editor/QtEventEditorDialog.h
+            qt_editor/QtAssetBrowserDock.h
         )
     else()
         message(WARNING
