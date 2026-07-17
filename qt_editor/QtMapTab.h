@@ -12,6 +12,7 @@ class QSpinBox;
 class QLabel;
 class QToolButton;
 class QButtonGroup;
+class QGridLayout;
 
 namespace rpg { class Engine; }
 
@@ -42,6 +43,8 @@ signals:
     void tilesChanged();
     /// Ereignisse wurden erstellt/geändert/gelöscht (Events-Dock neu laden)
     void eventsChanged();
+    /// In der XP-Palette des Tabs wurde ein Tile gewählt (Dock synchronisieren)
+    void paintTilePicked(int tileId);
 
 private:
     void onModeButton(int id);              // 0..2 = Ebene, 3 = EV-Modus
@@ -50,6 +53,7 @@ private:
     void ensureLayers(int n);               // Karte auf mind. n Ebenen bringen
     int currentMapId() const;
     void saveMapEvents();
+    void rebuildPalette();                  // XP-Tileset-Palette links neu aufbauen
 
     rpg::Engine* mEngine = nullptr;
     QtMapTabCanvas* mCanvas = nullptr;
@@ -60,6 +64,13 @@ private:
     QLabel* mPosLabel = nullptr;
     int mTileId = 0;
     std::function<int()> mMapIdFn;
+
+    // XP-Palette (links vom Canvas)
+    QWidget* mPaletteHost = nullptr;
+    QGridLayout* mPaletteGrid = nullptr;
+    QLabel* mPaletteSel = nullptr;
+    void* mLastTileset = nullptr;           // Cache: Palette nur bei Wechsel neu
+    void updatePaletteSelection();
 };
 
 } // namespace qt_editor

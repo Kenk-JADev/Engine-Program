@@ -96,7 +96,17 @@ automatisch auf 3 Ebenen), **EV** schaltet in den **Ereignis-Modus**: Events
 werden als Kästchen eingezeichnet, **Doppelklick** auf ein leeres Feld legt ein
 neues Event an und öffnet den XP-Event-Dialog, Doppelklick auf ein Event
 bearbeitet es, **Entf** löscht das gewählte Event. Das Events-Dock wird dabei
-live synchronisiert.
+live synchronisiert. Links sitzt die **XP-Tileset-Palette** mit echten
+Tile-Bildern (erster Eintrag: Radierer) — sie ist mit dem Map-Dock und dem
+3D-Pinsel in beide Richtungen synchronisiert.
+
+## Karteneigenschaften
+
+Ribbon **Werkzeuge → Karteneigenschaften** (oder **Doppelklick** auf eine Karte
+in der Map-Liste) öffnet den XP-Dialog: Name, **Tileset**, **Größe** (Resize
+erhält den Inhalt links-oben, wie XP), Scroll-Typ, Encounter (Schritte +
+Trupp-Liste), **BGM/BGS mit ▶-Anhören** und „Rennen verboten". OK speichert
+Karte + Datenbank und aktualisiert 2D/3D sofort.
 
 ## Skript-Editor
 

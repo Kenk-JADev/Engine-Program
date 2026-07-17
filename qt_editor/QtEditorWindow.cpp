@@ -6,6 +6,7 @@
 #include "QtDatabaseEditorDock.h"
 #include "QtDatabaseDialog.h"
 #include "QtSoundTestDialog.h"
+#include "QtMapPropertiesDialog.h"
 #include "QtEventEditorDock.h"
 #include "QtAssetBrowserDock.h"
 
@@ -466,6 +467,10 @@ void QtEditorWindow::buildDocks() {
             if (mEventDockWidget) mEventDockWidget->refresh();
         });
         connect(mMapTab, &QtMapTab::logMessage, this, [this](const QString& m) { log(m); });
+        // Tile-Wahl in der Landkarten-Palette -> Map-Dock/3D-Pinsel mitziehen
+        connect(mMapTab, &QtMapTab::paintTilePicked, this, [this](int tid) {
+            if (mMapDockWidget) mMapDockWidget->setSelectedTile(tid);
+        });
     }
     connect(mView, &QtGameViewWidget::tilePainted, this, [this](int x, int z, int tile) {
         static int n = 0;
@@ -600,6 +605,16 @@ void QtEditorWindow::buildRibbon() {
                      [this]() {
                          if (!mView || !mView->IsEngineReady()) return;
                          QtSoundTestDialog::ShowSoundTest(this, mEngine.get());
+                     });
+        ribbonButton(p, QStringLiteral("Karten-\neigenschaften"), QStringLiteral("Karteneigenschaften öffnen (Name, Tileset, Größe, BGM ...)"),
+                     [this]() {
+                         if (!mView || !mView->IsEngineReady() || !mMapDockWidget) return;
+                         const int idx = mMapDockWidget->selectedMapIndex();
+                         if (QtMapPropertiesDialog::EditMapProperties(this, mEngine.get(), idx)) {
+                             mMapDockWidget->refresh();
+                             if (mMapTab) mMapTab->refresh();
+                             log(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
+                         }
                      });
         ribbonButton(p, QStringLiteral("Würfel"), QStringLiteral("Würfel erstellen"),
                      [this]() { actionCreateCube(); });

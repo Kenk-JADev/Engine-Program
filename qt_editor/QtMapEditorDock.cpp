@@ -1,5 +1,7 @@
 #include "QtMapEditorDock.h"
 
+#include "QtMapPropertiesDialog.h"
+
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Tileset.h"
@@ -74,6 +76,15 @@ void QtMapEditorDock::buildUi() {
     mMapList = new QListWidget(split);
     mMapList->setMaximumHeight(140);
     connect(mMapList, &QListWidget::currentRowChanged, this, [this](int) { onMapSelected(); });
+    // XP: Doppelklick auf einen Karteneintrag öffnet die Karteneigenschaften
+    connect(mMapList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
+        if (QtMapPropertiesDialog::EditMapProperties(this, mEngine, mSelectedMapIndex)) {
+            rebuildMapList();
+            rebuildTilePalette(); // Tileset könnte gewechselt worden sein
+            emit mapLoaded();     // Landkarte + 3D aktualisieren
+            emit logMessage(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
+        }
+    });
 
     // Props
     auto* props = new QGroupBox("Karten-Eigenschaften", split);
@@ -434,6 +445,19 @@ void QtMapEditorDock::onTileClicked(int tileId) {
     mSelectedTile = tileId;
     mTileInfo->setText(QString("Tile: %1").arg(tileId));
     mEraserBtn->setStyleSheet("");
+    emit paintStateChanged();
+}
+
+void QtMapEditorDock::setSelectedTile(int tileId) {
+    if (mSelectedTile == tileId) return;
+    mSelectedTile = tileId;
+    if (mTileInfo)
+        mTileInfo->setText(tileId < 0 ? QStringLiteral("Tile: Radierer")
+                                      : QString("Tile: %1").arg(tileId));
+    if (mEraserBtn)
+        mEraserBtn->setStyleSheet(tileId < 0 ? QStringLiteral("border: 2px solid #e0a020;")
+                                             : QString());
+    rebuildTilePalette(); // Auswahlrahmen aktualisieren
     emit paintStateChanged();
 }
 

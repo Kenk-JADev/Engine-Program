@@ -15,13 +15,24 @@ Map::Map() {
 Map::~Map() = default;
 
 void Map::Resize(int width, int height) {
-    mWidth = width;
-    mHeight = height;
+    // Inhalt erhalten (links-oben verankert, wie RPG Maker XP):
+    // groessere Karte = leere Felder rechts/unten, kleinere = abgeschnitten.
     for (auto& layer : mLayers) {
+        std::vector<int> old = std::move(layer.tiles);
+        const int oldW = layer.width;
+        const int oldH = layer.height;
         layer.width = width;
         layer.height = height;
-        layer.tiles.assign(width * height, -1);
+        layer.tiles.assign((size_t)width * height, -1);
+        if ((int)old.size() != oldW * oldH) continue; // Sicherheitsnetz
+        const int cw = std::min(oldW, width);
+        const int ch = std::min(oldH, height);
+        for (int z = 0; z < ch; ++z)
+            for (int x = 0; x < cw; ++x)
+                layer.tiles[z * width + x] = old[z * oldW + x];
     }
+    mWidth = width;
+    mHeight = height;
     mDirty = true;
 }
 

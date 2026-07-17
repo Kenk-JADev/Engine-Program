@@ -41,6 +41,8 @@ signals:
 
 public slots:
     void setPaintEnabled(bool on);
+    /// Tile-Auswahl von außen setzen (z.B. XP-Palette im Landkarte-Tab)
+    void setSelectedTile(int tileId);
 
 private slots:
     void onMapSelected();
