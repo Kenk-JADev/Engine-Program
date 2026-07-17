@@ -1,0 +1,14 @@
+; ============================================================
+; KEINE qt.conf mit dpiawareness noetig / empfohlen.
+;
+; FALSCH (erzeugt Fehler):
+;   WindowsArguments = dpiawareness=-1
+;   -> "QtWindows::DpiAwareness::Invalid is not supported"
+;
+; FALSCH (Doppel-Set mit unserem Code):
+;   WindowsArguments = dpiawareness=2
+;   -> "SetProcessDpiAwarenessContext() failed: Zugriff verweigert"
+;
+; RICHTIG: Diese Datei NICHT als qt.conf neben die EXE legen.
+; DPI setzt QtMain via Platform::SetDPIAware() vor QApplication.
+; ============================================================

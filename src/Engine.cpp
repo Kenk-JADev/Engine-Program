@@ -7,7 +7,6 @@
 #include "rpgmaker3d/Project.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/ResourceManager.h"
-#include "rpgmaker3d/Editor.h"
 #include "rpgmaker3d/Camera.h"
 #ifdef RPGMAKER3D_ENABLE_RMLUI
 #include "rpgmaker3d/RmlUiSystem.h"
@@ -28,12 +27,6 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/UI.h"
-
-#ifdef RPGMAKER3D_BUILD_EDITOR
-#include <imgui.h>
-#include <imgui_impl_sdl2.h>
-#include <imgui_impl_opengl3.h>
-#endif
 
 #include <SDL.h>
 
@@ -68,7 +61,11 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     RPG_LOG_INFO(std::string(EngineConfig::NAME) + " v" + EngineConfig::VERSION + " - Init started [" + RPG_PLATFORM_NAME + "]");
 
     // Plattform
+    // Im Qt-Host setzt Qt die DPI-Awareness (PerMonitorV2). Ein zweiter
+    // SetProcessDpiAwarenessContext-Aufruf schlaegt mit "Zugriff verweigert" fehl.
+#ifndef RPGMAKER3D_EDITOR_QT
     Platform::SetDPIAware();
+#endif
     RPG_LOG_INFO("Working Dir: " + Platform::GetWorkingDirectory());
     RPG_LOG_INFO("Exe Path: " + Platform::GetExecutablePath());
 #ifdef _WIN32
@@ -100,8 +97,7 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     }
 
 #ifdef RPGMAKER3D_ENABLE_RMLUI
-    // RmlUi UI-System (PoC: laeuft parallel zu ImGui, F9 toggelt Sichtbarkeit,
-    // getrennte Kontexte "editor" und "game" fuer Editor- bzw. Playtest-UI)
+    // RmlUi UI-System (F9 toggelt Sichtbarkeit; Kontexte "editor" / "game")
     mRmlUi = std::make_unique<RmlUiSystem>();
     if (!mRmlUi->Initialize(this)) {
         RPG_LOG_WARN("RmlUi initialization failed - continuing without RmlUi");
@@ -113,10 +109,27 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     mInput = std::make_unique<Input>();
     mCommandHistory = std::make_unique<CommandHistory>();
     mRubyVM = std::make_unique<RubyVM>();
-    mRubyVM->Initialize(this);
+    try {
+        if (!mRubyVM->Initialize(this)) {
+            // Ruby ist optional: VM-Objekt bleibt erhalten (mMrb == nullptr),
+            // ExecuteString/ExecuteFile/Update liefern dann sauber false.
+            RPG_LOG_WARN("RubyVM-Initialisierung fehlgeschlagen - Engine laeuft ohne Ruby-Scripting");
+        }
+    } catch (const std::exception& e) {
+        RPG_LOG_WARN(std::string("RubyVM-Initialisierung warf Exception - Engine laeuft ohne Ruby: ") + e.what());
+    }
 
     mScriptManager = std::make_unique<ScriptManager>();
     mScriptManager->SetRubyVM(mRubyVM.get());
+
+    // Event-Befehl Script -> RubyVM (Script-Editor Codes)
+    EventSystem_SetScriptRunner([this](const std::string& code) {
+        if (mRubyVM) {
+            if (!mRubyVM->ExecuteString(code, "<event-script>")) {
+                RPG_LOG_ERROR(std::string("[Event Script] ") + mRubyVM->GetLastError());
+            }
+        }
+    });
 
     mAudio = std::make_unique<AudioManager>();
     if (!mAudio->Initialize()) {
@@ -128,42 +141,8 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     mMap = std::make_unique<Map>();
     mResources = std::make_unique<ResourceManager>();
 
-#if defined(RPGMAKER3D_BUILD_EDITOR) && !defined(RPGMAKER3D_EDITOR_QT)
-    // ImGui früh initialisieren – auch für Player UI (GameUI nutzt ImGui)
-    // Muss nach Window/GL Context, vor allen UI-Systemen passieren
-    // (Im Qt-Editor ausgelassen: kein SDL-Fenster, Qt nutzt eigene Widgets)
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // Viewports temporär deaktiviert gegen Flickering – kann im Editor wieder aktiviert werden
-    // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
-    io.ConfigViewportsNoAutoMerge = true;
-    io.ConfigViewportsNoTaskBarIcon = true;
-    io.ConfigDockingAlwaysTabBar = true;
-    // Reduziert Flickern beim Resize
-    io.ConfigWindowsResizeFromEdges = true;
-    io.ConfigWindowsMoveFromTitleBarOnly = true;
-
-    ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 4.0f;
-    style.FrameRounding = 3.0f;
-    style.GrabRounding = 3.0f;
-    style.AntiAliasedLines = true;
-    style.AntiAliasedFill = true;
-    // Flicker-Reduktion
-    style.WindowBorderSize = 1.0f;
-    style.FrameBorderSize = 0.0f;
-
-    ImGui_ImplSDL2_InitForOpenGL(mWindow->GetNativeWindow(), mWindow->GetGLContext());
-    ImGui_ImplOpenGL3_Init("#version 330");
-    mImGuiInitialized = true;
-    RPG_LOG_INFO("ImGui initialized");
-#elif defined(RPGMAKER3D_EDITOR_QT)
-    RPG_LOG_INFO("Qt editor host: ImGui init skipped (native Qt windows)");
-#endif
+// ImGui-Editor entfernt. UI-Host ist Qt (RPGMAKER3D_EDITOR_QT) bzw. RmlUi im Player.
+    RPG_LOG_INFO("ImGui editor disabled - Qt/RmlUi host only");
 
     // Datenbank laden / Defaults
     try {
@@ -174,24 +153,36 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     }
 
     // Projekt anlegen / laden
-    if (std::filesystem::exists("./SampleProject/project.json")) {
-        mProject->Load("./SampleProject");
-        RPG_LOG_INFO("Loaded SampleProject");
-        // Try to load real database from project
-        if (Database::Get().Load(mProject->GetProjectPath())) {
-            RPG_LOG_INFO("Database loaded from project: " + mProject->GetProjectPath());
+    try {
+        if (std::filesystem::exists("./SampleProject/project.json")) {
+            mProject->Load("./SampleProject");
+            RPG_LOG_INFO("Loaded SampleProject");
+            // Try to load real database from project
+            try {
+                if (Database::Get().Load(mProject->GetProjectPath())) {
+                    RPG_LOG_INFO("Database loaded from project: " + mProject->GetProjectPath());
+                }
+            } catch (const std::exception& e) {
+                RPG_LOG_ERROR(std::string("Database::Load fehlgeschlagen (Defaults bleiben aktiv): ") + e.what());
+            }
+        } else {
+            mProject->New("./SampleProject", "Sample RPG 3D");
+            RPG_LOG_INFO("Created new SampleProject");
         }
-    } else {
-        mProject->New("./SampleProject", "Sample RPG 3D");
-        RPG_LOG_INFO("Created new SampleProject");
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Projekt laden/erzeugen fehlgeschlagen: ") + e.what());
     }
 
     // Load/Create scripts
     if (mScriptManager) {
-        mScriptManager->LoadProjectScripts(mProject->GetProjectPath());
-        // If no scripts exist, create defaults
-        if (mScriptManager->GetScripts().empty()) {
-            mScriptManager->CreateDefaultScripts(mProject->GetProjectPath());
+        try {
+            mScriptManager->LoadProjectScripts(mProject->GetProjectPath());
+            // If no scripts exist, create defaults
+            if (mScriptManager->GetScripts().empty()) {
+                mScriptManager->CreateDefaultScripts(mProject->GetProjectPath());
+            }
+        } catch (const std::exception& e) {
+            RPG_LOG_ERROR(std::string("Script-Laden fehlgeschlagen: ") + e.what());
         }
     }
 
@@ -218,6 +209,23 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         tileset->Load("assets/textures/tileset_demo.png", 32, 32); // wird checker fallback
     }
     mMap->SetTileset(tileset);
+    // Passability-Flags aus Database auf Tileset anwenden
+    try {
+        if (!Database::Get().Tilesets().empty()) {
+            const auto& flags = Database::Get().Tilesets()[0].flags;
+            for (size_t i = 0; i < flags.size(); ++i) {
+                if (flags[i]) {
+                    rpg::TileInfo ti;
+                    if (const auto* old = tileset->GetTileInfo((int)i)) ti = *old;
+                    ti.id = (int)i;
+                    ti.solid = true;
+                    tileset->SetTileInfo((int)i, ti);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Tileset-Passability anwenden fehlgeschlagen: ") + e.what());
+    }
 
     // Bind GameMap for collision checks
     Game::Get().Map().BindMap(mMap.get());
@@ -235,19 +243,13 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     // damit Editor und Player identisch sind.
     EventSystem::Get().Clear();
 
-    // Editor
+    // Editor-Host: Qt (extern) – kein ImGui-Editor mehr.
     if (editorMode) {
-#if defined(RPGMAKER3D_BUILD_EDITOR) && !defined(RPGMAKER3D_EDITOR_QT)
-        mEditor = std::make_unique<Editor>(*this);
-        if (!mEditor->Initialize(*mWindow)) {
-            RPG_LOG_ERROR("Failed to initialize editor");
-            return false;
-        }
-        RPG_LOG_INFO("Editor initialized");
-#elif defined(RPGMAKER3D_EDITOR_QT)
-        RPG_LOG_INFO("Qt editor host active - ImGui Editor disabled");
+#ifdef RPGMAKER3D_EDITOR_QT
+        RPG_LOG_INFO("Qt editor host active (ImGui Editor removed)");
 #else
-        RPG_LOG_WARN("Editor mode requested but not compiled in");
+        RPG_LOG_INFO("Editor mode without Qt host – RmlUi panels (F9) + F5 Playtest. "
+                     "Fuer vollen Qt-Editor: Qt6 + -DRPGMAKER3D_EDITOR_QT=ON -DCMAKE_PREFIX_PATH=<Qt>");
 #endif
     }
 
@@ -281,6 +283,7 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     };
 
     mRunning = true;
+    mInitialized = true;
     RPG_LOG_INFO("Engine initialized successfully");
     return true;
 }
@@ -357,19 +360,8 @@ void Engine::SetPlaying(bool playing) {
 
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mEditor) {
-        mEditor->Shutdown();
-        mEditor.reset();
-    }
-    // ImGui shutdown (Engine owns ImGui context now)
-    if (mImGuiInitialized) {
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplSDL2_Shutdown();
-        ImGui::DestroyContext();
-        mImGuiInitialized = false;
-    }
-#endif
+    mInitialized = false;
+// ImGui/Editor shutdown removed
     mGridMesh.Delete();
 #ifdef RPGMAKER3D_ENABLE_RMLUI
     if (mRmlUi) { mRmlUi->Shutdown(); mRmlUi.reset(); }
@@ -494,9 +486,6 @@ void Engine::Update(float dt) {
 #else
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-#ifdef RPGMAKER3D_BUILD_EDITOR
-        if (mImGuiInitialized) ImGui_ImplSDL2_ProcessEvent(&e);
-#endif
 #ifdef RPGMAKER3D_ENABLE_RMLUI
         if (mRmlUi) mRmlUi->ProcessEvent(e);
 #endif
@@ -540,36 +529,14 @@ void Engine::Update(float dt) {
         else GameUI::Get().Pause().Show();
     }
 
-    // Kamera Navigation (Editor oder Play)
-    bool allowCamera = true;
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mImGuiInitialized) {
-        ImGuiIO& io = ImGui::GetIO();
-        // WICHTIG: Prüfen ob Maus ÜBER dem Scene View Image ist (nicht nur Window-Focus)
-        // io.WantCaptureMouse wird true sobald man über ANY ImGui Widget hovert
-        // Wir wollen Kamera erlauben wenn: Scene View gefocust UND Maus über Scene View Image
-        bool sceneViewHovered = false;
-        bool sceneViewFocused = false;
-        if (mEditor) {
-            sceneViewHovered = mEditor->IsSceneViewHovered();
-            sceneViewFocused = mEditor->IsSceneViewFocused();
-        }
-        
-        // Kamera erlauben wenn Scene View fokussiert UND (Maus über Scene View ODER Tastatur-Input nicht von ImGui gewollt)
-        if (io.WantCaptureMouse) {
-            // Maus wird von ImGui Widget gecaptured - aber erlauben wenn über Scene View Image
-            allowCamera = sceneViewHovered && sceneViewFocused;
-        } else if (io.WantCaptureKeyboard) {
-            // Tastatur wird von ImGui gecaptured (z.B. InputText) - blockieren
-            allowCamera = false;
-        } else {
-            // Kein ImGui Capture - erlauben wenn Scene View fokussiert
-            allowCamera = sceneViewFocused;
-        }
+    // F5: Playtest-Toggle im Editor-Modus (SDL-Host ohne Qt / RmlUi-Panel)
+    if (mEditorMode && mInput->IsKeyPressed(Key::F5)) {
+        SetPlaying(!mPlayMode);
     }
-    // Editor WantCaptureInput ist jetzt redundant mit der obigen Logik
-    // if (mEditor && mEditor->WantCaptureInput()) allowCamera = false;
-#endif
+
+    // Kamera Navigation (Editor oder Play)
+    // Qt-Editor: Input kommt nur vom Game-View-Widget (StrongFocus) -> immer erlaubt.
+    bool allowCamera = true;
 
     // Im PlayMode: Kamera folgt optional dem GamePlayer
     // (kann im Editor umgeschaltet werden) - NUR wenn Follow Player AKTIV
@@ -663,10 +630,26 @@ void Engine::Update(float dt) {
         }
 
         Game::Get().Update(dt);
-        if (!GameUI::Get().Pause().IsVisible()) {
+        if (!GameUI::Get().Pause().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);
         }
-        // EventSystem also updated inside Game::Update; keep battle/ruby
+        // Battle commands: 1/A Attack, 2/S Skill, 3/I Item, 4 Escape
+        if (BattleSystem::Get().NeedsInput()) {
+            BattleAction act;
+            act.subjectIndex = 0;
+            act.targetIndex = 0;
+            bool set = false;
+            if (mInput->IsKeyPressed(Key::Num1) || mInput->IsKeyPressed(Key::A)) {
+                act.type = BattleActionType::Attack; set = true;
+            } else if (mInput->IsKeyPressed(Key::Num2) || mInput->IsKeyPressed(Key::S)) {
+                act.type = BattleActionType::Skill; act.skillId = 1; set = true;
+            } else if (mInput->IsKeyPressed(Key::Num3) || mInput->IsKeyPressed(Key::I)) {
+                act.type = BattleActionType::Item; act.itemId = 1; set = true;
+            } else if (mInput->IsKeyPressed(Key::Num4)) {
+                act.type = BattleActionType::Escape; set = true;
+            }
+            if (set) BattleSystem::Get().SetAction(act);
+        }
         BattleSystem::Get().Update(dt);
         if (mRubyVM) mRubyVM->Update(dt);
     }
@@ -700,88 +683,33 @@ void Engine::Update(float dt) {
 }
 
 void Engine::Render() {
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    // ImGui New Frame – zentral in Engine
-    if (mImGuiInitialized) {
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplSDL2_NewFrame();
-        ImGui::NewFrame();
-    }
-
-    // Editor UI zeichnen (nur Docking etc., kein BeginFrame mehr)
-    if (mEditor) {
-        mEditor->DrawUI();
-    }
-#endif
-
-    // Scene in Framebuffer rendern wenn Editor aktiv
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mEditorMode && mSceneFramebuffer && mEditor) {
-        Vec2 viewSize = mEditor->GetSceneViewSize();
-        if (viewSize.x > 1 && viewSize.y > 1) {
-            // Nur resize wenn Größe sich signifikant geändert hat (verhindert Flickering)
-            static Vec2 lastViewSize(0, 0);
-            if (fabsf(viewSize.x - lastViewSize.x) > 2.0f || fabsf(viewSize.y - lastViewSize.y) > 2.0f) {
-                mSceneFramebuffer->Resize(static_cast<int>(viewSize.x), static_cast<int>(viewSize.y));
-                lastViewSize = viewSize;
-            }
-            mSceneFramebuffer->Bind();
-            Camera& cam = mRenderer->GetCamera();
-            cam.SetPerspective(60.0f, viewSize.x / viewSize.y, 0.1f, 1000.0f);
-            RenderScene();
-            mSceneFramebuffer->Unbind();
-            // Viewport restore – critical for ImGui flicker fix
-            if (mWindow) {
-                glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
-            }
-        }
-    } else {
-        // Player Modus: direkt rendern
-        if (mWindow) {
-            Camera& cam = mRenderer->GetCamera();
-            cam.SetPerspective(60.0f, (float)mWindow->GetWidth() / (float)mWindow->GetHeight(), 0.1f, 1000.0f);
-        }
-        RenderScene();
-    }
-#else
+    // Direkt in den aktuellen GL-Framebuffer rendern
+    // (Qt: QOpenGLWidget FBO; Player: Default-Framebuffer)
     if (mWindow) {
         Camera& cam = mRenderer->GetCamera();
-        cam.SetPerspective(60.0f, (float)mWindow->GetWidth() / (float)mWindow->GetHeight(), 0.1f, 1000.0f);
+        const int w = mWindow->GetWidth();
+        const int h = mWindow->GetHeight();
+        if (w > 0 && h > 0) {
+            cam.SetPerspective(60.0f, (float)w / (float)h, 0.1f, 1000.0f);
+            glViewport(0, 0, w, h);
+        }
     }
     RenderScene();
-#endif
 
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    // Game UI immer innerhalb ImGui Frame zeichnen
-    if (mImGuiInitialized) {
-        // Im Editor nur im PlayMode, im Player immer
-        if (!mEditor || mPlayMode) {
-            GameUI::Get().Draw();
-            if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
-        }
-        
-        // ImGui Render
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        // Viewport-Handling für Multi-Viewport – aktuell deaktiviert gegen Flickern
-        ImGuiIO& io = ImGui::GetIO();
-        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
-            SDL_Window* backupCurrentWindow = SDL_GL_GetCurrentWindow();
-            SDL_GLContext backupCurrentContext = SDL_GL_GetCurrentContext();
-            ImGui::UpdatePlatformWindows();
-            ImGui::RenderPlatformWindowsDefault();
-            SDL_GL_MakeCurrent(backupCurrentWindow, backupCurrentContext);
-            // Viewport restore nach Platform Windows
-            if (mWindow) {
-                glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
-            }
-        }
+    // GameUI-Draw ist ohne ImGui No-Op; Logik (Messages) laeuft weiter via Input.
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    if (mPlayMode || !mEditorMode) {
+        GameUI::Get().Draw();
+        if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
+    }
+#else
+    if (mPlayMode) {
+        // Fortschritt nur ueber Engine-Input (AdvanceInput bereits in Update)
+        (void)0;
     }
 #endif
 
 #ifdef RPGMAKER3D_ENABLE_RMLUI
-    // RmlUi UI zuletzt zeichnen (overlayt 3D-Scene + ImGui)
     if (mRmlUi) mRmlUi->Render();
 #endif
 }
@@ -845,22 +773,20 @@ void Engine::RenderScene() {
             }
         }
         mRenderer->EndShadowPass();
-        // Viewport / FBO restore – CRITICAL FIX für Editor Scene
-        if (mEditorMode && mSceneFramebuffer) {
-            mSceneFramebuffer->Bind();
-            glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
-        } else if (mWindow) {
+        // Haupt-Scene auf den sichtbaren Framebuffer (Screen/Widget) rendern.
+        // Der Offscreen-mSceneFramebuffer war nur fuer den entfernten ImGui-
+        // Scene-View gedacht; ihn hier zu nutzen liess den Game View im Editor
+        // leer erscheinen (Scene landete im Offscreen-Buffer, nie am Bildschirm).
+        if (mWindow) {
             glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
         }
 
         // === POINT LIGHT CUBEMAP SHADOWS (falls aktiviert) ===
         if (mRenderer->IsPointShadowsEnabled()) {
             mRenderer->RenderPointShadows(*mScene);
-            // Nach Cubemap Shadow Pass wieder Scene FBO binden
-            if (mEditorMode && mSceneFramebuffer) {
-                mSceneFramebuffer->Bind();
-                glViewport(0, 0, mSceneFramebuffer->GetWidth(), mSceneFramebuffer->GetHeight());
-            } else if (mWindow) {
+            // Nach Cubemap Shadow Pass wieder auf den sichtbaren Framebuffer
+            // (Screen/Widget) rendern, nicht in den Offscreen-mSceneFramebuffer.
+            if (mWindow) {
                 glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
             }
         }
@@ -942,20 +868,38 @@ void Engine::RenderScene() {
         }
     }
 
-    // Auswahl-BoundingBox im Editor
-    // Selektionsquelle: ImGui-Editor, sonst Engine-API (Qt-Editor/externer Host)
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    if (mEditorMode && !mPlayMode) {
-        const int selected = mEditor ? mEditor->GetSelectedEntity() : mSelectedEntity;
-        if (selected >= 0) {
-            auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(selected));
-            if (transform) {
-                Mat4 matrix = transform->transform.GetMatrix();
-                mRenderer->DrawBoundingBox(Vec3(-0.5f), Vec3(0.5f), matrix, Color(1.0f, 0.8f, 0.0f, 1.0f));
-            }
+    // Auswahl-BoundingBox + einfache Translate-Gizmo-Achsen (Editor)
+    if (mEditorMode && !mPlayMode && mSelectedEntity >= 0) {
+        auto* transform = mScene->GetComponent<TransformComponent>(static_cast<EntityID>(mSelectedEntity));
+        if (transform) {
+            Mat4 matrix = transform->transform.GetMatrix();
+            mRenderer->DrawBoundingBox(Vec3(-0.5f), Vec3(0.5f), matrix, Color(1.0f, 0.8f, 0.0f, 1.0f));
+            // Achsen-Gizmo (kleine Wuerfel an den Enden der Achsen)
+            const Vec3 o = transform->transform.position;
+            auto drawAxis = [&](const Vec3& end, const Color& col) {
+                Mesh tip = MeshFactory::CreateCube(0.12f);
+                Mat4 m = glm::translate(Mat4(1.0f), end);
+                mRenderer->DrawMesh(tip, m, nullptr, col);
+                // Linie als gestreckter duenner Wuerfel
+                Vec3 mid = (o + end) * 0.5f;
+                Vec3 d = end - o;
+                float len = glm::length(d);
+                if (len < 1e-4f) return;
+                Mat4 line = glm::translate(Mat4(1.0f), mid);
+                // rough scale along largest component
+                Vec3 sc(0.04f, 0.04f, 0.04f);
+                if (std::fabs(d.x) > std::fabs(d.y) && std::fabs(d.x) > std::fabs(d.z)) sc = Vec3(len, 0.04f, 0.04f);
+                else if (std::fabs(d.y) > std::fabs(d.z)) sc = Vec3(0.04f, len, 0.04f);
+                else sc = Vec3(0.04f, 0.04f, len);
+                line = glm::scale(line, sc);
+                Mesh bar = MeshFactory::CreateCube(1.0f);
+                mRenderer->DrawMesh(bar, line, nullptr, col);
+            };
+            drawAxis(o + Vec3(1.5f, 0, 0), Color(1.0f, 0.2f, 0.2f, 1.0f)); // X
+            drawAxis(o + Vec3(0, 1.5f, 0), Color(0.2f, 1.0f, 0.3f, 1.0f)); // Y
+            drawAxis(o + Vec3(0, 0, 1.5f), Color(0.25f, 0.45f, 1.0f, 1.0f)); // Z
         }
     }
-#endif
 
     // Player + Event markers in PlayMode
     if (mPlayMode) {

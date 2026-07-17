@@ -85,15 +85,24 @@ struct ScreenPicture {
 class MessageWindow {
 public:
     void Show(const std::string& text);
+    void Show(const std::string& text, const std::string& speaker, int position /*0=bot 1=mid 2=top*/, const std::string& face = "");
     void ShowWithChoices(const std::string& text, const std::vector<ChoiceOption>& choices);
-    void Hide() { mVisible = false; mText.clear(); mChoices.clear(); }
+    void Hide() { mVisible = false; mText.clear(); mChoices.clear(); mSpeakerName.clear(); mFaceName.clear(); }
     bool IsVisible() const { return mVisible; }
     bool IsBusy() const { return mVisible; }
     /// Skip typewriter or close when complete (keyboard)
     void AdvanceInput();
 
+    // Fuer RmlUi-Spiegelung (Ruby UI.show_message -> GameUI -> RmlUi)
+    const std::string& GetFullText() const { return mText; }
+    const std::string& GetDisplayedText() const { return mDisplayed; }
+    bool HasChoices() const { return !mChoices.empty(); }
+    const std::string& GetSpeakerName() const { return mSpeakerName; }
+    const std::string& GetFaceName() const { return mFaceName; }
+    int GetPosition() const { return mPosition; } // 0 bottom 1 mid 2 top
+
     void Update(float dt);
-    void Draw(); // ImGui rendering
+    void Draw(); // ImGui rendering (optional, wenn RPGMAKER3D_ENABLE_IMGUI)
 
     std::function<void(int)> onChoice; // choice index
 
@@ -108,6 +117,9 @@ private:
 
     std::vector<ChoiceOption> mChoices;
     int mSelectedChoice = 0;
+    std::string mSpeakerName;
+    std::string mFaceName;
+    int mPosition = 0; // 0 bottom, 1 mid, 2 top
 };
 
 class TitleScreen {
@@ -154,6 +166,7 @@ public:
     void Draw();
 
     void ShowMessage(const std::string& text);
+    void ShowMessage(const std::string& text, const std::string& speaker, int position = 0, const std::string& face = "");
     void ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback);
 
     /// Compact playtest/game HUD (HP/Gold/hints)

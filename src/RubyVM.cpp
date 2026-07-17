@@ -9,6 +9,8 @@
 #include "rpgmaker3d/Model.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/BattleSystem.h"
+#include "rpgmaker3d/Database.h"
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -102,43 +104,72 @@ void RubyVM::Shutdown() {
     }
 }
 
-bool RubyVM::ExecuteString(const std::string& code) {
+bool RubyVM::CaptureException(const std::string& context) {
+    if (!mMrb || !mMrb->exc) {
+        mLastError.clear();
+        return false;
+    }
+    mrb_value exc = mrb_obj_value(mMrb->exc);
+    mrb_value msg = mrb_funcall(mMrb, exc, "inspect", 0);
+    std::string text;
+    if (mrb_string_p(msg)) {
+        text = std::string(RSTRING_PTR(msg), RSTRING_LEN(msg));
+    } else {
+        text = "(unprintable exception)";
+    }
+    mLastError = context.empty() ? text : (context + ": " + text);
+    RPG_LOG_ERROR("[Ruby] " + mLastError);
+    mrb_print_error(mMrb);
+    mMrb->exc = nullptr;
+    return true;
+}
+
+bool RubyVM::ExecuteString(const std::string& code, const std::string& sourceName) {
+    mLastError.clear();
     if (!mMrb) {
+        mLastError = "RubyVM not initialized";
         return false;
     }
 
-    mrb_load_string(mMrb, code.c_str());
+    // mrb_load_nstring_cxt mit filename fuer bessere Tracebacks
+    mrbc_context* cxt = mrbc_context_new(mMrb);
+    if (cxt && !sourceName.empty()) {
+        mrbc_filename(mMrb, cxt, sourceName.c_str());
+    }
+    mrb_load_nstring_cxt(mMrb, code.c_str(), code.size(), cxt);
+    if (cxt) mrbc_context_free(mMrb, cxt);
 
     if (mMrb->exc) {
-        mrb_print_error(mMrb);
-        mMrb->exc = nullptr;
+        CaptureException(sourceName.empty() ? "<string>" : sourceName);
         return false;
     }
-
     return true;
 }
 
 bool RubyVM::ExecuteFile(const std::string& path) {
+    mLastError.clear();
     if (!mMrb) {
+        mLastError = "RubyVM not initialized";
         return false;
     }
 
     FILE* file = fopen(path.c_str(), "r");
-
     if (!file) {
-        RPG_LOG_ERROR("Failed to open script: " + path);
+        mLastError = "Failed to open script: " + path;
+        RPG_LOG_ERROR(mLastError);
         return false;
     }
 
-    mrb_load_file(mMrb, file);
+    mrbc_context* cxt = mrbc_context_new(mMrb);
+    if (cxt) mrbc_filename(mMrb, cxt, path.c_str());
+    mrb_load_file_cxt(mMrb, file, cxt);
+    if (cxt) mrbc_context_free(mMrb, cxt);
     fclose(file);
 
     if (mMrb->exc) {
-        mrb_print_error(mMrb);
-        mMrb->exc = nullptr;
+        CaptureException(path);
         return false;
     }
-
     return true;
 }
 
@@ -147,25 +178,41 @@ bool RubyVM::Update(float deltaTime) {
         return false;
     }
 
+    // 1) SceneManager (RPG-Maker-Style Scenes aus dem Script-Editor)
+    //    Scene_Title / Scene_Map / Scene_Battle laufen hier pro Frame.
+    {
+        mrb_sym smSym = mrb_intern_lit(mMrb, "SceneManager");
+        if (mrb_const_defined(mMrb, mrb_obj_value(mMrb->object_class), smSym)) {
+            mrb_value sceneMgr = mrb_const_get(mMrb, mrb_obj_value(mMrb->object_class), smSym);
+            if (!mrb_nil_p(sceneMgr)) {
+                mrb_funcall(mMrb, sceneMgr, "update", 0);
+                if (mMrb->exc) {
+                    CaptureException("SceneManager.update");
+                    return false;
+                }
+            }
+        }
+    }
+
+    // 2) $game.update(dt) – optionale Custom-Logik aus main.rb
     mrb_sym gameSymbol = mrb_intern_lit(mMrb, "$game");
     mrb_value game = mrb_gv_get(mMrb, gameSymbol);
-
-    if (mrb_nil_p(game)) {
-        return true;
+    if (!mrb_nil_p(game)) {
+        mrb_sym updateSymbol = mrb_intern_lit(mMrb, "update");
+        mrb_value deltaValue = mrb_float_value(mMrb, deltaTime);
+        mrb_funcall_argv(mMrb, game, updateSymbol, 1, &deltaValue);
+        if (mMrb->exc) {
+            CaptureException("$game.update");
+            return false;
+        }
     }
-
-    mrb_sym updateSymbol = mrb_intern_lit(mMrb, "update");
-    mrb_value deltaValue = mrb_float_value(mMrb, deltaTime);
-
-    mrb_funcall_argv(mMrb, game, updateSymbol, 1, &deltaValue);
-
-    if (mMrb->exc) {
-        mrb_print_error(mMrb);
-        mMrb->exc = nullptr;
-        return false;
-    }
-
     return true;
+}
+
+void RubyVM::CollectGarbage() {
+    if (mMrb) {
+        mrb_full_gc(mMrb);
+    }
 }
 
 // ==================== Engine / Game Bindings ====================
@@ -276,6 +323,26 @@ static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
         key = Key::E;
     } else if (keyName == "q" || keyName == "Q") {
         key = Key::Q;
+    } else if (keyName == "h" || keyName == "H") {
+        key = Key::H;
+    } else if (keyName == "f1") {
+        key = Key::F1;
+    } else if (keyName == "f2") {
+        key = Key::F2;
+    } else if (keyName == "f3") {
+        key = Key::F3;
+    } else if (keyName == "f5") {
+        key = Key::F5;
+    } else if (keyName == "up") {
+        key = Key::Up;
+    } else if (keyName == "down") {
+        key = Key::Down;
+    } else if (keyName == "left") {
+        key = Key::Left;
+    } else if (keyName == "right") {
+        key = Key::Right;
+    } else if (keyName == "i" || keyName == "I") {
+        key = Key::I;
     }
 
     return mrb_bool_value(engine->GetInput().IsKeyDown(key));
@@ -950,31 +1017,106 @@ static mrb_value rb_game_map_setup(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+
+// --- RPG Maker Kern: Save / Load / Battle / Switches / Variables ---
+static mrb_value rb_game_save(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int slot = 1;
+    mrb_get_args(mrb, "|i", &slot);
+    bool ok = Game::Get().Save((int)slot);
+    return mrb_bool_value(ok);
+}
+static mrb_value rb_game_load(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int slot = 1;
+    mrb_get_args(mrb, "|i", &slot);
+    bool ok = Game::Get().Load((int)slot);
+    return mrb_bool_value(ok);
+}
+static mrb_value rb_game_switch_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_bool_value(Game::Get().Switches().Get((int)id));
+}
+static mrb_value rb_game_switch_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id; mrb_bool val;
+    mrb_get_args(mrb, "ib", &id, &val);
+    Game::Get().Switches().Set((int)id, val);
+    return mrb_nil_value();
+}
+static mrb_value rb_game_var_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_int_value(mrb, Game::Get().Variables().Get((int)id));
+}
+static mrb_value rb_game_var_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id, val;
+    mrb_get_args(mrb, "ii", &id, &val);
+    Game::Get().Variables().Set((int)id, (int)val);
+    return mrb_nil_value();
+}
+static mrb_value rb_battle_start(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int troopId = 1;
+    mrb_get_args(mrb, "|i", &troopId);
+    std::vector<int> enemies;
+    if (const auto* tr = Database::Get().GetTroop((int)troopId))
+        enemies = tr->members;
+    if (enemies.empty()) enemies = {1};
+    BattleSystem::Get().Setup(enemies, true, false);
+    BattleSystem::Get().onMessage = [](const std::string& msg) {
+        GameUI::Get().ShowMessage(msg);
+    };
+    BattleAction act; act.type = BattleActionType::Attack;
+    BattleSystem::Get().SetAction(act);
+    GameUI::Get().ShowMessage("Battle!");
+    return mrb_nil_value();
+}
+static mrb_value rb_battle_in_battle(mrb_state* mrb, mrb_value self) {
+    (void)self; (void)mrb;
+    return mrb_bool_value(BattleSystem::Get().IsInBattle());
+}
+
 void RubyVM::BindUI() {
     struct RClass* uiModule = mrb_define_module(mMrb, "UI");
 
     mrb_define_module_function(mMrb, uiModule, "show_message", rb_ui_show_message, MRB_ARGS_REQ(1));
-    mrb_define_module_function(mMrb, uiModule, "show_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
-    mrb_define_module_function(mMrb, uiModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
-    mrb_define_module_function(mMrb, uiModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, uiModule, "show_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, uiModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, uiModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(7));
     mrb_define_module_function(mMrb, uiModule, "clear_texts", rb_ui_clear_screen_texts, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "gold", rb_ui_gold, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "add_gold", rb_ui_add_gold, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, uiModule, "show_picture", rb_ui_show_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
     mrb_define_module_function(mMrb, uiModule, "move_picture", rb_ui_move_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4));
-    mrb_define_module_function(mMrb, uiModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, uiModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(7));
     mrb_define_module_function(mMrb, uiModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
     mrb_define_module_function(mMrb, uiModule, "clear_pictures", rb_ui_remove_picture, MRB_ARGS_NONE());
 
-    // Game module extensions for convenience
-    struct RClass* gameModule = mrb_define_module(mMrb, "Game");
+    // Game module extensions for convenience.
+    // WICHTIG: als KLASSE definieren (nicht Modul), damit die Spiellogik in
+    // main.rb ein "class Game ... end" reoeffnen kann. Ein Modul wuerde
+    // "TypeError: Game is not a class" ausloesen (siehe main.rb).
+    struct RClass* gameModule = mrb_define_class(mMrb, "Game", mMrb->object_class);
     mrb_define_module_function(mMrb, gameModule, "show_message", rb_ui_show_message, MRB_ARGS_REQ(1));
-    mrb_define_module_function(mMrb, gameModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
-    mrb_define_module_function(mMrb, gameModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, gameModule, "show_screen_text", rb_ui_show_screen_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, gameModule, "show_world_text", rb_ui_show_world_text, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(7));
     mrb_define_module_function(mMrb, gameModule, "show_picture", rb_ui_show_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(5));
     mrb_define_module_function(mMrb, gameModule, "move_picture", rb_ui_move_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4));
-    mrb_define_module_function(mMrb, gameModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(6));
+    mrb_define_module_function(mMrb, gameModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(7));
     mrb_define_module_function(mMrb, gameModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "save", rb_game_save, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "load", rb_game_load, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "switch", rb_game_switch_get, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameModule, "set_switch", rb_game_switch_set, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, gameModule, "variable", rb_game_var_get, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameModule, "set_variable", rb_game_var_set, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, gameModule, "start_battle", rb_battle_start, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, gameModule, "in_battle?", rb_battle_in_battle, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gameModule, "map_visible", rb_game_map_visible, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gameModule, "set_map_visible", rb_game_map_set_visible, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gameModule, "map_id", rb_game_map_id, MRB_ARGS_NONE());
@@ -1404,13 +1546,15 @@ bool RubyVM::Initialize(Engine* engine) {
 
 void RubyVM::Shutdown() {}
 
-bool RubyVM::ExecuteString(const std::string& code) {
-    (void)code;
+bool RubyVM::ExecuteString(const std::string& code, const std::string& sourceName) {
+    (void)code; (void)sourceName;
+    mLastError = "Ruby support not compiled in";
     return false;
 }
 
 bool RubyVM::ExecuteFile(const std::string& path) {
     (void)path;
+    mLastError = "Ruby support not compiled in";
     return false;
 }
 
@@ -1419,6 +1563,8 @@ bool RubyVM::Update(float deltaTime) {
     return false;
 }
 
+bool RubyVM::CaptureException(const std::string&) { return false; }
+
 void RubyVM::BindEngine() {}
 void RubyVM::BindInput() {}
 void RubyVM::BindAudio() {}
@@ -1426,7 +1572,9 @@ void RubyVM::BindMap() {}
 void RubyVM::BindActor() {}
 void RubyVM::BindCamera() {}
 void RubyVM::BindGame() {}
+
 void RubyVM::BindUI() {}
+
 
 } // namespace rpg
 

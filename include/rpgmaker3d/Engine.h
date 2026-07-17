@@ -15,7 +15,6 @@ class Scene;
 class Project;
 class Map;
 class ResourceManager;
-class Editor;
 class Framebuffer;
 class CommandHistory;
 class RubyVM;
@@ -44,6 +43,13 @@ public:
     bool IsRunning() const { return mRunning; }
     void RequestQuit() { mRunning = false; }
 
+    // Gibt an, ob Initialize()/InitializeEmbedded() erfolgreich durchlaufen
+    // wurde. WICHTIG: Die Qt-Docks rufen refresh() im Konstruktor auf, der
+    // Engine-Subsysteme dereferenziert. Vor der Initialisierung sind diese
+    // noch nullptr -> ohne diesen Guard käme es zu einem Null-Dereferenz-
+    // Absturz, bevor das Editor-Fenster überhaupt sichtbar wird.
+    bool IsInitialized() const { return mInitialized; }
+
     Window& GetWindow() { return *mWindow; }
     Renderer& GetRenderer() { return *mRenderer; }
     Input& GetInput() { return *mInput; }
@@ -53,16 +59,18 @@ public:
     Map& GetMap() { return *mMap; }
     ResourceManager& GetResources() { return *mResources; }
 
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    Editor* GetEditor() { return mEditor.get(); }
-#else
-    // Der Standalone-Player wird ohne Editor.cpp gebaut.
-    Editor* GetEditor() { return nullptr; }
-#endif
+    // ImGui-Editor ist entfernt. GetEditor() bleibt als Stub fuer Alt-Code
+    // und liefert immer nullptr.
+    void* GetEditor() { return nullptr; }
 
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
     ScriptManager& GetScriptManager() { return *mScriptManager; }
+    #ifdef RPGMAKER3D_ENABLE_RMLUI
+    RmlUiSystem* GetRmlUi() { return mRmlUi.get(); }
+#else
+    RmlUiSystem* GetRmlUi() { return nullptr; }
+#endif
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }
@@ -100,9 +108,7 @@ public:
     void SetGridVisible(bool visible) { mShowGrid = visible; }
     void ToggleGrid() { mShowGrid = !mShowGrid; }
 
-    // Generische Editor-Selektion (ID der selektierten Entity, -1 = keine).
-    // Wird fuer das Auswahl-Highlight in RenderScene genutzt, wenn kein
-    // ImGui-Editor aktiv ist (z.B. Qt-Editor / externer Host).
+    // Editor-Selektion (Qt-Host / externer Host). -1 = keine.
     void SetSelectedEntity(int id) { mSelectedEntity = id; }
     int GetSelectedEntity() const { return mSelectedEntity; }
 
@@ -117,27 +123,25 @@ private:
     std::unique_ptr<Map> mMap;
     std::unique_ptr<ResourceManager> mResources;
 
-#ifdef RPGMAKER3D_BUILD_EDITOR
-    std::unique_ptr<Editor> mEditor;
-#endif
-
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
-    std::unique_ptr<RmlUiSystem> mRmlUi;   // RmlUi UI-System (PoC: ImGui-Nachfolger)
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    std::unique_ptr<RmlUiSystem> mRmlUi;
+#endif
     std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 
     bool mRunning = false;
+    bool mInitialized = false;
     bool mEditorMode = true;
     bool mPlayMode = false;
-    bool mImGuiInitialized = false;
     bool mPlayModeFollowPlayer = true;
     bool mShowGrid = true;
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
     EntityID mActiveCameraEntity = INVALID_ENTITY;
-    int mSelectedEntity = -1; // Editor-Selektion (externer Host, z.B. Qt-Editor)
+    int mSelectedEntity = -1;
     float mDeltaTime = 0.0f;
     float mTime = 0.0f;
     int mFPS = 0;

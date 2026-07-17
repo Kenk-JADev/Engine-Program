@@ -107,6 +107,37 @@ struct EventPage {
     std::vector<EventCommand> list;
 };
 
+// Move Route (NPC-Bewegung wie RPG Maker)
+enum class MoveRouteCode {
+    End = 0,
+    MoveDown = 1,
+    MoveLeft = 2,
+    MoveRight = 3,
+    MoveUp = 4,
+    MoveForward = 12,
+    TurnDown = 16,
+    TurnLeft = 17,
+    TurnRight = 18,
+    TurnUp = 19,
+    Wait = 15,
+    TowardPlayer = 29,
+    AwayFromPlayer = 30,
+    Random = 10
+};
+
+struct MoveRouteStep {
+    MoveRouteCode code = MoveRouteCode::End;
+    int param = 0; // wait frames etc.
+};
+
+struct MoveRoute {
+    std::vector<MoveRouteStep> list;
+    bool repeat = true;
+    bool skippable = true;
+    int stepIndex = 0;
+    float waitTimer = 0.0f;
+};
+
 struct MapEvent {
     int id = 0;
     std::string name = "EV001";
@@ -115,6 +146,9 @@ struct MapEvent {
     std::vector<EventPage> pages;
     int currentPage = 0;
     bool enabled = true;
+    // Runtime move route
+    MoveRoute moveRoute;
+    bool hasMoveRoute = false;
 
     bool IsValid() const { return !pages.empty(); }
     const EventPage* GetCurrentPage() const;
@@ -156,6 +190,19 @@ public:
     std::function<void()> onClearScreenTexts;
     std::function<void(int itemId, int amount)> onChangeItems;
     std::function<void(int actorId, int hp)> onChangeActorHP;
+    // RPG Maker Kern-Befehle
+    std::function<void(int troopId)> onBattleProcessing;
+    std::function<void(const std::vector<int>& itemIds)> onShopProcessing;
+    std::function<void(int slot)> onOpenSave;
+    std::function<void(int slot)> onOpenLoad;
+    std::function<void()> onGameOver;
+    std::function<void()> onReturnToTitle;
+    std::function<void(int commonEventId)> onCallCommonEvent;
+    std::function<void(int actorId)> onRecoverAll;
+    std::function<void(int actorId, int exp)> onChangeExp;
+    std::function<void(int actorId, int level)> onChangeLevel;
+    std::function<void(int eventId, char ch, bool value)> onChangeSelfSwitch;
+    std::function<void(int eventId, const MoveRoute& route)> onSetMoveRoute;
 
 private:
     bool ExecuteCommand(const EventCommand& cmd);
@@ -169,6 +216,9 @@ private:
     int mBranchDepth = 0;
     bool mBranchResult = true;
 };
+
+// Optional: Ruby-Script-Runner fuer Event-Befehl "Script" (Engine setzt das)
+void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn);
 
 class EventSystem {
 public:
@@ -187,6 +237,8 @@ public:
 
     void AddCommonEvent(const CommonEvent& ev);
     CommonEvent* GetCommonEvent(int id);
+    std::vector<CommonEvent>& GetCommonEvents() { return mCommonEvents; }
+    const std::vector<CommonEvent>& GetCommonEvents() const { return mCommonEvents; }
 
     /// Wire engine callbacks (message UI, audio, transfer, etc.)
     void BindRuntimeCallbacks();
@@ -203,17 +255,26 @@ public:
     /// Create a demo NPC event near origin for playtesting
     void EnsureDemoEvent();
 
+    int GetCurrentMapId() const { return mCurrentMapId; }
+    void SetCurrentMapId(int id) { mCurrentMapId = id; }
+
+    /// Choice result from ShowChoices (0-based)
+    void SetChoiceResult(int index);
+    int ConsumeChoiceResult(); // -1 if none
+
 private:
     EventSystem() = default;
     void WireInterpreter(EventInterpreter& interp);
     bool ConditionsMet(const EventPage::Condition& c) const;
     void RefreshEventPage(MapEvent& ev);
+    void UpdateMoveRoutes(float dt, const Vec3& playerPos);
 
     std::vector<MapEvent> mEvents;
     std::vector<CommonEvent> mCommonEvents;
     std::vector<std::unique_ptr<EventInterpreter>> mInterpreters;
     int mCurrentMapId = 1;
     bool mCallbacksBound = false;
+    int mLastChoice = -1;
 };
 
 } // namespace rpg

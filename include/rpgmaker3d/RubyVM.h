@@ -18,11 +18,24 @@ public:
     bool Initialize(Engine* engine);
     void Shutdown();
 
-    bool ExecuteString(const std::string& code);
+    // sourceName: z.B. "06_Scene_Map.rb" fuer Fehlermeldungen
+    bool ExecuteString(const std::string& code, const std::string& sourceName = "<string>");
     bool ExecuteFile(const std::string& path);
     bool Update(float deltaTime);
 
+    // Erzwingt einen vollstaendigen Garbage-Collection-Durchlauf. Nuetzlich
+    // vor wiederholtem Script-Reload (Playtest), damit tote Ruby-Objekte
+    // (z.B. neu zugewiesene $game/$game_pictures aus vorigen Durchlaeufen)
+    // eingesammelt werden und der kleine mruby-Heap nicht ueberlaeuft
+    // (NoMemoryError bei vielen Playtest-Durchlaeufen).
+    void CollectGarbage();
+
     mrb_state* GetState() { return mMrb; }
+
+    // Letzter Ruby-Fehler (leer wenn ok)
+    const std::string& GetLastError() const { return mLastError; }
+    bool HasError() const { return !mLastError.empty(); }
+    void ClearError() { mLastError.clear(); }
 
 private:
     void BindEngine();
@@ -34,8 +47,12 @@ private:
     void BindGame();
     void BindUI();
 
+    // Schreibt Exception-Text nach mLastError und loggt
+    bool CaptureException(const std::string& context);
+
     mrb_state* mMrb = nullptr;
     Engine* mEngine = nullptr;
+    std::string mLastError;
 };
 
 } // namespace rpg

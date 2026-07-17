@@ -2,10 +2,10 @@
 
 ## 1. Design-Prinzipien
 
-1. **Low-Spec**: Zielhardware sind auch ältere iGPUs. OpenGL 3.3 als Baseline, einfache Shader, keine Raytracing-Features.
-2. **Modularität**: Core-Engine, Editor und Scripting sind klar getrennt.
-3. **Datengetrieben**: Maps, Tilesets, Modelle und Sounds werden aus JSON/Binärdateien geladen.
-4. **Erweiterbar**: Ruby-Scripts können Engine-Klassen erweitern und Events steuern.
+1. **Low-Spec**: OpenGL 3.3, einfache Shader, keine Raytracing-Features.
+2. **Modularität**: Core-Engine, Qt-Editor und Scripting sind klar getrennt.
+3. **Datengetrieben**: Maps, Tilesets, Modelle und Sounds aus JSON/Binärdateien.
+4. **Erweiterbar**: Ruby-Scripts steuern Spiellogik; C++ ist die Engine-API.
 
 ## 2. Module
 
@@ -13,70 +13,145 @@
 
 | Klasse | Aufgabe |
 |--------|---------|
-| `Engine` | Hauptloop, Zeitsteuerung, Modul-Initialisierung |
-| `Window` | SDL2-Fenster, OpenGL-Kontext, VSync |
-| `Renderer` | Rendering-Pipeline, Kamera, Batch/Instancing |
-| `Shader` | OpenGL-Shader kompilieren, Uniforms setzen |
-| `Texture` | PNG/JPG laden, OpenGL-Textur erstellen |
-| `Model` | OBJ/GLTF laden, Meshes verwalten |
-| `AudioManager` | Sound/Musik über miniaudio |
-| `Input` | Tastatur, Maus, Gamepad |
+| `Engine` | Hauptloop / Embedded-Tick, Modul-Initialisierung |
+| `Window` | SDL2-Fenster **oder** Foreign-Host (Qt) |
+| `Renderer` | Rendering-Pipeline, Kamera |
 | `Scene` | Szenegraph, Entitäten, Komponenten |
-| `Map` | Gitterbasierter 3D-Map-Editor-Runtime |
-| `Tileset` | PNG-Tileset, UV-Koordinaten pro Tile |
-| `Project` | Projektstruktur, Pfade, Metadaten |
+| `Map` / `Tileset` | Gitterbasierte 3D-Map |
+| `ScriptManager` / `RubyVM` | Ruby-Spiellogik |
+| `Project` / `Database` | Projektstruktur & RPG-Daten |
 
-### 2.2 Scripting (`src/RubyVM`, `ruby/`)
+### 2.2 Scripting (`src/RubyVM`, `ruby/`, `SampleProject/scripts/`)
 
-- `mruby` wird in den Core eingebunden.
-- C++-Bindings machen Engine-Klassen (Sprite, Actor, Map, Audio) aus Ruby heraus erreichbar.
-- User-Scripts werden zur Laufzeit geladen und ausgeführt.
-- Beispiel-API:
-  ```ruby
-  actor = Actor.new("hero")
-  actor.move_to(5, 0, 3)
-  actor.say("Hallo Welt!")
-  Audio.bgm_play("town.ogg")
-  ```
+- mruby optional (`RPGMAKER3D_ENABLE_RUBY`)
+- Scripts: `00_*.rb` … `main.rb` in Load-Order
+- C++-Bindings: Actor, Map, Audio, UI, Input, …
 
-### 2.3 Editor (`src/Editor`)
+### 2.3 Editor (`qt_editor/`) – **einziger Editor-Host**
 
-- Basiert auf Dear ImGui, läuft im selben Fenster wie die Engine.
-- Panels:
-  - Scene Hierarchy
-  - Inspector
-  - Asset Browser
-  - Map Editor (3D-Ansicht + 2D-Layer)
-  - Tileset Editor
-  - Script Editor (Texteditor mit Syntax-Highlighting für Ruby)
-  - Console/Log
+- **Qt 6** (QMainWindow, Docks, Tabs)
+- **Game View**: QOpenGLWidget + Engine Embedded
+- **Code Workspace**: Ruby-Editor + C++ API-Referenz  
+  (ersetzt den alten ImGui-„Game Scene“-/Script-Schwerpunkt)
+- ImGui-Editor ist **entfernt** (nicht im Build)
 
-### 2.4 Asset-Pipeline
+### 2.4 Player (`src/player_main.cpp`)
 
-- Texturen: PNG mit stb_image
-- Modelle: zuerst OBJ, später GLTF über tinygltf
-- Audio: OGG/MP3/WAV über miniaudio
-- Maps/Projekte: JSON (Editor) + binär kompiliert (Release)
+- SDL2-Fenster, `editorMode=false`
+- Kein Qt, kein ImGui-Editor
+- Optional RmlUi für Ingame-UI
 
-## 3. Rendering
+## 3. Schichten
 
-- Forward-Renderer mit Phong/ Lambert-Beleuchtung
-- Tilemap als gebatchetes Mesh mit Instancing
-- Kamera: Perspektivisch oder orthographisch (RPG-Style)
-- Post-Processing optional: FXAA, einfacher Bloom
+```
+┌──────────────────────────────────────────────┐
+│     Qt Editor (Docks + Game View + Code)     │
+├──────────────────────────────────────────────┤
+│           Scripting (mruby / Ruby)           │
+├──────────────────────────────────────────────┤
+│  Scene │ Renderer │ Audio │ Map │ Database   │
+├──────────────────────────────────────────────┤
+│  SDL2 (Player) / Qt GL (Editor) │ OpenGL 3.3 │
+└──────────────────────────────────────────────┘
+```
 
-## 4. Speicher & Performance
+## 4. Rendering
 
-- Resource-Manager mit Referenzzählung
-- Shader/Texturen nur einmal laden
-- Tilemap-Instancing für viele gleiche Tiles
-- Objektpooling für Partikel/Audio-Quellen
+- Forward-Renderer, Phong/Lambert
+- Tilemap-Instancing, Shadows optional
+- Editor-Selektion: Bounding-Box Highlight
 
-## 5. Nächste Schritte
+## 5. Build-Flags
 
-1. Lauffähiges Fenster + ImGui
-2. Shader-Pipeline + Kamera
-3. Erste Tilemap-Renderer
-4. mruby einbinden
-5. Editor-Panels
-6. Asset-Import
+| Flag | Default | Bedeutung |
+|------|---------|-----------|
+| `RPGMAKER3D_EDITOR_QT` | ON | Qt-Editor bauen |
+| `RPGMAKER3D_BUILD_EDITOR` | ON | Editor-Target |
+| `RPGMAKER3D_BUILD_PLAYER` | ON | Player-EXE |
+| `RPGMAKER3D_ENABLE_RMLUI` | ON | RmlUi |
+| `RPGMAKER3D_ENABLE_RUBY` | OFF | mruby |
+| `RPGMAKER3D_ENABLE_IMGUI` | OFF | Legacy GameUI-Overlay only |
+
+## 6. Nächste Schritte
+
+1. Gizmo-Transform im Game View
+2. Asset-Browser
+3. Undo-Batch fuer Multi-Tile-Pinsel
+4. GameUI Messages komplett auf RmlUi
+
+
+## 7. UI-Pipeline (Scripts & Game-Fenster)
+
+```
+  Script-Editor (Ruby)
+        |
+        v
+  RubyVM  UI.show_message / show_screen_text / show_picture
+        |
+        v
+  GameUI  (Logik: MessageWindow, ScreenTexts, Pictures)
+        |
+        +--(optional ImGui Draw, wenn RPGMAKER3D_ENABLE_IMGUI)
+        |
+        v
+  RmlUiSystem::SyncFromGameUI()
+        |
+        v
+  RmlUi Game-Kontext  (sichtbares HUD + Dialog-Box im GL-Fenster)
+```
+
+**RmlUi hat kein Ruby-Binding.** Scripts nutzen immer das Modul `UI` (C++-Bindings
+in `RubyVM::BindUI`). RmlUi ist nur der Renderer fuer das Game-Fenster.
+
+**Ruby-Runtime pro Frame (Playtest/Player):**
+1. `SceneManager.update` (Title/Map/Battle aus Script-Editor)
+2. `$game.update(dt)` (optional, main.rb)
+3. C++ Player/Events/BattleSystem
+
+Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht im Player.
+
+
+## 8. RPG-Maker-Kern (Runtime)
+
+| Feature | Wie |
+|---------|-----|
+| Scenes | Ruby `SceneManager` + `Scene_Title`/`Map`/`Battle` |
+| Dialoge | Event `ShowText` / Ruby `UI.show_message` → GameUI → RmlUi |
+| Switches/Variables | `Game.switch` / `Game.set_switch` / `variable` |
+| Save/Load | `Game.save(slot)` / `Game.load` → `saves/saveN.json` |
+| Battle | Event `BattleProcessing` / `Game.start_battle(troopId)` / Random Encounter |
+| Shop | Event `ShopProcessing` (kauft erstes Item wenn Gold reicht) |
+| Script-Befehl | Event `Script` → RubyVM (Script-Editor-Code) |
+| Troops/States | `database/Troops.json`, `States.json` |
+
+Hotkeys im Default-Script: **F1** Save, **F2** Load, **F3** Testkampf.
+
+### Battle-Input (Playtest/Player)
+| Taste | Aktion |
+|-------|--------|
+| **1** / **A** | Angriff |
+| **2** / **S** | Skill (ID 1) |
+| **3** / **I** | Item (ID 1) |
+| **4** | Flucht |
+
+### Map-Kollision
+Tile-Flag **solid** (Map-Dock: Button „Solid“) → `TilesetData.flags` → `GameMap::IsPassable`.
+
+### Common Events
+`maps/CommonEvents.json`, Trigger Autorun wenn `switchId` an (oder 0=immer bei Autorun).
+Button **Common+** im Event-Dock.
+
+
+## 9. Prioritaet 3+4 (Menue, Kampf, MoveRoute, Qualitaet)
+
+| Feature | Umsetzung |
+|---------|-----------|
+| Esc-Party-Menue | `15_Party_Menu.rb` (Items/Status/Save) |
+| Message Name/Pos | `MessageWindow` Speaker + Position → RmlUi |
+| Self-Switch | Event-Befehl + Seiten-Condition im Event-Dock |
+| Move Route | `UDLR W T A X` Text-Format, Runtime-Update |
+| Battle-UI | Tasten 1-4 im Engine-Update |
+| Undo-Batch | `BatchTileCommand` fuer Pinsel/Rechteck |
+| Gizmo-Undo | `MoveEntityCommand` bei Loslassen |
+| Plugins | `scripts/plugins/*.rb` |
+| Deploy | `scripts/package-player.sh` / `.ps1` |
