@@ -26,6 +26,8 @@
 #include <QUrl>
 #include <QFileInfo>
 #include <QDir>
+#include <QFile>
+#include <QRegularExpression>
 #include <QTextCursor>
 
 namespace qt_editor {
@@ -104,6 +106,9 @@ void QtCodeWorkspace::buildUi() {
     mSaveAction = tb->addAction("Speichern", this, [this]() { saveCurrent(); });
     tb->addAction("Alle speichern", this, [this]() { saveAll(); });
     mDeleteAction = tb->addAction("Loeschen", this, &QtCodeWorkspace::onDeleteRubyScript);
+    auto* renameAction = tb->addAction("Umbenennen", this, &QtCodeWorkspace::onRenameRubyScript);
+    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
+    renameAction->setToolTip(QStringLiteral("Aktuelles Script umbenennen [F2]"));
     tb->addAction("Neu laden", this, &QtCodeWorkspace::onReloadFromDisk);
     tb->addSeparator();
     mRunAction = tb->addAction("Ausfuehren", this, &QtCodeWorkspace::runCurrent);
@@ -138,6 +143,10 @@ void QtCodeWorkspace::buildUi() {
     mFileList->setMaximumWidth(360);
     connect(mFileList, &QListWidget::currentRowChanged, this, [this](int) {
         onFileSelected();
+    });
+    // XP: Doppelklick/Enter auf den Listeneintrag benennt das Script um
+    connect(mFileList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
+        if (mLanguage == CodeLanguage::Ruby) onRenameRubyScript();
     });
 
     auto* right = new QWidget(split);
@@ -747,6 +756,51 @@ void QtCodeWorkspace::onNewRubyScript() {
     mCurrentIndex = static_cast<int>(mEngine->GetScriptManager().GetScripts().size()) - 1;
     refresh();
     emit scriptsChanged();
+}
+
+void QtCodeWorkspace::onRenameRubyScript() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
+    auto& sm = mEngine->GetScriptManager();
+    auto& scripts = sm.GetScripts();
+    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
+    auto& s = scripts[static_cast<size_t>(mCurrentIndex)];
+
+    bool ok = false;
+    QString name = QInputDialog::getText(this, "Script umbenennen",
+        "Neuer Dateiname:", QLineEdit::Normal, QString::fromStdString(s->name), &ok);
+    if (!ok) return;
+    name = name.trimmed();
+    if (name.isEmpty() || name == QString::fromStdString(s->name)) return;
+    if (!name.endsWith(".rb")) name += ".rb";
+    if (name.contains(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")))) {
+        QMessageBox::warning(this, "Umbenennen",
+            QStringLiteral("Der Dateiname enthält ungültige Zeichen (\\ / : * ? \" < > |)."));
+        return;
+    }
+    for (const auto& o : scripts) {
+        if (o != s && o->name == name.toStdString()) {
+            QMessageBox::warning(this, "Umbenennen",
+                QStringLiteral("Ein Script mit diesem Namen existiert bereits."));
+            return;
+        }
+    }
+
+    // aktuellen Text sicher im Manager ablegen, dann Datei umbenennen
+    flushCurrentToManager();
+    const QString oldPath = QString::fromStdString(s->path);
+    const QString dir = QFileInfo(oldPath).absolutePath();
+    const QString newPath = dir + "/" + name;
+    if (QFile::exists(oldPath))
+        QFile::rename(oldPath, newPath); // scheitert nur, wenn Ziel existiert (oben geprüft)
+
+    s->name = name.toStdString();
+    s->path = newPath.toStdString();
+    s->modified = true;
+    sm.SaveScript(s); // schreibt Inhalt unter neuem Pfad
+
+    refresh();
+    emit scriptsChanged();
+    emit logMessage(QStringLiteral("Script umbenannt: %1").arg(name));
 }
 
 void QtCodeWorkspace::onDeleteRubyScript() {

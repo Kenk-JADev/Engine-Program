@@ -1,14 +1,22 @@
 #include "QtMapTab.h"
 
+#include "QtEventEditorDialog.h"
+
+#include <cstdio>
+
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/EventSystem.h"
+#include "rpgmaker3d/Project.h"
 
+#include <QButtonGroup>
 #include <QColor>
-#include <QComboBox>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -18,6 +26,7 @@
 #include <QScrollArea>
 #include <QSize>
 #include <QSpinBox>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 namespace qt_editor {
@@ -27,7 +36,7 @@ namespace qt_editor {
 #endif
 
 // ---------------------------------------------------------------------------
-// Canvas: zeichnet das Kartenraster und verarbeitet Maus-Malen
+// Canvas: Kartenraster + XP-Ebenen/Ereignis-Modus
 // ---------------------------------------------------------------------------
 
 class QtMapTabCanvas : public QWidget {
@@ -35,14 +44,20 @@ public:
     QtMapTabCanvas(rpg::Engine* engine, QWidget* parent = nullptr)
         : QWidget(parent), mEngine(engine) {
         setMouseTracking(true);
+        setFocusPolicy(Qt::StrongFocus); // Entf-Taste im EV-Modus
     }
 
-    int layer = 0;
-    int tileId = 0;
+    int layer = 0;        // aktive Tile-Ebene (0..2)
+    int tileId = 0;       // -1 = Radierer
     int cell = 20;
+    bool eventMode = false;
 
-    std::function<void(int, int)> onPaint;      // (x,z) gemalt
-    std::function<void(int, int)> onHover;      // (x,z) Mausposition
+    std::function<void(int, int)> onPaint;           // (x,z) gemalt
+    std::function<void(int, int)> onHover;           // (x,z) Mausposition
+    std::function<void(int, int)> onEventActivated;  // Doppelklick im EV-Modus
+    std::function<void()> onDeleteEvent;             // Entf im EV-Modus
+
+    int selectedEventId = -1;
 
     QSize sizeHint() const override {
         if (!mEngine || !mEngine->IsInitialized()) return {640, 480};
@@ -100,11 +115,34 @@ protected:
         for (int z = 0; z <= h; ++z)
             p.drawLine(0, z * cell, w * cell, z * cell);
 
+        // Ereignisse einzeichnen (nur im EV-Modus sichtbar, wie bei XP)
+        if (eventMode) {
+            auto& events = rpg::EventSystem::Get().GetEvents();
+            for (const auto& ev : events) {
+                if (ev.erased || ev.x < 0 || ev.z < 0 || ev.x >= w || ev.z >= h) continue;
+                const QRect rc(ev.x * cell, ev.z * cell, cell, cell);
+                // XP: dunkles Kästchen mit Name/Grafik-Platzhalter
+                p.fillRect(rc, QColor(40, 120, 130, 190));
+                p.setPen(QPen(QColor(200, 240, 250, 220), 1));
+                p.drawRect(rc.adjusted(0, 0, -1, -1));
+                QString label = QString::fromStdString(ev.name);
+                if (label.isEmpty()) label = QL("EV%1").arg(ev.id, 3, 10, QLatin1Char('0'));
+                if (cell >= 14) {
+                    p.setPen(Qt::white);
+                    p.drawText(rc, Qt::AlignCenter, p.fontMetrics().elidedText(
+                        label, Qt::ElideRight, cell - 2));
+                }
+                if (ev.id == selectedEventId) {
+                    p.setPen(QPen(QColor(255, 220, 90), 2));
+                    p.drawRect(rc.adjusted(1, 1, -2, -2));
+                }
+            }
+        }
+
         // Startposition markieren
-        const int sx = mStartX, sz = mStartZ;
-        if (sx >= 0 && sz >= 0 && sx < w && sz < h) {
+        if (mStartX >= 0 && mStartZ >= 0 && mStartX < w && mStartZ < h) {
             p.setPen(QPen(QColor(80, 200, 255), 2));
-            p.drawEllipse(QPointF(sx * cell + cell / 2.0, sz * cell + cell / 2.0),
+            p.drawEllipse(QPointF(mStartX * cell + cell / 2.0, mStartZ * cell + cell / 2.0),
                           cell * 0.3, cell * 0.3);
         }
 
@@ -115,9 +153,36 @@ protected:
         }
     }
 
+    int eventAt(int x, int z) const {
+        auto& events = rpg::EventSystem::Get().GetEvents();
+        for (const auto& ev : events)
+            if (!ev.erased && ev.x == x && ev.z == z) return ev.id;
+        return -1;
+    }
+
     void mousePressEvent(QMouseEvent* e) override {
-        mPainting = true;
-        applyAt(e->pos());
+        setFocus();
+        if (e->button() == Qt::LeftButton) {
+            if (eventMode) {
+                const int x = e->pos().x() / cell;
+                const int z = e->pos().y() / cell;
+                selectedEventId = eventAt(x, z);
+                if (onHover) onHover(x, z);
+                update();
+            } else {
+                mPainting = true;
+                applyAt(e->pos());
+            }
+        }
+    }
+    void mouseDoubleClickEvent(QMouseEvent* e) override {
+        if (eventMode && e->button() == Qt::LeftButton) {
+            const int x = e->pos().x() / cell;
+            const int z = e->pos().y() / cell;
+            selectedEventId = eventAt(x, z);
+            if (onEventActivated) onEventActivated(x, z);
+            update();
+        }
     }
     void mouseMoveEvent(QMouseEvent* e) override {
         const int x = e->pos().x() / cell;
@@ -133,6 +198,13 @@ protected:
         mHoverX = mHoverZ = -1;
         update();
     }
+    void keyPressEvent(QKeyEvent* e) override {
+        if (eventMode && (e->key() == Qt::Key_Delete || e->key() == Qt::Key_Backspace)) {
+            if (onDeleteEvent) onDeleteEvent();
+            return;
+        }
+        QWidget::keyPressEvent(e);
+    }
 
 public:
     int mStartX = -1, mStartZ = -1;
@@ -145,7 +217,7 @@ private:
         const int x = pos.x() / cell;
         const int z = pos.y() / cell;
         if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return;
-        map.SetTile(layer, x, z, tileId < 0 ? 0 : tileId);
+        map.SetTile(layer, x, z, tileId < 0 ? 0 : tileId); // setzt mDirty -> 3D baut neu
         if (onPaint) onPaint(x, z);
         update();
     }
@@ -156,7 +228,7 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// Tab mit Werkzeugzeile + ScrollArea
+// Tab mit XP-Werkzeugzeile (Ebenen 1/2/3/EV, Zoom) + ScrollArea
 // ---------------------------------------------------------------------------
 
 QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
@@ -167,10 +239,28 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
 
     auto* tb = new QHBoxLayout();
     tb->addWidget(new QLabel(QL("Ebene:"), this));
-    mLayerCombo = new QComboBox(this);
-    for (int i = 0; i < 4; ++i)
-        mLayerCombo->addItem(QL("Ebene %1").arg(i), i);
-    tb->addWidget(mLayerCombo);
+
+    // XP: Buttons 1 / 2 / 3 / Ereignisse
+    mModeGroup = new QButtonGroup(this);
+    mModeGroup->setExclusive(true);
+    static const char* labels[4] = {"1", "2", "3", "EV"};
+    static const char* tips[4] = {
+        "Ebene 1 (XP: untere Ebene)",
+        "Ebene 2 (XP: mittlere Ebene)",
+        "Ebene 3 (XP: obere Ebene)",
+        "Ereignis-Modus (XP): Events ansehen/anlegen/bearbeiten (Doppelklick/Entf)"
+    };
+    for (int i = 0; i < 4; ++i) {
+        mModeBtns[i] = new QToolButton(this);
+        mModeBtns[i]->setText(QL(labels[i]));
+        mModeBtns[i]->setToolTip(QL(tips[i]));
+        mModeBtns[i]->setCheckable(true);
+        mModeBtns[i]->setAutoRaise(true);
+        mModeGroup->addButton(mModeBtns[i], i);
+        tb->addWidget(mModeBtns[i]);
+    }
+    mModeBtns[0]->setChecked(true);
+    connect(mModeGroup, &QButtonGroup::idClicked, this, &QtMapTab::onModeButton);
 
     tb->addSpacing(12);
     tb->addWidget(new QLabel(QL("Zoom:"), this));
@@ -193,11 +283,6 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     mScroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     root->addWidget(mScroll, 1);
 
-    connect(mLayerCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int idx) {
-        mCanvas->layer = idx;
-        mCanvas->update();
-    });
     connect(mZoomSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, [this](int px) {
         mCanvas->cell = px;
@@ -205,19 +290,139 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     });
 
     mCanvas->onPaint = [this](int x, int z) {
-        emit tilesChanged();
+        emit tilesChanged(); // 3D-View benachrichtigen (Map baut Geometrie neu)
         mPosLabel->setText(QL("Feld: %1, %2  (gemalt)").arg(x).arg(z));
     };
     mCanvas->onHover = [this](int x, int z) {
-        if (mCanvas->isVisible())
+        if (!mCanvas->isVisible()) return;
+        if (mCanvas->eventMode) {
+            const int eid = mCanvas->selectedEventId;
+            if (eid > 0)
+                mPosLabel->setText(QL("Feld: %1, %2  (Event %3 gewählt)").arg(x).arg(z).arg(eid, 3, 10, QLatin1Char('0')));
+            else
+                mPosLabel->setText(QL("Feld: %1, %2  (Doppelklick = neues Event)").arg(x).arg(z));
+        } else {
             mPosLabel->setText(QL("Feld: %1, %2").arg(x).arg(z));
+        }
     };
+    mCanvas->onEventActivated = [this](int x, int z) { createOrEditEventAt(x, z); };
+    mCanvas->onDeleteEvent = [this]() { deleteSelectedEvent(); };
+}
+
+void QtMapTab::onModeButton(int id) {
+    if (!mCanvas) return;
+    if (id >= 3) {
+        mCanvas->eventMode = true;
+    } else {
+        if (mEngine && mEngine->IsInitialized()) ensureLayers(id + 1);
+        mCanvas->eventMode = false;
+        mCanvas->layer = id;
+        mCanvas->selectedEventId = -1;
+    }
+    mCanvas->refreshSize();
+    mCanvas->update();
+}
+
+void QtMapTab::ensureLayers(int n) {
+    if (!mEngine || !mEngine->IsInitialized()) return;
+    auto& map = mEngine->GetMap();
+    while ((int)map.GetLayers().size() < n)
+        map.AddLayer("Ebene " + std::to_string((int)map.GetLayers().size() + 1));
+}
+
+int QtMapTab::currentMapId() const {
+    if (mMapIdFn) return mMapIdFn();
+    return rpg::Database::Get().System().startMapId;
+}
+
+void QtMapTab::saveMapEvents() {
+    if (!mEngine) return;
+    std::string pp = mEngine->GetProject().GetProjectPath();
+    rpg::EventSystem::Get().SaveMapEvents(currentMapId(), pp.empty() ? "." : pp);
+}
+
+namespace {
+
+rpg::MapEvent* findEventById(int id) {
+    auto& events = rpg::EventSystem::Get().GetEvents();
+    for (auto& ev : events)
+        if (ev.id == id && !ev.erased) return &ev;
+    return nullptr;
+}
+
+rpg::MapEvent* findEventAt(int x, int z) {
+    auto& events = rpg::EventSystem::Get().GetEvents();
+    for (auto& ev : events)
+        if (!ev.erased && ev.x == x && ev.z == z) return &ev;
+    return nullptr;
+}
+
+} // namespace
+
+void QtMapTab::createOrEditEventAt(int x, int z) {
+    if (!mEngine || !mEngine->IsInitialized()) return;
+    auto& map = mEngine->GetMap();
+    if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return;
+
+    auto& es = rpg::EventSystem::Get();
+    rpg::MapEvent* ev = findEventAt(x, z);
+    bool created = false;
+
+    if (!ev) {
+        // XP: Doppelklick auf leeres Feld legt ein neues Event an und öffnet den Dialog
+        int nextId = 1;
+        for (const auto& e : es.GetEvents()) nextId = qMax(nextId, e.id + 1);
+        rpg::MapEvent neu;
+        neu.id = nextId;
+        char evName[8];
+        std::snprintf(evName, sizeof(evName), "EV%03d", nextId);
+        neu.name = evName;
+        neu.x = x; neu.y = 0; neu.z = z;
+        neu.worldPos = rpg::Vec3((float)x, 0.0f, (float)z);
+        rpg::EventPage page;
+        page.trigger = rpg::EventTrigger::ActionButton;
+        neu.pages.push_back(page);
+        es.GetEvents().push_back(neu);
+        ev = &es.GetEvents().back();
+        mCanvas->selectedEventId = ev->id;
+        created = true;
+    }
+
+    const bool ok = QtEventEditorDialog::EditEvent(this, *ev);
+    (void)ok; // XP: auch bei Abbrechen bleibt ein frisch angelegtes Event bestehen
+    saveMapEvents();
+    mCanvas->update();
+    emit eventsChanged();
+    emit logMessage(created
+        ? QL("Event %1 angelegt @ (%2, %3)").arg(ev->id, 3, 10, QLatin1Char('0')).arg(x).arg(z)
+        : QL("Event %1 bearbeitet.").arg(ev->id, 3, 10, QLatin1Char('0')));
+}
+
+void QtMapTab::deleteSelectedEvent() {
+    if (mCanvas->selectedEventId <= 0) return;
+    auto& es = rpg::EventSystem::Get();
+    auto& events = es.GetEvents();
+    for (size_t i = 0; i < events.size(); ++i) {
+        if (events[i].id == mCanvas->selectedEventId) {
+            events.erase(events.begin() + (ptrdiff_t)i);
+            mCanvas->selectedEventId = -1;
+            saveMapEvents();
+            mCanvas->update();
+            emit eventsChanged();
+            emit logMessage(QL("Event gelöscht."));
+            return;
+        }
+    }
 }
 
 void QtMapTab::refresh() {
     if (!mEngine || !mEngine->IsInitialized()) return;
+    ensureLayers(3); // XP-Karten haben immer 3 Ebenen
     const auto& sys = rpg::Database::Get().System();
     mCanvas->setStartPos(sys.startX, sys.startY);
+    // Ebene gültig halten
+    if (mCanvas->layer >= (int)mEngine->GetMap().GetLayers().size())
+        mCanvas->layer = 0;
     mCanvas->refreshSize();
     mCanvas->update();
 }
@@ -229,13 +434,14 @@ void QtMapTab::setPaintTile(int tileId) {
 }
 
 void QtMapTab::setPaintLayer(int layer) {
-    const int idx = mLayerCombo->findData(layer);
-    if (idx >= 0) mLayerCombo->setCurrentIndex(idx);
-    mCanvas->layer = layer;
+    const int idx = layer < 0 ? 0 : (layer > 3 ? 3 : layer);
+    if (mModeBtns[idx] && !mModeBtns[idx]->isChecked())
+        mModeBtns[idx]->setChecked(true);
+    onModeButton(idx);
 }
 
 int QtMapTab::paintLayer() const {
-    return mLayerCombo ? mLayerCombo->currentData().toInt() : 0;
+    return (mCanvas && mCanvas->eventMode) ? 3 : (mCanvas ? mCanvas->layer : 0);
 }
 
 } // namespace qt_editor

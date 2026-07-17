@@ -62,6 +62,7 @@ private slots:
     void onFileSelected();
     void onTextChanged();
     void onNewRubyScript();
+    void onRenameRubyScript();   // F2 / Doppelklick (XP: Enter auf Listeneintrag)
     void onDeleteRubyScript();
     void onReloadFromDisk();
     void onOpenExternal();

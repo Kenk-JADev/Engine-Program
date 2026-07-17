@@ -453,6 +453,20 @@ void QtEditorWindow::buildDocks() {
         refreshHierarchy();
         if (mMapTab) mMapTab->refresh();
     });
+    // Landkarte: Karten-ID für Ereignis-Speicherung + Dock-Sync bei Event-Edits
+    if (mMapTab) {
+        mMapTab->setCurrentMapIdFn([this]() {
+            const int idx = mMapDockWidget ? mMapDockWidget->selectedMapIndex() : -1;
+            auto& infos = rpg::Database::Get().MapInfos();
+            if (idx >= 0 && idx < (int)infos.size())
+                return infos[(size_t)idx].id;
+            return rpg::Database::Get().System().startMapId;
+        });
+        connect(mMapTab, &QtMapTab::eventsChanged, this, [this]() {
+            if (mEventDockWidget) mEventDockWidget->refresh();
+        });
+        connect(mMapTab, &QtMapTab::logMessage, this, [this](const QString& m) { log(m); });
+    }
     connect(mView, &QtGameViewWidget::tilePainted, this, [this](int x, int z, int tile) {
         static int n = 0;
         if ((++n % 8) == 0)

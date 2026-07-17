@@ -87,6 +87,24 @@ Im Editor:
 - Ribbon oben: **Datei / Werkzeuge / Ansicht / Fenster / Debug**
 - `Datei > Neues Projekt` / `Projekt öffnen`
 
+## Landkarte (2D ↔ 3D-Mapsystem)
+
+Die Landkarte malt direkt in `Engine::GetMap()` — dieselbe Karte, aus der das
+3D-Mapsystem seine Geometrie baut. Oben sitzen die **XP-Ebenen-Buttons
+1 / 2 / 3 / EV**: die ersten drei wählen die Tile-Ebene (Karten wachsen
+automatisch auf 3 Ebenen), **EV** schaltet in den **Ereignis-Modus**: Events
+werden als Kästchen eingezeichnet, **Doppelklick** auf ein leeres Feld legt ein
+neues Event an und öffnet den XP-Event-Dialog, Doppelklick auf ein Event
+bearbeitet es, **Entf** löscht das gewählte Event. Das Events-Dock wird dabei
+live synchronisiert.
+
+## Skript-Editor
+
+Der Skript-Tab folgt dem XP-Aufbau: links die Skriptliste, rechts der Editor.
+Neu / **Umbenennen (F2 oder Doppelklick auf den Eintrag)** / Löschen /
+Suchen (Strg+F) / Snippets / Ausführen / Hot-Reload. Umlaute sind überall
+erlaubt.
+
 ## Playtest
 
 - **F5** – speichert das Projekt und startet **`RPGMaker3D_Player.exe --project <Pfad>`**
