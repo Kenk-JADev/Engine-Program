@@ -177,6 +177,7 @@ if(RPGMAKER3D_EDITOR_QT)
             qt_editor/QtMapEditorDock.cpp
             qt_editor/QtDatabaseEditorDock.cpp
             qt_editor/QtDatabaseDialog.cpp
+            qt_editor/QtSoundTestDialog.cpp
             qt_editor/QtEventEditorDock.cpp
             qt_editor/QtEventCommandCatalog.cpp
             qt_editor/QtEventCommandsDialog.cpp
@@ -192,6 +193,7 @@ if(RPGMAKER3D_EDITOR_QT)
             qt_editor/QtMapEditorDock.h
             qt_editor/QtDatabaseEditorDock.h
             qt_editor/QtDatabaseDialog.h
+            qt_editor/QtSoundTestDialog.h
             qt_editor/QtEventEditorDock.h
             qt_editor/QtEventCommandCatalog.h
             qt_editor/QtEventCommandsDialog.h

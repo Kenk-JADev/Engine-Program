@@ -119,6 +119,17 @@ Begriffe (HP, SP, STR … Ausrüsten). Die Anfangsgruppe steuert direkt die
 Start-Party im Spiel. Alles wird im Projekt unter `database/*.json`
 gespeichert.
 
+## Sound-Test
+
+Ribbon **Werkzeuge → Sound-Test** öffnet das XP-artige **Sound-Test-Fenster**:
+Tabs **BGM / BGS / ME / SE**, Dateiliste mit „(Kein)", **Wiedergabe / Stopp**,
+**Lautstärke-Regler** (0–100 %) und **Pitch-Regler** (50–150 %), beide greifen
+live in die laufende Wiedergabe. Doppelklick auf einen Titel spielt ihn sofort
+ab; beim Schließen wird automatisch gestoppt. Gescannt werden die Ordner
+`Audio/BGM`, `Audio/BGS`, `Audio/ME`, `Audio/SE` (XP-Konvention) bzw.
+`assets/audio/<typ>`; neue Projekte legen die XP-Ordner automatisch an.
+Abspielbar: WAV, MP3, OGG, FLAC (MIDI nicht).
+
 ## Umlaute (ä ö ü Ä Ö Ü ß)
 
 UI und Spiel sind UTF-8-durchgängig (MSVC baut mit `/utf-8`); Nachrichten,

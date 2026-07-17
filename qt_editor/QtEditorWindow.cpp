@@ -5,6 +5,7 @@
 #include "QtMapEditorDock.h"
 #include "QtDatabaseEditorDock.h"
 #include "QtDatabaseDialog.h"
+#include "QtSoundTestDialog.h"
 #include "QtEventEditorDock.h"
 #include "QtAssetBrowserDock.h"
 
@@ -580,6 +581,11 @@ void QtEditorWindow::buildRibbon() {
                              if (mDbDockWidget) mDbDockWidget->refresh();
                              log(QStringLiteral("Datenbank (XP-Dialog) gespeichert."));
                          }
+                     });
+        ribbonButton(p, QStringLiteral("Sound-Test"), QStringLiteral("Sound-Test-Fenster öffnen (BGM/BGS/ME/SE durchhören)"),
+                     [this]() {
+                         if (!mView || !mView->IsEngineReady()) return;
+                         QtSoundTestDialog::ShowSoundTest(this, mEngine.get());
                      });
         ribbonButton(p, QStringLiteral("Würfel"), QStringLiteral("Würfel erstellen"),
                      [this]() { actionCreateCube(); });

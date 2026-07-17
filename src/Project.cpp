@@ -68,6 +68,10 @@ bool Project::New(const std::string& path, const std::string& name) {
     std::filesystem::create_directories(path + "/assets/textures");
     std::filesystem::create_directories(path + "/assets/models");
     std::filesystem::create_directories(path + "/assets/audio");
+    std::filesystem::create_directories(path + "/Audio/BGM");
+    std::filesystem::create_directories(path + "/Audio/BGS");
+    std::filesystem::create_directories(path + "/Audio/ME");
+    std::filesystem::create_directories(path + "/Audio/SE");
     std::filesystem::create_directories(path + "/assets/shaders");
     std::filesystem::create_directories(path + "/maps");
     std::filesystem::create_directories(path + "/scripts");
@@ -141,6 +145,10 @@ bool Project::SaveAs(const std::string& path) {
     std::filesystem::create_directories(path + "/assets/textures");
     std::filesystem::create_directories(path + "/assets/models");
     std::filesystem::create_directories(path + "/assets/audio");
+    std::filesystem::create_directories(path + "/Audio/BGM");
+    std::filesystem::create_directories(path + "/Audio/BGS");
+    std::filesystem::create_directories(path + "/Audio/ME");
+    std::filesystem::create_directories(path + "/Audio/SE");
     std::filesystem::create_directories(path + "/assets/shaders");
     std::filesystem::create_directories(path + "/maps");
     std::filesystem::create_directories(path + "/scripts");
