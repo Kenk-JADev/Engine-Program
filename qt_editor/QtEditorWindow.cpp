@@ -27,11 +27,15 @@
 #endif
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -41,11 +45,14 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QSettings>
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTabWidget>
@@ -85,6 +92,16 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
     buildMenus();
     buildRibbon(); // Schnellzugriff + Ribbon-Tabs (ersetzt die klassische Toolbar)
 
+    // Statuszeile: links Hinweistexte, rechts permanent Feld / Karte / FPS-Info
+    mStatusTile = new QLabel(QStringLiteral("Feld: -"), this);
+    mStatusTile->setMinimumWidth(150);
+    mStatusTile->setToolTip(QStringLiteral("Mausposition auf der Landkarte (2D-Tab)"));
+    statusBar()->addPermanentWidget(mStatusTile);
+    mStatusMap = new QLabel(QStringLiteral("Karte: -"), this);
+    mStatusMap->setMinimumWidth(190);
+    mStatusMap->setToolTip(QStringLiteral("Aktive Karte – Rechtsklick auf die Landkarte oder \n"
+                                          "Doppelklick in der Kartenliste öffnet die Eigenschaften"));
+    statusBar()->addPermanentWidget(mStatusMap);
     mStatusInfo = new QLabel(QStringLiteral("Starte …"), this);
     statusBar()->addPermanentWidget(mStatusInfo);
     statusBar()->showMessage(QStringLiteral("Engine startet (GL-Kontext wird initialisiert) …"));
@@ -107,6 +124,13 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
         if (mDbDockWidget) mDbDockWidget->refresh();
         if (mEventDockWidget) mEventDockWidget->refresh();
         if (mAssetDockWidget) mAssetDockWidget->refresh();
+        updateMapStatus();
+        rebuildRecentProjectsMenu();
+        // Easy-to-use: Willkommens-Dialog, wenn (noch) kein Projekt geladen ist
+        if (mEngine->GetProject().GetProjectPath().empty() &&
+            QSettings().value(QStringLiteral("ui/showWelcome"), true).toBool()) {
+            QTimer::singleShot(350, this, [this]() { showWelcomeDialog(); });
+        }
     });
     connect(mView, &QtGameViewWidget::entityPicked, this, [this](int id) {
         setSelectedEntity(id);
@@ -266,6 +290,12 @@ void QtEditorWindow::buildMenus() {
     mFile->addAction(QStringLiteral("Szene speichern unter …"),
                      this, [this]() { actionSaveSceneAs(); });
     mFile->addSeparator();
+    // Easy-to-use: Zuletzt geöffnete Projekte (QSettings-persistent)
+    mRecentMenu = mFile->addMenu(QStringLiteral("Zu&letzt geöffnete Projekte"));
+    connect(mRecentMenu, &QMenu::aboutToShow, this, [this]() {
+        rebuildRecentProjectsMenu();
+    });
+    mFile->addSeparator();
     mFile->addAction(QStringLiteral("Skripte speichern"), this, [this]() {
         if (mCode) mCode->saveAll();
     });
@@ -338,16 +368,27 @@ void QtEditorWindow::buildMenus() {
     connect(mPlayAction, &QAction::toggled, this, &QtEditorWindow::onPlaytestToggled);
 
     QMenu* mHelp = menuBar()->addMenu(QStringLiteral("&Hilfe"));
-    mHelp->addAction(QStringLiteral("Über RPG Maker 3D …"), this, [this]() {
+    mHelp->addAction(QStringLiteral("&Tastenkürzel anzeigen …"), this, [this]() {
+        showShortcutsDialog();
+    })->setShortcut(QKeySequence(QStringLiteral("Ctrl+?")));
+    QAction* aWelcome = mHelp->addAction(QStringLiteral("&Willkommens-Dialog öffnen"), this, [this]() {
+        showWelcomeDialog();
+    });
+    (void)aWelcome;
+    mHelp->addSeparator();
+    mHelp->addAction(QStringLiteral("Ü&ber RPG Maker 3D …"), this, [this]() {
         QMessageBox::about(this, QStringLiteral("RPG Maker 3D Editor"),
             QStringLiteral(
-                "RPG Maker 3D - Editor (Qt)\n\n"
+                "RPG Maker 3D – Editor (Qt)\n"
+                "Version 2026.07  –  Qt %1\n\n"
+                "Ein RPG-Maker-XP-artiges Tool für 3D-Rollenspiele:\n\n"
                 "• Tabs unten: Spielansicht (3D), Landkarte (2D), Spiel (Playtest), Skript\n"
-                "• Ribbon oben: Datei, Werkzeuge, Ansicht, Fenster, Debug\n"
-                "• XP-artiger Event-Editor (Events-Dock, Doppelklick öffnet den Dialog)\n"
-                "• Voller XP-Befehlssatz im Event-Interpreter (siehe docs/EVENTS-XP.md)\n"
+                "• Landkarte: Strg+Z/Strg+Y, Rechtsklick-Menü, Startposition per Klick\n"
+                "• XP-Datenbank (13 Tabs), Sound-Test, Karteneigenschaften\n"
+                "• XP-artiger Event-Editor mit vollem XP-Befehlssatz (docs/EVENTS-XP.md)\n"
                 "• Playtest über die Player-exe (F5)\n"
-                "• Umlaut-Unterstützung (ä ö ü Ä Ö Ü ß) in UI und Spiel"));
+                "• Umlaut-Unterstützung (ä ö ü Ä Ö Ü ß) in UI und Spiel")
+                .arg(QString::fromLatin1(qVersion())));
     });
 
     auto* delView = new QShortcut(QKeySequence(Qt::Key_Delete), mView);
@@ -453,6 +494,7 @@ void QtEditorWindow::buildDocks() {
         setSelectedEntity(-1);
         refreshHierarchy();
         if (mMapTab) mMapTab->refresh();
+        updateMapStatus();
     });
     // Landkarte: Karten-ID für Ereignis-Speicherung + Dock-Sync bei Event-Edits
     if (mMapTab) {
@@ -470,6 +512,21 @@ void QtEditorWindow::buildDocks() {
         // Tile-Wahl in der Landkarten-Palette -> Map-Dock/3D-Pinsel mitziehen
         connect(mMapTab, &QtMapTab::paintTilePicked, this, [this](int tid) {
             if (mMapDockWidget) mMapDockWidget->setSelectedTile(tid);
+        });
+        // Maus-Feld der Landkarte in die Statuszeile spiegeln
+        connect(mMapTab, &QtMapTab::hoverInfo, this, [this](const QString& t) {
+            if (mStatusTile) mStatusTile->setText(t);
+        });
+        // Rechtsklick auf der Landkarte -> Karteneigenschaften (wie Ribbon/Doppelklick)
+        connect(mMapTab, &QtMapTab::mapPropertiesRequested, this, [this]() {
+            if (!mView || !mView->IsEngineReady() || !mMapDockWidget) return;
+            const int idx = mMapDockWidget->selectedMapIndex();
+            if (QtMapPropertiesDialog::EditMapProperties(this, mEngine.get(), idx)) {
+                mMapDockWidget->refresh();
+                if (mMapTab) mMapTab->refresh();
+                updateMapStatus();
+                log(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
+            }
         });
     }
     connect(mView, &QtGameViewWidget::tilePainted, this, [this](int x, int z, int tile) {
@@ -912,18 +969,39 @@ void QtEditorWindow::actionNewProject() {
     mEngine->GetScriptManager().CreateDefaultScripts(path.toStdString());
     mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
     log(QStringLiteral("Neues Projekt angelegt: ") + path);
+    addRecentProject(path);
     afterProjectChanged();
 }
 
 void QtEditorWindow::actionOpenProject() {
     if (!mView->IsEngineReady()) return;
+    // Startordner: zuletzt benutzter Projektordner (merkt sich QSettings)
+    QSettings s;
+    const QString startDir = s.value(QStringLiteral("ui/lastProjectDir")).toString();
     const QString path = QFileDialog::getExistingDirectory(
-        this, QStringLiteral("Projekt öffnen (Projektordner mit project.json)"));
+        this, QStringLiteral("Projekt öffnen (Projektordner mit project.json)"), startDir);
     if (path.isEmpty()) return;
+    openProjectPath(path);
+}
+
+void QtEditorWindow::openProjectPath(const QString& path) {
+    if (!mView->IsEngineReady()) return;
+    if (!QFile::exists(path + QStringLiteral("/project.json"))) {
+        QMessageBox::warning(this, QStringLiteral("Projekt öffnen"),
+            QStringLiteral("Kein gültiges Projekt (project.json nicht gefunden):\n") + path);
+        // Verwaisten Eintrag aus der Zuletzt-Liste entfernen
+        QSettings s;
+        QStringList recent = s.value(QStringLiteral("recentProjects")).toStringList();
+        if (recent.removeAll(path) > 0) {
+            s.setValue(QStringLiteral("recentProjects"), recent);
+            rebuildRecentProjectsMenu();
+        }
+        return;
+    }
 
     if (!mEngine->GetProject().Load(path.toStdString())) {
         QMessageBox::warning(this, QStringLiteral("Projekt öffnen"),
-            QStringLiteral("Kein gültiges Projekt (project.json nicht gefunden):\n") + path);
+            QStringLiteral("Projekt konnte nicht geladen werden:\n") + path);
         return;
     }
     rpg::Database::Get().Load(path.toStdString());
@@ -932,7 +1010,9 @@ void QtEditorWindow::actionOpenProject() {
         mEngine->GetScriptManager().CreateDefaultScripts(path.toStdString());
         mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
     }
+    QSettings().setValue(QStringLiteral("ui/lastProjectDir"), path);
     log(QStringLiteral("Projekt geladen: ") + path);
+    addRecentProject(path);
     loadScenePackage();
     afterProjectChanged();
 }
@@ -1014,6 +1094,166 @@ void QtEditorWindow::afterProjectChanged() {
     if (mDbDockWidget) mDbDockWidget->refresh();
     if (mEventDockWidget) mEventDockWidget->refresh();
     if (mAssetDockWidget) mAssetDockWidget->refresh();
+    updateMapStatus();
+}
+
+// ---------------------------------------------------------------------------
+// Easy-to-use: Zuletzt geöffnete Projekte / Willkommen / Tastenkürzel
+// ---------------------------------------------------------------------------
+
+void QtEditorWindow::addRecentProject(const QString& path) {
+    if (path.isEmpty()) return;
+    QSettings s;
+    QStringList recent = s.value(QStringLiteral("recentProjects")).toStringList();
+    recent.removeAll(path);
+    recent.prepend(path);
+    while (recent.size() > 8) recent.removeLast();
+    s.setValue(QStringLiteral("recentProjects"), recent);
+    rebuildRecentProjectsMenu();
+}
+
+void QtEditorWindow::rebuildRecentProjectsMenu() {
+    if (!mRecentMenu) return;
+    mRecentMenu->clear();
+    const QStringList recent =
+        QSettings().value(QStringLiteral("recentProjects")).toStringList();
+    if (recent.isEmpty()) {
+        auto* a = mRecentMenu->addAction(QStringLiteral("(keine zuletzt geöffneten Projekte)"));
+        a->setEnabled(false);
+        return;
+    }
+    for (const QString& p : recent) {
+        const bool valid = QFile::exists(p + QStringLiteral("/project.json"));
+        auto* a = mRecentMenu->addAction(QStringLiteral("%1%2")
+            .arg(valid ? QString() : QStringLiteral("⚠ "))
+            .arg(p), this, [this, p]() { openProjectPath(p); });
+        a->setToolTip(valid ? QStringLiteral("Projekt öffnen")
+                            : QStringLiteral("project.json nicht gefunden – Eintrag wird beim Öffnen entfernt"));
+    }
+    mRecentMenu->addSeparator();
+    mRecentMenu->addAction(QStringLiteral("Liste leeren"), this, [this]() {
+        QSettings().remove(QStringLiteral("recentProjects"));
+        rebuildRecentProjectsMenu();
+    });
+}
+
+void QtEditorWindow::showWelcomeDialog() {
+    if (!mView || !mView->IsEngineReady()) return;
+    QSettings s;
+
+    QDialog dlg(this);
+    dlg.setWindowTitle(QStringLiteral("Willkommen bei RPG Maker 3D"));
+    dlg.setMinimumWidth(520);
+    auto* lay = new QVBoxLayout(&dlg);
+
+    auto* title = new QLabel(QStringLiteral("Willkommen bei RPG Maker 3D!"), &dlg);
+    title->setStyleSheet(QStringLiteral("font-size: 18px; font-weight: bold;"));
+    lay->addWidget(title);
+    auto* intro = new QLabel(QStringLiteral(
+        "Womit möchtest du beginnen? Neue und vorhandene Projekte erreichst du "
+        "später jederzeit über das Menü „Datei“."), &dlg);
+    intro->setWordWrap(true);
+    lay->addWidget(intro);
+
+    auto* btnRow = new QHBoxLayout();
+    auto* bNew = new QPushButton(QStringLiteral("Neues Projekt …"), &dlg);
+    bNew->setToolTip(QStringLiteral("Legt einen neuen Projektordner mit Standard-Karte, "
+                                    "Datenbank und Skripten an. [Strg+N]"));
+    auto* bOpen = new QPushButton(QStringLiteral("Projekt öffnen …"), &dlg);
+    bOpen->setToolTip(QStringLiteral("Öffnet einen vorhandenen Projektordner. [Strg+O]"));
+    btnRow->addWidget(bNew, 1);
+    btnRow->addWidget(bOpen, 1);
+    lay->addLayout(btnRow);
+
+    const QStringList recent =
+        QSettings().value(QStringLiteral("recentProjects")).toStringList();
+    QListWidget* recentList = nullptr;
+    if (!recent.isEmpty()) {
+        lay->addSpacing(6);
+        lay->addWidget(new QLabel(QStringLiteral(
+            "Zuletzt geöffnete Projekte (Doppelklick öffnet):"), &dlg));
+        recentList = new QListWidget(&dlg);
+        for (const QString& p : recent) {
+            const bool valid = QFile::exists(p + QStringLiteral("/project.json"));
+            auto* it = new QListWidgetItem(QStringLiteral("%1%2")
+                .arg(valid ? QString() : QStringLiteral("⚠ ")).arg(p), recentList);
+            it->setToolTip(p);
+        }
+        recentList->setMaximumHeight(150);
+        lay->addWidget(recentList);
+    }
+
+    auto* chk = new QCheckBox(QStringLiteral("Beim Start anzeigen"), &dlg);
+    chk->setChecked(s.value(QStringLiteral("ui/showWelcome"), true).toBool());
+    auto* btnBox = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+    auto* row = new QHBoxLayout();
+    row->addWidget(chk, 1);
+    row->addWidget(btnBox, 0);
+    lay->addSpacing(8);
+    lay->addLayout(row);
+
+    QObject::connect(btnBox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+    QObject::connect(bNew, &QPushButton::clicked, &dlg, [this, &dlg]() {
+        dlg.accept();
+        actionNewProject();
+    });
+    QObject::connect(bOpen, &QPushButton::clicked, &dlg, [this, &dlg]() {
+        dlg.accept();
+        actionOpenProject();
+    });
+    if (recentList) {
+        QObject::connect(recentList, &QListWidget::itemActivated, &dlg,
+                         [this, &dlg](QListWidgetItem* it) {
+            QString p = it->text();
+            if (p.startsWith(QStringLiteral("⚠ "))) p = p.mid(2);
+            dlg.accept();
+            openProjectPath(p);
+        });
+    }
+    dlg.exec();
+    s.setValue(QStringLiteral("ui/showWelcome"), chk->isChecked());
+}
+
+void QtEditorWindow::showShortcutsDialog() {
+    QMessageBox box(QMessageBox::Information,
+        QStringLiteral("Tastenkürzel"),
+        QStringLiteral(
+            "<b>Allgemein</b><br>"
+            "Strg+N – Neues Projekt<br>"
+            "Strg+O – Projekt öffnen<br>"
+            "Strg+S – Projekt speichern<br>"
+            "F5 – Playtest (Player-exe)<br>"
+            "Umschalt+F5 – Playtest eingebettet<br>"
+            "F9 – HUD ein/aus<br><br>"
+            "<b>Landkarte (2D)</b><br>"
+            "Strg+Z / Strg+Y – Rückgängig / Wiederholen<br>"
+            "Links ziehen – Tile malen<br>"
+            "Rechtsklick – Menü (Startposition, Ereignis, Eigenschaften)<br>"
+            "EV-Modus: Doppelklick – Ereignis anlegen/bearbeiten<br>"
+            "EV-Modus: Entf – Ereignis löschen<br><br>"
+            "<b>3D-Spielansicht</b><br>"
+            "Strg+Z / Strg+Y – Objekt-Verlauf<br>"
+            "Entf – Ausgewähltes Objekt löschen<br>"
+            "WASD + Maus – Kamera<br><br>"
+            "<b>Skript</b><br>"
+            "F2 – Skript umbenennen"),
+        QMessageBox::Ok, this);
+    box.setTextFormat(Qt::RichText);
+    box.exec();
+}
+
+void QtEditorWindow::updateMapStatus() {
+    if (!mStatusMap) return;
+    auto& infos = rpg::Database::Get().MapInfos();
+    const int idx = mMapDockWidget ? mMapDockWidget->selectedMapIndex() : -1;
+    if (idx < 0 || idx >= static_cast<int>(infos.size())) {
+        mStatusMap->setText(QStringLiteral("Karte: -"));
+        return;
+    }
+    const auto& info = infos[static_cast<size_t>(idx)];
+    mStatusMap->setText(QStringLiteral("Karte: %1 (ID %2, %3×%4)")
+        .arg(QString::fromStdString(info.name))
+        .arg(info.id).arg(info.width).arg(info.height));
 }
 
 // ---------------------------------------------------------------------------

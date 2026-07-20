@@ -87,6 +87,21 @@ Im Editor:
 - Ribbon oben: **Datei / Werkzeuge / Ansicht / Fenster / Debug**
 - `Datei > Neues Projekt` / `Projekt öffnen`
 
+## Bedienkomfort (Easy to use)
+
+- **Willkommens-Dialog** beim Start (ohne geladenes Projekt): Neues Projekt,
+  Projekt öffnen oder direkt ein **zuletzt geöffnetes Projekt** per
+  Doppelklick. Abschaltbar über „Beim Start anzeigen“
+  (wieder einschalten: `Hilfe > Willkommens-Dialog öffnen`).
+- **Zuletzt geöffnete Projekte**: `Datei > Zuletzt geöffnete Projekte`
+  merkt sich die letzten 8 Projektordner (inkl. „Liste leeren“).
+- **Statuszeile**: zeigt permanent die aktive Karte (Name, ID, Größe) und das
+  Maus-Feld auf der Landkarte; links laufen weiter die Kontext-Hinweise.
+- **Tastenkürzel-Übersicht**: `Hilfe > Tastenkürzel anzeigen …`.
+- **Kartenliste (Map-Dock)**: Rechtsklick-Menü mit *Karteneigenschaften …*,
+  *Als Startkarte festlegen* (★-Markierung in der Liste), *Neue Karte*,
+  *Karte löschen*; Doppelklick öffnet direkt die Karteneigenschaften.
+
 ## Landkarte (2D ↔ 3D-Mapsystem)
 
 Die Landkarte malt direkt in `Engine::GetMap()` — dieselbe Karte, aus der das
@@ -99,6 +114,13 @@ bearbeitet es, **Entf** löscht das gewählte Event. Das Events-Dock wird dabei
 live synchronisiert. Links sitzt die **XP-Tileset-Palette** mit echten
 Tile-Bildern (erster Eintrag: Radierer) — sie ist mit dem Map-Dock und dem
 3D-Pinsel in beide Richtungen synchronisiert.
+
+Bedienhilfen der Landkarte:
+- **Rückgängig / Wiederholen** (`Strg+Z` / `Strg+Y`, Toolbar-Buttons):
+  jeder Mal-Schritt (Ziehen über mehrere Felder) lässt sich zurücknehmen;
+  der Verlauf gilt pro Karte und übersteht Tab-Wechsel.
+- **Rechtsklick-Menü**: Startposition hierher setzen, Ereignis anlegen /
+  bearbeiten / löschen (im EV-Modus) und Karteneigenschaften öffnen.
 
 ## Karteneigenschaften
 

@@ -59,6 +59,8 @@ private slots:
     void actionSaveProject();
     void actionSaveSceneAs();
     void actionLoadSceneFrom();
+    /// Projekt aus einem konkreten Pfad öffnen (Dialog, Zuletzt-Liste, Willkommen)
+    void openProjectPath(const QString& path);
 
     // Playtest
     void actionPlaytestPlayer();     // externe Player-exe (F5)
@@ -85,6 +87,14 @@ private:
     QString findPlayerExecutable() const;
     QWidget* buildPropertiesWidget();
     void log(const QString& msg);
+
+    // Easy-to-use: Zuletzt geöffnete Projekte, Willkommens-Dialog, Hilfe
+    void addRecentProject(const QString& path);
+    void rebuildRecentProjectsMenu();
+    void showWelcomeDialog();
+    void showShortcutsDialog();
+    /// Statuszeile: aktive Karte (Name, ID, Größe) anzeigen
+    void updateMapStatus();
 
     // Engine-Aktionen
     void loadScenePackage();
@@ -132,7 +142,10 @@ private:
     QDoubleSpinBox* mScale[3] = {nullptr, nullptr, nullptr};
 
     QLabel* mStatusInfo = nullptr;
+    QLabel* mStatusMap = nullptr;   // permanente Statuszeile: aktive Karte
+    QLabel* mStatusTile = nullptr;  // permanente Statuszeile: Maus-Feld (Landkarte)
     QLabel* mPlayTabStatus = nullptr;
+    class QMenu* mRecentMenu = nullptr;
 
     // Menü-Aktionen
     QAction* mUndoAction = nullptr;

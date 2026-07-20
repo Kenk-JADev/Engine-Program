@@ -105,25 +105,25 @@ void QtCodeWorkspace::buildUi() {
     mNewAction = tb->addAction("Neu", this, &QtCodeWorkspace::onNewRubyScript);
     mSaveAction = tb->addAction("Speichern", this, [this]() { saveCurrent(); });
     tb->addAction("Alle speichern", this, [this]() { saveAll(); });
-    mDeleteAction = tb->addAction("Loeschen", this, &QtCodeWorkspace::onDeleteRubyScript);
+    mDeleteAction = tb->addAction("Löschen", this, &QtCodeWorkspace::onDeleteRubyScript);
     auto* renameAction = tb->addAction("Umbenennen", this, &QtCodeWorkspace::onRenameRubyScript);
     renameAction->setShortcut(QKeySequence(Qt::Key_F2));
     renameAction->setToolTip(QStringLiteral("Aktuelles Script umbenennen [F2]"));
     tb->addAction("Neu laden", this, &QtCodeWorkspace::onReloadFromDisk);
     tb->addSeparator();
-    mRunAction = tb->addAction("Ausfuehren", this, &QtCodeWorkspace::runCurrent);
-    tb->addAction("Alle ausfuehren", this, &QtCodeWorkspace::runAll);
+    mRunAction = tb->addAction("Ausführen", this, &QtCodeWorkspace::runCurrent);
+    tb->addAction("Alle ausführen", this, &QtCodeWorkspace::runAll);
     tb->addAction("Hot-Reload", this, &QtCodeWorkspace::onHotReload);
     tb->addSeparator();
-    tb->addAction("Extern oeffnen", this, &QtCodeWorkspace::onOpenExternal);
+    tb->addAction("Extern öffnen", this, &QtCodeWorkspace::onOpenExternal);
     tb->addSeparator();
     tb->addWidget(new QLabel(" Suchen: ", tb));
     mFindEdit = new QLineEdit(tb);
     mFindEdit->setPlaceholderText("Ctrl+F");
     mFindEdit->setMaximumWidth(180);
     tb->addWidget(mFindEdit);
-    tb->addAction("Find", this, &QtCodeWorkspace::onFind);
-    tb->addAction("Next", this, &QtCodeWorkspace::onFindNext);
+    tb->addAction("Suchen", this, &QtCodeWorkspace::onFind);
+    tb->addAction("Weiter", this, &QtCodeWorkspace::onFindNext);
     connect(mFindEdit, &QLineEdit::returnPressed, this, &QtCodeWorkspace::onFind);
 
     tb->addSeparator();
@@ -466,7 +466,7 @@ void QtCodeWorkspace::populateRubyList() {
         mFileList->addItem(label);
     }
     if (scripts.empty()) {
-        mFileList->addItem("(keine Scripts – Projekt oeffnen oder Neu)");
+        mFileList->addItem("(keine Skripte – Projekt öffnen oder Neu)");
     }
     mFileList->blockSignals(false);
 
@@ -479,7 +479,7 @@ void QtCodeWorkspace::populateRubyList() {
         mEditor->setPlainText(
             "# Ruby Code Workspace\n"
             "#\n"
-            "# Oeffne ein Projekt (Datei -> Projekt oeffnen)\n"
+            "# Öffne ein Projekt (Datei -> Projekt öffnen)\n"
             "# oder lege ein neues Script an (Neu).\n"
             "# Scripts liegen unter <Projekt>/scripts/*.rb\n"
             "# und werden beim Playtest in Dateiname-Reihenfolge geladen.\n");
@@ -591,10 +591,10 @@ void QtCodeWorkspace::updateDirtyLabel() {
         return;
     }
     if (mEngine && mEngine->IsPlaying()) {
-        mDirtyLabel->setText("PLAYTEST (read-only)");
+        mDirtyLabel->setText("PLAYTEST (schreibgeschützt)");
         return;
     }
-    mDirtyLabel->setText(mDirty ? "geaendert *" : "");
+    mDirtyLabel->setText(mDirty ? "geändert *" : "");
 }
 
 bool QtCodeWorkspace::hasUnsavedChanges() const {
@@ -618,7 +618,7 @@ bool QtCodeWorkspace::saveCurrent() {
     if (ok) {
         mDirty = false;
         updateDirtyLabel();
-        emit logMessage(QString("Script gespeichert: %1").arg(mCurrentName));
+        emit logMessage(QString("Skript gespeichert: %1").arg(mCurrentName));
         // Liste ohne Stern
         if (mCurrentIndex < mFileList->count()) {
             QString label = mCurrentName;
@@ -667,7 +667,7 @@ void QtCodeWorkspace::runAll() {
     mEngine->GetScriptManager().ExecuteAllScripts();
     if (mEngine->GetRubyVM().HasError()) {
         const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
-        emit logMessage("Ruby-Fehler beim Ausfuehren aller Scripts: " + err);
+        emit logMessage("Ruby-Fehler beim Ausführen aller Skripte: " + err);
         showRubyError(err);
     } else {
         emit logMessage("Alle Ruby-Scripts ausgefuehrt (Load-Order).");
@@ -737,22 +737,22 @@ void QtCodeWorkspace::onFindNext() {
 void QtCodeWorkspace::onNewRubyScript() {
     if (!mEngine || mLanguage != CodeLanguage::Ruby) return;
     if (mEngine->GetProject().GetProjectPath().empty()) {
-        QMessageBox::information(this, "Neues Script",
-            "Bitte zuerst ein Projekt anlegen oder oeffnen.");
+        QMessageBox::information(this, "Neues Skript",
+            "Bitte zuerst ein Projekt anlegen oder öffnen.");
         return;
     }
     bool ok = false;
-    QString name = QInputDialog::getText(this, "Neues Ruby-Script",
+    QString name = QInputDialog::getText(this, "Neues Ruby-Skript",
         "Dateiname:", QLineEdit::Normal, "custom_logic.rb", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
     name = name.trimmed();
     if (!name.endsWith(".rb")) name += ".rb";
     auto script = mEngine->GetScriptManager().CreateScript(name.toStdString());
     if (!script) {
-        QMessageBox::warning(this, "Neues Script", "Konnte Script nicht anlegen.");
+        QMessageBox::warning(this, "Neues Skript", "Konnte Skript nicht anlegen.");
         return;
     }
-    emit logMessage("Script angelegt: " + name);
+    emit logMessage("Skript angelegt: " + name);
     mCurrentIndex = static_cast<int>(mEngine->GetScriptManager().GetScripts().size()) - 1;
     refresh();
     emit scriptsChanged();
@@ -766,7 +766,7 @@ void QtCodeWorkspace::onRenameRubyScript() {
     auto& s = scripts[static_cast<size_t>(mCurrentIndex)];
 
     bool ok = false;
-    QString name = QInputDialog::getText(this, "Script umbenennen",
+    QString name = QInputDialog::getText(this, "Skript umbenennen",
         "Neuer Dateiname:", QLineEdit::Normal, QString::fromStdString(s->name), &ok);
     if (!ok) return;
     name = name.trimmed();
@@ -780,7 +780,7 @@ void QtCodeWorkspace::onRenameRubyScript() {
     for (const auto& o : scripts) {
         if (o != s && o->name == name.toStdString()) {
             QMessageBox::warning(this, "Umbenennen",
-                QStringLiteral("Ein Script mit diesem Namen existiert bereits."));
+                QStringLiteral("Ein Skript mit diesem Namen existiert bereits."));
             return;
         }
     }
@@ -800,7 +800,7 @@ void QtCodeWorkspace::onRenameRubyScript() {
 
     refresh();
     emit scriptsChanged();
-    emit logMessage(QStringLiteral("Script umbenannt: %1").arg(name));
+    emit logMessage(QStringLiteral("Skript umbenannt: %1").arg(name));
 }
 
 void QtCodeWorkspace::onDeleteRubyScript() {
@@ -808,18 +808,18 @@ void QtCodeWorkspace::onDeleteRubyScript() {
     auto& scripts = mEngine->GetScriptManager().GetScripts();
     if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
     if (scripts[mCurrentIndex]->isCore) {
-        QMessageBox::information(this, "Loeschen", "Core-Scripts koennen nicht geloescht werden.");
+        QMessageBox::information(this, "Löschen", "Kern-Skripte können nicht gelöscht werden.");
         return;
     }
     const QString name = QString::fromStdString(scripts[mCurrentIndex]->name);
-    if (QMessageBox::question(this, "Script loeschen",
-            QString("\"%1\" wirklich loeschen?").arg(name)) != QMessageBox::Yes) {
+    if (QMessageBox::question(this, "Skript löschen",
+            QString("\"%1\" wirklich löschen?").arg(name)) != QMessageBox::Yes) {
         return;
     }
     mEngine->GetScriptManager().DeleteScript(scripts[mCurrentIndex]->name);
     mCurrentIndex = -1;
     mDirty = false;
-    emit logMessage("Script geloescht: " + name);
+    emit logMessage("Skript gelöscht: " + name);
     refresh();
     emit scriptsChanged();
 }
@@ -828,14 +828,14 @@ void QtCodeWorkspace::onReloadFromDisk() {
     if (!mEngine) return;
     if (hasUnsavedChanges()) {
         const auto r = QMessageBox::question(this, "Neu laden",
-            "Ungespeicherte Aenderungen verwerfen und von Disk laden?",
+            "Ungespeicherte Änderungen verwerfen und von der Festplatte laden?",
             QMessageBox::Yes | QMessageBox::No);
         if (r != QMessageBox::Yes) return;
     }
     mEngine->GetScriptManager().ReloadFromDisk();
     mDirty = false;
     mCurrentIndex = -1;
-    emit logMessage("Scripts von Disk neu geladen.");
+    emit logMessage("Skripte von der Festplatte neu geladen.");
     refresh();
     emit scriptsChanged();
 }
@@ -849,11 +849,11 @@ void QtCodeWorkspace::onOpenExternal() {
             const QString hint = mCppDocs[static_cast<size_t>(mCurrentIndex)].pathHint;
             if (QFileInfo::exists(hint)) {
                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(hint).absoluteFilePath()));
-                emit logMessage("Extern geoeffnet: " + hint);
+                emit logMessage("Extern geöffnet: " + hint);
                 return;
             }
         }
-        emit logMessage("Keine Datei zum Oeffnen (Referenz ist eingebettet).");
+        emit logMessage("Keine Datei zum Öffnen (Referenz ist eingebettet).");
         return;
     }
     if (!QFileInfo::exists(mCurrentPath)) {

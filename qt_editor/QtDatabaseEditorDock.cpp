@@ -87,7 +87,7 @@ bool ActorsTableModel::insertRows(int row, int count, const QModelIndex& parent)
     for (int i = 0; i < count; ++i) {
         rpg::ActorData a;
         a.id = v.empty() ? 1 : v.back().id + 1;
-        a.name = "Actor " + std::to_string(a.id);
+        a.name = "Akteur " + std::to_string(a.id);
         v.insert(v.begin() + row + i, a);
     }
     endInsertRows();
@@ -156,7 +156,7 @@ bool ItemsTableModel::insertRows(int row, int count, const QModelIndex& parent) 
     for (int i = 0; i < count; ++i) {
         rpg::ItemData it;
         it.id = v.empty() ? 1 : v.back().id + 1;
-        it.name = "Item " + std::to_string(it.id);
+        it.name = "Gegenstand " + std::to_string(it.id);
         v.insert(v.begin() + row + i, it);
     }
     endInsertRows();
@@ -226,7 +226,7 @@ bool EnemiesTableModel::insertRows(int row, int count, const QModelIndex& parent
     for (int i = 0; i < count; ++i) {
         rpg::EnemyData e;
         e.id = v.empty() ? 1 : v.back().id + 1;
-        e.name = "Enemy " + std::to_string(e.id);
+        e.name = "Gegner " + std::to_string(e.id);
         v.insert(v.begin() + row + i, e);
     }
     endInsertRows();
@@ -265,14 +265,14 @@ int SimpleDbTableModel::columnCount(const QModelIndex&) const {
 QVariant SimpleDbTableModel::headerData(int section, Qt::Orientation o, int role) const {
     if (o != Qt::Horizontal || role != Qt::DisplayRole) return {};
     if (mKind == Skills) {
-        static const char* h[] = {"ID","Name","MP","Power","Scope"};
+        static const char* h[] = {"ID","Name","MP","Stärke","Ziel"};
         return (section>=0&&section<5)?h[section]:QVariant();
     }
     if (mKind == Weapons) {
-        static const char* h[] = {"ID","Name","Preis","ATK","Anim"};
+        static const char* h[] = {"ID","Name","Preis","ATK","Animation"};
         return (section>=0&&section<5)?h[section]:QVariant();
     }
-    static const char* h[] = {"ID","Name","ExpBase"};
+    static const char* h[] = {"ID","Name","Basis-EXP"};
     return (section>=0&&section<3)?h[section]:QVariant();
 }
 QVariant SimpleDbTableModel::data(const QModelIndex& index, int role) const {
@@ -333,11 +333,11 @@ bool SimpleDbTableModel::insertRows(int row, int count, const QModelIndex& paren
     for (int i=0;i<count;++i) {
         if (mKind == Skills) {
             rpg::SkillData s; s.id = db.Skills().empty()?1:db.Skills().back().id+1;
-            s.name = "Skill "+std::to_string(s.id);
+            s.name = "Fertigkeit "+std::to_string(s.id);
             db.Skills().insert(db.Skills().begin()+row+i, s);
         } else if (mKind == Weapons) {
             rpg::WeaponData w; w.id = db.Weapons().empty()?1:db.Weapons().back().id+1;
-            w.name = "Weapon "+std::to_string(w.id);
+            w.name = "Waffe "+std::to_string(w.id);
             db.Weapons().insert(db.Weapons().begin()+row+i, w);
         } else {
             rpg::ClassData cl; cl.id = db.Classes().empty()?1:db.Classes().back().id+1;
@@ -412,7 +412,7 @@ void QtDatabaseEditorDock::buildUi() {
     mActorsView->horizontalHeader()->setStretchLastSection(true);
     mActorsView->setSelectionBehavior(QAbstractItemView::SelectRows);
     mActorsView->setAlternatingRowColors(true);
-    mTabs->addTab(mActorsView, "Actors");
+    mTabs->addTab(mActorsView, "Akteure");
 
     mItemsModel = new ItemsTableModel(this);
     mItemsView = new QTableView(mTabs);
@@ -420,7 +420,7 @@ void QtDatabaseEditorDock::buildUi() {
     mItemsView->horizontalHeader()->setStretchLastSection(true);
     mItemsView->setSelectionBehavior(QAbstractItemView::SelectRows);
     mItemsView->setAlternatingRowColors(true);
-    mTabs->addTab(mItemsView, "Items");
+    mTabs->addTab(mItemsView, "Gegenstände");
 
     mEnemiesModel = new EnemiesTableModel(this);
     mEnemiesView = new QTableView(mTabs);
@@ -436,7 +436,7 @@ void QtDatabaseEditorDock::buildUi() {
     mSkillsView->horizontalHeader()->setStretchLastSection(true);
     mSkillsView->setSelectionBehavior(QAbstractItemView::SelectRows);
     mSkillsView->setAlternatingRowColors(true);
-    mTabs->addTab(mSkillsView, "Skills");
+    mTabs->addTab(mSkillsView, "Fertigkeiten");
 
     mWeaponsModel = new SimpleDbTableModel(SimpleDbTableModel::Weapons, this);
     mWeaponsView = new QTableView(mTabs);
@@ -444,7 +444,7 @@ void QtDatabaseEditorDock::buildUi() {
     mWeaponsView->horizontalHeader()->setStretchLastSection(true);
     mWeaponsView->setSelectionBehavior(QAbstractItemView::SelectRows);
     mWeaponsView->setAlternatingRowColors(true);
-    mTabs->addTab(mWeaponsView, "Weapons");
+    mTabs->addTab(mWeaponsView, "Waffen");
 
     mClassesModel = new SimpleDbTableModel(SimpleDbTableModel::Classes, this);
     mClassesView = new QTableView(mTabs);
@@ -463,11 +463,11 @@ void QtDatabaseEditorDock::buildUi() {
     mStartY = new QSpinBox(sys); mStartY->setRange(0, 9999);
     mBattleBgm = new QLineEdit(sys);
     mTitleBgm = new QLineEdit(sys);
-    auto* applySys = new QPushButton("System uebernehmen", sys);
+    auto* applySys = new QPushButton("System übernehmen", sys);
     connect(applySys, &QPushButton::clicked, this, &QtDatabaseEditorDock::onSystemApply);
     form->addRow("Spieltitel", mGameTitle);
     form->addRow("Waehrung", mCurrency);
-    form->addRow("Start-Map-ID", mStartMap);
+    form->addRow("Startkarten-ID", mStartMap);
     form->addRow("Start X", mStartX);
     form->addRow("Start Y", mStartY);
     form->addRow("Battle BGM", mBattleBgm);
@@ -514,7 +514,7 @@ void QtDatabaseEditorDock::onSystemApply() {
     s.startY = mStartY->value();
     s.battleBgm = mBattleBgm->text().toStdString();
     s.titleBgm = mTitleBgm->text().toStdString();
-    emit logMessage("System-Daten uebernommen.");
+    emit logMessage("System-Daten übernommen.");
 }
 
 void QtDatabaseEditorDock::onSave() {
@@ -526,7 +526,7 @@ void QtDatabaseEditorDock::onSave() {
         return;
     }
     if (rpg::Database::Get().Save(pp))
-        emit logMessage("Database gespeichert: " + QString::fromStdString(pp) + "/database/");
+        emit logMessage("Datenbank gespeichert: " + QString::fromStdString(pp) + "/database/");
     else
         emit logMessage("FEHLER: Database speichern fehlgeschlagen.");
 }
@@ -540,7 +540,7 @@ void QtDatabaseEditorDock::onReload() {
         rpg::Database::Get().Load(pp);
     }
     refresh();
-    emit logMessage("Database neu geladen.");
+    emit logMessage("Datenbank neu geladen.");
 }
 
 void QtDatabaseEditorDock::onAddRow() {

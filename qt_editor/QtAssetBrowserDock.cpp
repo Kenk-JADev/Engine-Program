@@ -34,7 +34,7 @@ void QtAssetBrowserDock::buildUi() {
 
     auto* tb = new QHBoxLayout();
     auto* bRef = new QPushButton("Aktualisieren", this);
-    auto* bOpen = new QPushButton("Oeffnen", this);
+    auto* bOpen = new QPushButton("Öffnen", this);
     auto* bCopy = new QPushButton("Pfad kopieren", this);
     connect(bRef, &QPushButton::clicked, this, &QtAssetBrowserDock::onRefresh);
     connect(bOpen, &QPushButton::clicked, this, &QtAssetBrowserDock::onOpenExternal);
@@ -60,7 +60,7 @@ void QtAssetBrowserDock::buildUi() {
     });
     root->addWidget(mTree, 1);
 
-    mInfo = new QLabel("Doppelklick = oeffnen. Texturen/Audio/Scripts aus Projekt + assets/.", this);
+    mInfo = new QLabel("Doppelklick = öffnen. Texturen/Audio/Skripte aus Projekt + assets/.", this);
     mInfo->setWordWrap(true);
     root->addWidget(mInfo);
 }
@@ -145,7 +145,7 @@ void QtAssetBrowserDock::onItemActivated() {
     QFileInfo fi(path);
     if (fi.isDir()) return;
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
-    emit logMessage("Asset geoeffnet: " + path);
+    emit logMessage("Asset geöffnet: " + path);
     emit assetActivated(path);
 }
 

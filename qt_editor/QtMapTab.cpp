@@ -14,12 +14,15 @@
 
 #include <QButtonGroup>
 #include <QColor>
+#include <QContextMenuEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImage>
 #include <QKeyEvent>
+#include <QKeySequence>
 #include <QLabel>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPaintEvent>
@@ -29,6 +32,7 @@
 #include <QPointF>
 #include <QRect>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QSize>
 #include <QSpinBox>
 #include <QToolButton>
@@ -64,6 +68,10 @@ public:
     std::function<void(int, int)> onHover;           // (x,z) Mausposition
     std::function<void(int, int)> onEventActivated;  // Doppelklick im EV-Modus
     std::function<void()> onDeleteEvent;             // Entf im EV-Modus
+    std::function<void()> onStrokeBegin;             // Mal-Schritt beginnt (Maus drücken)
+    std::function<void()> onStrokeEnd;               // Mal-Schritt endet (Maus loslassen)
+    std::function<void(int, int, int, int, int)> onTileEdited; // (x,z,layer,vorher,nachher)
+    std::function<void(int, int, const QPoint&)> onContextMenu; // Rechtsklick: (x,z,globalPos)
 
     int selectedEventId = -1;
 
@@ -179,9 +187,15 @@ protected:
                 update();
             } else {
                 mPainting = true;
+                if (onStrokeBegin) onStrokeBegin();
                 applyAt(e->pos());
             }
         }
+    }
+    void contextMenuEvent(QContextMenuEvent* e) override {
+        if (onContextMenu)
+            onContextMenu(e->pos().x() / cell, e->pos().y() / cell, e->globalPos());
+        e->accept();
     }
     void mouseDoubleClickEvent(QMouseEvent* e) override {
         if (eventMode && e->button() == Qt::LeftButton) {
@@ -201,7 +215,12 @@ protected:
         if (mPainting) applyAt(e->pos());
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override { mPainting = false; }
+    void mouseReleaseEvent(QMouseEvent*) override {
+        if (mPainting) {
+            mPainting = false;
+            if (onStrokeEnd) onStrokeEnd();
+        }
+    }
     void leaveEvent(QEvent*) override {
         mHoverX = mHoverZ = -1;
         update();
@@ -225,7 +244,11 @@ private:
         const int x = pos.x() / cell;
         const int z = pos.y() / cell;
         if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return;
-        map.SetTile(layer, x, z, tileId < 0 ? 0 : tileId); // setzt mDirty -> 3D baut neu
+        const int nv = tileId < 0 ? 0 : tileId;
+        const int before = map.GetTile(layer, x, z);
+        if (before == nv) return; // keine echte Änderung -> auch kein Verlauf
+        map.SetTile(layer, x, z, nv); // setzt mDirty -> 3D baut neu
+        if (onTileEdited) onTileEdited(x, z, layer, before, nv);
         if (onPaint) onPaint(x, z);
         update();
     }
@@ -276,7 +299,30 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     mZoomSpin->setRange(4, 64);
     mZoomSpin->setValue(20);
     mZoomSpin->setSuffix(QL(" px"));
+    mZoomSpin->setToolTip(QL("Kachelgröße der 2D-Ansicht in Pixeln"));
     tb->addWidget(mZoomSpin);
+
+    // Easy-to-use: Rückgängig / Wiederholen für das 2D-Malen
+    tb->addSpacing(12);
+    auto* undoBtn = new QToolButton(this);
+    undoBtn->setText(QL("Rückgängig"));
+    undoBtn->setToolTip(QL("Letzten Mal-Schritt rückgängig machen [Strg+Z]"));
+    undoBtn->setAutoRaise(true);
+    connect(undoBtn, &QToolButton::clicked, this, [this]() { undo(); });
+    tb->addWidget(undoBtn);
+    auto* redoBtn = new QToolButton(this);
+    redoBtn->setText(QL("Wiederholen"));
+    redoBtn->setToolTip(QL("Rückgängig gemachten Schritt wiederholen [Strg+Y]"));
+    redoBtn->setAutoRaise(true);
+    connect(redoBtn, &QToolButton::clicked, this, [this]() { redo(); });
+    tb->addWidget(redoBtn);
+
+    auto* scUndo = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Z")), this);
+    scUndo->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(scUndo, &QShortcut::activated, this, [this]() { undo(); });
+    auto* scRedo = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Y")), this);
+    scRedo->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(scRedo, &QShortcut::activated, this, [this]() { redo(); });
 
     tb->addStretch(1);
     mPosLabel = new QLabel(QL("Feld: -"), this);
@@ -319,22 +365,35 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
 
     mCanvas->onPaint = [this](int x, int z) {
         emit tilesChanged(); // 3D-View benachrichtigen (Map baut Geometrie neu)
-        mPosLabel->setText(QL("Feld: %1, %2  (gemalt)").arg(x).arg(z));
+        const QString text = QL("Feld: %1, %2  (gemalt)").arg(x).arg(z);
+        mPosLabel->setText(text);
+        emit hoverInfo(text);
     };
     mCanvas->onHover = [this](int x, int z) {
         if (!mCanvas->isVisible()) return;
+        QString text;
         if (mCanvas->eventMode) {
             const int eid = mCanvas->selectedEventId;
             if (eid > 0)
-                mPosLabel->setText(QL("Feld: %1, %2  (Event %3 gewählt)").arg(x).arg(z).arg(eid, 3, 10, QLatin1Char('0')));
+                text = QL("Feld: %1, %2  (Event %3 gewählt)").arg(x).arg(z).arg(eid, 3, 10, QLatin1Char('0'));
             else
-                mPosLabel->setText(QL("Feld: %1, %2  (Doppelklick = neues Event)").arg(x).arg(z));
+                text = QL("Feld: %1, %2  (Doppelklick = neues Event)").arg(x).arg(z);
         } else {
-            mPosLabel->setText(QL("Feld: %1, %2").arg(x).arg(z));
+            text = QL("Feld: %1, %2").arg(x).arg(z);
         }
+        mPosLabel->setText(text);
+        emit hoverInfo(text);
     };
     mCanvas->onEventActivated = [this](int x, int z) { createOrEditEventAt(x, z); };
     mCanvas->onDeleteEvent = [this]() { deleteSelectedEvent(); };
+    mCanvas->onStrokeBegin = [this]() { beginStroke(); };
+    mCanvas->onStrokeEnd = [this]() { endStroke(); };
+    mCanvas->onTileEdited = [this](int x, int z, int layer, int before, int after) {
+        recordEdit(x, z, layer, before, after);
+    };
+    mCanvas->onContextMenu = [this](int x, int z, const QPoint& gp) {
+        showCanvasMenu(x, z, gp);
+    };
 }
 
 void QtMapTab::onModeButton(int id) {
@@ -544,6 +603,137 @@ void QtMapTab::updatePaletteSelection() {
         } else {
             btn->setStyleSheet(QString());
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rückgängig / Wiederholen (2D-Malen) + Rechtsklick-Menü
+// ---------------------------------------------------------------------------
+
+void QtMapTab::beginStroke() {
+    mStrokeActive = true;
+    mStrokeAccum.clear();
+}
+
+void QtMapTab::recordEdit(int x, int z, int layer, int before, int after) {
+    if (!mStrokeActive) beginStroke();
+    const qint64 key = ((qint64)layer << 40) | ((qint64)x << 20) | (qint64)z;
+    auto it = mStrokeAccum.find(key);
+    if (it == mStrokeAccum.end())
+        mStrokeAccum.emplace(key, TileEdit{layer, x, z, before, after});
+    else
+        it->second.after = after; // erster Startwert bleibt, Endwert wandert mit
+}
+
+void QtMapTab::endStroke() {
+    if (!mStrokeActive) return;
+    mStrokeActive = false;
+    if (mStrokeAccum.empty() || !mEngine || !mEngine->IsInitialized()) {
+        mStrokeAccum.clear();
+        return;
+    }
+    StrokeEntry e;
+    e.mapId = currentMapId();
+    e.w = mEngine->GetMap().GetWidth();
+    e.h = mEngine->GetMap().GetHeight();
+    e.edits.reserve(mStrokeAccum.size());
+    for (const auto& kv : mStrokeAccum)
+        e.edits.push_back(kv.second);
+    mStrokeAccum.clear();
+    // Echte Gesamtänderung? (gemalt + wieder übermalt -> before == after)
+    bool anyChange = false;
+    for (const auto& ed : e.edits)
+        if (ed.before != ed.after) { anyChange = true; break; }
+    if (!anyChange) return;
+    mUndoStrokes.push_back(std::move(e));
+    if (mUndoStrokes.size() > 100)
+        mUndoStrokes.erase(mUndoStrokes.begin()); // Verlauf begrenzen
+    mRedoStrokes.clear(); // neuer Schritt verwirft die Wiederholen-Kette
+}
+
+void QtMapTab::undoRedoImpl(std::vector<StrokeEntry>& from,
+                            std::vector<StrokeEntry>& to, bool reverse) {
+    if (!mEngine || !mEngine->IsInitialized()) return;
+    auto& map = mEngine->GetMap();
+    while (!from.empty()) {
+        StrokeEntry e = std::move(from.back());
+        from.pop_back();
+        // Strokes anderer Karten / alter Kartengrößen verworfen (Sicherheit)
+        if (e.mapId != currentMapId() || e.w != map.GetWidth() || e.h != map.GetHeight())
+            continue;
+        for (auto it = e.edits.rbegin(); it != e.edits.rend(); ++it)
+            map.SetTile(it->layer, it->x, it->z, reverse ? it->before : it->after);
+        const int n = static_cast<int>(e.edits.size());
+        to.push_back(std::move(e));
+        mCanvas->update();
+        emit tilesChanged(); // 3D-Geometrie neu bauen
+        emit logMessage(reverse ? QL("Rückgängig: %1 Felder.").arg(n)
+                                : QL("Wiederholt: %1 Felder.").arg(n));
+        emit hoverInfo(reverse ? QL("Rückgängig (%1 Felder)").arg(n)
+                               : QL("Wiederholt (%1 Felder)").arg(n));
+        return;
+    }
+    emit hoverInfo(reverse ? QL("Nichts rückgängig zu machen.")
+                           : QL("Nichts zu wiederholen."));
+}
+
+void QtMapTab::undo() { undoRedoImpl(mUndoStrokes, mRedoStrokes, true); }
+void QtMapTab::redo() { undoRedoImpl(mRedoStrokes, mUndoStrokes, false); }
+
+void QtMapTab::showCanvasMenu(int x, int z, const QPoint& globalPos) {
+    if (!mEngine || !mEngine->IsInitialized()) return;
+    auto& map = mEngine->GetMap();
+    const bool inMap = x >= 0 && z >= 0 && x < map.GetWidth() && z < map.GetHeight();
+
+    QMenu menu(this);
+    QAction* actNewEv = nullptr;
+    QAction* actEditEv = nullptr;
+    QAction* actDelEv = nullptr;
+    rpg::MapEvent* ev = inMap ? findEventAt(x, z) : nullptr;
+    if (mCanvas->eventMode && inMap) {
+        if (ev) {
+            QString evName = QString::fromStdString(ev->name);
+            if (evName.isEmpty()) evName = QL("EV%1").arg(ev->id, 3, 10, QLatin1Char('0'));
+            actEditEv = menu.addAction(QL("Ereignis „%1“ bearbeiten …").arg(evName));
+            actDelEv = menu.addAction(QL("Ereignis löschen"));
+        } else {
+            actNewEv = menu.addAction(QL("Neues Ereignis hier …"));
+        }
+        menu.addSeparator();
+    }
+    QAction* actStartPos = nullptr;
+    if (inMap) actStartPos = menu.addAction(QL("Startposition hierher setzen"));
+    QAction* actProps = menu.addAction(QL("Karteneigenschaften …"));
+
+    QAction* chosen = menu.exec(globalPos);
+    if (!chosen) return;
+
+    if (actNewEv && chosen == actNewEv) {
+        createOrEditEventAt(x, z);
+    } else if (actEditEv && chosen == actEditEv && ev) {
+        mCanvas->selectedEventId = ev->id;
+        const int evId = ev->id;
+        const bool ok = QtEventEditorDialog::EditEvent(this, *ev);
+        (void)ok;
+        saveMapEvents();
+        mCanvas->update();
+        emit eventsChanged();
+        emit logMessage(QL("Event %1 bearbeitet.").arg(evId, 3, 10, QLatin1Char('0')));
+    } else if (actDelEv && chosen == actDelEv && ev) {
+        mCanvas->selectedEventId = ev->id;
+        deleteSelectedEvent();
+    } else if (actStartPos && chosen == actStartPos) {
+        auto& sys = rpg::Database::Get().System();
+        sys.startMapId = currentMapId();
+        sys.startX = x;
+        sys.startY = z; // 2. Karten-Achse entspricht der Welt-Z-Achse
+        mCanvas->setStartPos(x, z);
+        mCanvas->update();
+        emit logMessage(QL("Startposition gesetzt: (%1, %2) auf Karte %3 – "
+                           "wird beim nächsten Speichern übernommen.")
+                        .arg(x).arg(z).arg(sys.startMapId));
+    } else if (chosen == actProps) {
+        emit mapPropertiesRequested();
     }
 }
 

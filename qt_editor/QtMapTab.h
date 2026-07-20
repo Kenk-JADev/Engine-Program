@@ -6,6 +6,9 @@
 
 #include <QWidget>
 #include <functional>
+#include <map>
+#include <vector>
+#include <QtGlobal>
 
 class QScrollArea;
 class QSpinBox;
@@ -13,6 +16,7 @@ class QLabel;
 class QToolButton;
 class QButtonGroup;
 class QGridLayout;
+class QPoint;
 
 namespace rpg { class Engine; }
 
@@ -37,6 +41,10 @@ public:
     /// Liefert die ID der Karte, deren Ereignisse bearbeitet/gespeichert werden
     void setCurrentMapIdFn(std::function<int()> fn) { mMapIdFn = std::move(fn); }
 
+    /// Verlauf der 2D-Mal-Schritte (Strg+Z / Strg+Y)
+    void undo();
+    void redo();
+
 signals:
     void logMessage(const QString& msg);
     /// Tiles wurden in der 2D-Ansicht geändert (3D aktualisieren)
@@ -45,6 +53,10 @@ signals:
     void eventsChanged();
     /// In der XP-Palette des Tabs wurde ein Tile gewählt (Dock synchronisieren)
     void paintTilePicked(int tileId);
+    /// Text für die Statuszeile (Feld-Koordinaten, Modus-Hinweise)
+    void hoverInfo(const QString& text);
+    /// Rechtsklick-Menü: Karteneigenschaften angefordert (EditorWindow öffnet den Dialog)
+    void mapPropertiesRequested();
 
 private:
     void onModeButton(int id);              // 0..2 = Ebene, 3 = EV-Modus
@@ -54,6 +66,24 @@ private:
     int currentMapId() const;
     void saveMapEvents();
     void rebuildPalette();                  // XP-Tileset-Palette links neu aufbauen
+    void showCanvasMenu(int x, int z, const QPoint& globalPos); // Rechtsklick-Menü
+
+    // --- Rückgängig/Wiederholen für das 2D-Malen --------------------------
+    struct TileEdit { int layer, x, z, before, after; };
+    struct StrokeEntry {
+        int mapId = -1, w = 0, h = 0;       // nur gültig für diese Karte/Größe
+        std::vector<TileEdit> edits;
+    };
+    void beginStroke();
+    void recordEdit(int x, int z, int layer, int before, int after);
+    void endStroke();
+    void undoRedoImpl(std::vector<StrokeEntry>& from,
+                      std::vector<StrokeEntry>& to, bool reverse);
+
+    std::vector<StrokeEntry> mUndoStrokes;
+    std::vector<StrokeEntry> mRedoStrokes;
+    std::map<qint64, TileEdit> mStrokeAccum; // pro Zelle nur der erste Startwert
+    bool mStrokeActive = false;
 
     rpg::Engine* mEngine = nullptr;
     QtMapTabCanvas* mCanvas = nullptr;
