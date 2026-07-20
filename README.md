@@ -211,6 +211,33 @@ Event-Dialog** (Seiten, Bedingungen, Grafik, Autonome Bewegung, Optionen,
 Auslöser und die Befehlsliste mit `@>`-Einrückung). Der Befehlsdialog bietet
 alle XP-Befehle auf drei Seiten.
 
+## Spielmenü, Speichern/Laden & Laden (Shop) im Spiel
+
+Alles ist jetzt **im Player sichtbar und spielbar** (RmlUi-Anzeige,
+Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
+
+- **Spielmenü (Esc)** – wie in XP: **Gegenstände** (Liste mit Anzahl und
+  Beschreibungstext per Enter), **Speichern**, **Spiel beenden** (mit
+  Rückfrage; im Editor-Playtest stoppt der Test, im Player endet das Spiel),
+  **Zurück**. Respektiert die Event-Befehle „Menüaufruf/speichern
+  (nicht) erlauben" (134/135).
+- **Speicherbildschirm** (Menü, Event-Befehl 352 oder `UI.open_save_screen`):
+  **4 Slots** im XP-Stil mit Infozeile aus dem Savegame: Kartenname,
+  erstes Gruppenmitglied + Level, Gold und Speicherzähler. Leere Slots sind
+  beim Laden gesperrt. Nach dem Speichern spielt der Save-SE aus dem
+  System-Tab der Datenbank.
+- **Laden/Shop (Event-Befehl 302)**: XP-Ablauf **Kaufen / Verkaufen /
+  Abbrechen** – Preise kommen aus der Datenbank, Verkauf bringt den halben
+  Preis, Käufe ziehen das Gold sofort ab und legen den Gegenstand ins
+  Inventar. Bei zu wenig Gold ertönt der Buzzer-SE.
+- **Sichtbar gemacht**: Auch **Auswahl (102)**, **Zahleneingabe (103)** und
+  **Namenseingabe (303)** zeigen jetzt ein eigenes XP-Fenster im Player
+  (vorher nur Tastatursteuerung ohne Anzeige).
+- **Kampftest** wie im XP-Datenbank-Dialog:
+  `RPGMaker3D_Player --project <Pfad> --battletest=<Trupp-ID>` startet das
+  Spiel und geht sofort in den Kampf gegen den Trupp (Anfangsgruppe aus dem
+  System-Tab); `--battletest` ohne Zahl nimmt Trupp 1.
+
 ## Ruby-API (Spiel aus Skripten steuern)
 
 Das Prinzip entspricht RPG Maker XP: **Die exe liefert nur den C++-Kern**
@@ -254,6 +281,8 @@ Kartenname im Spiel-Fenster):
 | `UI.show_world_text(...)`, `UI.clear_texts` | Texte in der 3D-Welt |
 | `UI.show_picture / .move_picture / .tween_picture / .remove_picture / .clear_pictures` | Bilder wie XP „Bild anzeigen/bewegen" |
 | `UI.hud_visible = false`, `UI.hud_visible?` | **HUD ein-/ausblenden** (z. B. für Zwischensequenzen) |
+| `UI.open_menu` | XP-Spielmenü öffnen (Gegenstände/Speichern/Beenden) |
+| `UI.open_save_screen(true)` | XP-Speicherbildschirm (4 Slots; `false` = Laden-Ansicht) |
 | `UI.gold`, `UI.add_gold(n)` | Gold-Anzeige lesen/ändern |
 
 ### Weitere Module

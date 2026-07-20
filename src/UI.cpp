@@ -1,5 +1,6 @@
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Input.h"
@@ -14,6 +15,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cctype>
+#include <memory>
 
 namespace rpg {
 
@@ -151,26 +153,57 @@ void TitleScreen::Draw() {
 #endif
 }
 
-// --- PauseMenu ---
-void PauseMenu::Show() { mVisible = true; mSelected=0; }
+// --- PauseMenu (delegiert an das XP-Spielmenue) ---
+void PauseMenu::Show() { GameUI::Get().OpenGameMenu(); }
+void PauseMenu::Hide() { GameUI::Get().Menu().Hide(); }
+bool PauseMenu::IsVisible() const { return GameUI::Get().Menu().IsVisible(); }
 void PauseMenu::Draw() {
-    if (!mVisible) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGui::Begin("Pause");
-    const char* options[] = {"Resume", "Save", "Exit to Title"};
-    for (int i=0;i<3;++i) {
-        bool sel = (mSelected==i);
-        if (ImGui::Selectable(options[i], sel)) {
-            mSelected=i;
-            if (i==0 && onResume) { onResume(); mVisible=false; }
-            if (i==1 && onSave) onSave();
-            if (i==2 && onExitToTitle) { onExitToTitle(); mVisible=false; }
-        }
+    // Anzeige laeuft ueber RmlUi (#menu_box) - kein ImGui-Pfad mehr noetig.
+}
+
+// --- MenuWindow ---
+void MenuWindow::Show(const std::string& title, const std::vector<Entry>& items,
+                      std::function<void(int)> onPickFn, bool cancelable) {
+    mTitle = title;
+    mItems = items;
+    onPick = std::move(onPickFn);
+    mCancelable = cancelable;
+    mCursor = 0;
+    // Cursor auf ersten aktivierten Eintrag setzen
+    while (mCursor < (int)mItems.size() && !mItems[mCursor].enabled) ++mCursor;
+    if (mCursor >= (int)mItems.size()) mCursor = 0;
+    onCancel = nullptr;
+    mVisible = true;
+}
+
+void MenuWindow::Hide() {
+    mVisible = false;
+    onPick = nullptr;
+    onCancel = nullptr;
+}
+
+void MenuWindow::MoveCursor(int dir) {
+    if (mItems.empty()) return;
+    int next = mCursor;
+    for (size_t guard = 0; guard < mItems.size(); ++guard) {
+        next = (next + dir + (int)mItems.size()) % (int)mItems.size();
+        if (mItems[next].enabled) { mCursor = next; return; }
     }
-    ImGui::End();
-#else
-    (void)mSelected;
-#endif
+}
+
+void MenuWindow::Confirm() {
+    if (!mVisible || mItems.empty() || mCursor < 0 || mCursor >= (int)mItems.size()) return;
+    if (!mItems[mCursor].enabled) return;
+    auto cb = onPick;
+    const int idx = mCursor;
+    if (cb) cb(idx); // cb darf das Menue neu aufbauen (Show erneut aufrufen)
+}
+
+void MenuWindow::Cancel() {
+    if (!mVisible || !mCancelable) return;
+    auto cb = onCancel;
+    if (cb) { cb(); return; }
+    Hide();
 }
 
 // --- GameUI ---
@@ -233,7 +266,232 @@ void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial
     RPG_LOG_INFO("[UI] Namenseingabe aktiv (max " + std::to_string(mNameMaxChars) + " Zeichen)");
 }
 
+// ============================================================================
+// XP-Spielmenue (Esc) / Speicherbildschirm / Laden - alles ueber MenuWindow
+// ============================================================================
+
+void GameUI::OpenGameMenu() {
+    // XP: "Menueaufruf verboten" respektieren
+    if (!Game::Get().System().HasMenuAccess()) return;
+
+    std::vector<MenuWindow::Entry> items;
+    items.push_back({"Gegenstände", true});
+    items.push_back({"Speichern", Game::Get().System().HasSaveAccess()});
+    items.push_back({"Spiel beenden", true});
+    items.push_back({"Zurück", true});
+
+    mMenu.Show("Menü", items, [this](int idx) {
+        switch (idx) {
+            case 0: OpenItemsMenu(); break;
+            case 1:
+                // Nach dem Speichern/Abbruch wieder ins Menue (XP-Verhalten)
+                ShowSaveScreen(true, [this]() { OpenGameMenu(); });
+                break;
+            case 2: {
+                // XP: Sicherheitsfrage vor dem Beenden
+                std::vector<MenuWindow::Entry> q = {
+                    {"Ja, beenden", true}, {"Nein, zurück", true}};
+                auto& pause = mPause;
+                mMenu.Show("Spiel wirklich beenden?", q,
+                    [this, &pause](int a) {
+                        if (a == 0) {
+                            mMenu.Hide();
+                            auto cb = pause.onExitToTitle;
+                            if (cb) cb();
+                        } else {
+                            OpenGameMenu();
+                        }
+                    });
+                mMenu.onCancel = [this]() { OpenGameMenu(); };
+                break;
+            }
+            default: mMenu.Hide(); break; // Zurück
+        }
+    });
+    mMenu.onCancel = [this]() {
+        mMenu.Hide();
+        auto cb = mPause.onResume;
+        if (cb) cb();
+    };
+}
+
+void GameUI::OpenItemsMenu() {
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> itemIds; // Index -> Item-ID (fuer Beschreibung)
+    auto& party = Game::Get().Party();
+
+    // sortiert nach ID, damit die Liste stabil bleibt
+    std::vector<std::pair<int,int>> bag(party.Items().begin(), party.Items().end());
+    std::sort(bag.begin(), bag.end());
+    for (const auto& kv : bag) {
+        const auto* it = Database::Get().GetItem(kv.first);
+        const std::string name = it ? it->name : ("Gegenstand #" + std::to_string(kv.first));
+        items.push_back({name + "   x " + std::to_string(kv.second), true});
+        itemIds.push_back(kv.first);
+    }
+    if (items.empty()) items.push_back({"(leer)", false});
+
+    mMenu.Show("Gegenstände  (Gold: " + std::to_string(party.GetGold()) + " G)",
+        items, [this, itemIds](int idx) {
+            if (idx < 0 || idx >= (int)itemIds.size()) return;
+            const auto* it = Database::Get().GetItem(itemIds[idx]);
+            // XP zeigt die Beschreibung unter der Liste - wir als Nachricht:
+            if (it && !it->description.empty()) ShowMessage(it->description);
+        });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::ShowSaveScreen(bool saveMode, std::function<void()> onClosed) {
+    // XP: "Speichern verboten" (Event-Befehl 134) respektieren
+    if (saveMode && !Game::Get().System().HasSaveAccess()) {
+        ShowMessage("Speichern ist zur Zeit nicht möglich.");
+        if (onClosed) onClosed();
+        return;
+    }
+    // Abschluss genau einmal melden (Pick ODER Abbruch)
+    auto closed = std::make_shared<std::function<void()>>(std::move(onClosed));
+    auto finish = [this, closed]() {
+        mMenu.Hide();
+        if (*closed) {
+            auto cb = std::move(*closed);
+            *closed = nullptr;
+            cb();
+        }
+    };
+
+    std::vector<MenuWindow::Entry> items;
+    for (int slot = 1; slot <= 4; ++slot) {
+        Game::SaveSlotInfo info;
+        Game::Get().GetSaveSlotInfo(slot, info);
+        std::string line = "Datei " + std::to_string(slot) + ":  ";
+        if (info.exists) {
+            line += info.mapName;
+            if (!info.actorName.empty())
+                line += "  –  " + info.actorName + " Lv " + std::to_string(info.actorLevel);
+            line += "   (" + std::to_string(info.gold) + " G, " +
+                    std::to_string(info.saveCount) + "x gespeichert)";
+        } else {
+            line += "— leer —";
+        }
+        items.push_back({line, saveMode || info.exists});
+    }
+
+    mMenu.Show(saveMode ? "Spielstand speichern" : "Spielstand laden", items,
+        [this, saveMode, finish](int idx) {
+            const int slot = idx + 1;
+            const bool ok = saveMode ? Game::Get().Save(slot) : Game::Get().Load(slot);
+            const auto& sys = Database::Get().System();
+            EventSystem_PlayAudio(ok ? (saveMode ? sys.saveSe : sys.loadSe)
+                                     : sys.buzzerSe, 3, false);
+            if (!ok)
+                ShowMessage(saveMode ? "Speichern fehlgeschlagen." : "Laden fehlgeschlagen.");
+            finish(); // XP: Bildschirm schliesst nach der Aktion
+        });
+    mMenu.onCancel = finish;
+}
+
+void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onClosed) {
+    mShopGoods = itemIds;
+    mShopOnClosed = std::move(onClosed);
+    mShopActive = true;
+
+    auto closeShop = [this]() {
+        mShopActive = false;
+        mMenu.Hide();
+        auto cb = std::move(mShopOnClosed);
+        mShopOnClosed = nullptr;
+        if (cb) cb();
+    };
+
+    // 3 Phasen (Hauptauswahl / Kaufen / Verkaufen) als shared-Functions,
+    // damit sie sich gegenseitig und selbst wieder aufrufen koennen.
+    auto phaseMain = std::make_shared<std::function<void()>>();
+    auto phaseBuy = std::make_shared<std::function<void()>>();
+    auto phaseSell = std::make_shared<std::function<void()>>();
+
+    *phaseMain = [this, closeShop, phaseBuy, phaseSell]() {
+        std::vector<MenuWindow::Entry> items = {
+            {"Kaufen", !mShopGoods.empty()},
+            {"Verkaufen", true},
+            {"Abbrechen", true}};
+        mMenu.Show("Laden   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
+            items, [closeShop, phaseBuy, phaseSell](int idx) {
+                if (idx == 0) (*phaseBuy)();
+                else if (idx == 1) (*phaseSell)();
+                else closeShop();
+            });
+        mMenu.onCancel = closeShop;
+    };
+
+    *phaseBuy = [this, phaseMain, phaseBuy]() {
+        std::vector<MenuWindow::Entry> items;
+        for (int id : mShopGoods) {
+            const auto* it = Database::Get().GetItem(id);
+            const std::string name = it ? it->name : ("Gegenstand #" + std::to_string(id));
+            const int price = it ? it->price : 0;
+            items.push_back({name + "   –   " + std::to_string(price) + " G", it != nullptr});
+        }
+        if (items.empty()) items.push_back({"(leer)", false});
+        mMenu.Show("Kaufen   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
+            items, [this, phaseBuy](int idx) {
+                if (idx < 0 || idx >= (int)mShopGoods.size()) return;
+                const auto* it = Database::Get().GetItem(mShopGoods[idx]);
+                if (!it) return;
+                auto& party = Game::Get().Party();
+                const auto& sys = Database::Get().System();
+                if (party.GetGold() >= it->price) {
+                    party.GainGold(-it->price);
+                    party.GainItem(it->id, 1);
+                    EventSystem_PlayAudio(sys.shopSe, 3, false);
+                } else {
+                    EventSystem_PlayAudio(sys.buzzerSe, 3, false);
+                }
+                (*phaseBuy)(); // Neuaufbau: Gold-Anzeige aktualisieren
+            });
+        mMenu.onCancel = [phaseMain]() { (*phaseMain)(); };
+    };
+
+    *phaseSell = [this, phaseMain, phaseSell]() {
+        std::vector<std::pair<int,int>> bag(
+            Game::Get().Party().Items().begin(), Game::Get().Party().Items().end());
+        std::sort(bag.begin(), bag.end());
+        std::vector<MenuWindow::Entry> items;
+        for (const auto& kv : bag) {
+            const auto* it = Database::Get().GetItem(kv.first);
+            const std::string name = it ? it->name : ("Gegenstand #" + std::to_string(kv.first));
+            const int price = it ? it->price / 2 : 0; // XP: Verkauf = halber Preis
+            items.push_back({name + " x " + std::to_string(kv.second) +
+                "   –   " + std::to_string(price) + " G", it != nullptr && price > 0});
+        }
+        if (items.empty()) items.push_back({"(leer)", false});
+        mMenu.Show("Verkaufen   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
+            items, [this, bag, phaseSell](int idx) {
+                if (idx < 0 || idx >= (int)bag.size()) return;
+                const auto* it = Database::Get().GetItem(bag[idx].first);
+                if (!it || it->price <= 0) return;
+                auto& party = Game::Get().Party();
+                party.GainItem(it->id, -1);
+                party.GainGold(it->price / 2);
+                EventSystem_PlayAudio(Database::Get().System().shopSe, 3, false);
+                (*phaseSell)(); // Neuaufbau (Anzahl/Gold)
+            });
+        mMenu.onCancel = [phaseMain]() { (*phaseMain)(); };
+    };
+
+    (*phaseMain)();
+}
+
 void GameUI::UpdateModalInput(Input& input) {
+    // --- Menue (Spielmenue/Speicherbildschirm/Laden) hat oberste Prioritaet ---
+    if (mMenu.IsVisible()) {
+        if (input.IsKeyPressed(Key::Up) || input.IsKeyPressed(Key::W)) mMenu.MoveCursor(-1);
+        if (input.IsKeyPressed(Key::Down) || input.IsKeyPressed(Key::S)) mMenu.MoveCursor(+1);
+        if (input.IsKeyPressed(Key::Enter) || input.IsKeyPressed(Key::E) || input.IsKeyPressed(Key::Space))
+            mMenu.Confirm();
+        if (input.IsKeyPressed(Key::Escape)) mMenu.Cancel();
+        return;
+    }
+
     // --- Choices haben oberste Prioritaet ---
     if (mMessage.IsVisible() && mMessage.HasChoices() && mMessage.IsTextComplete()) {
         const int count = mMessage.GetChoiceCount();

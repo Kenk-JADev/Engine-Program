@@ -88,6 +88,10 @@ const char* kRubySnippets[][2] = {
     {"Speichern / Laden",
      "Game.save(1)  # Slot 1 (Datei <Projekt>/saves/save1.json)\n"
      "Game.load(1)\n"},
+    {"Speicherbildschirm (XP)",
+     "UI.open_save_screen(true)  # 4 Slots mit Info, wie in XP\n"},
+    {"Spielmenue oeffnen (XP)",
+     "UI.open_menu()  # Gegenstaende / Speichern / Beenden\n"},
 };
 
 const char* kCppSnippets[][2] = {

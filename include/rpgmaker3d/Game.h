@@ -275,6 +275,23 @@ public:
     void NewGameAt(const Vec3& worldPos, int mapId = -1);
     bool Save(int slot);
     bool Load(int slot);
+
+    /// Kurzinfo eines Savegame-Slots fuer den XP-Speicherbildschirm
+    /// (wird aus der JSON-Datei gelesen, OHNE sie zu laden).
+    struct SaveSlotInfo {
+        bool exists = false;
+        int saveCount = 0;      // wie oft gespeichert wurde (XP-Zaehler)
+        int gold = 0;
+        int mapId = 0;
+        std::string mapName;    // aus der Datenbank aufgeloest
+        std::string actorName;  // erstes Gruppenmitglied
+        int actorLevel = 0;
+    };
+    bool GetSaveSlotInfo(int slot, SaveSlotInfo& out) const;
+
+    /// Kampf gegen einen Trupp aus der Datenbank starten (Ruby Game.start_battle,
+    /// Player --battletest). canEscape = XP „Flucht erlauben".
+    void StartBattleByTroop(int troopId, bool canEscape = true);
     /// Ordner fuer Spielstaende (Standard "saves" relativ zum Arbeits-
     /// verzeichnis). Player/Editor setzen hier "<Projekt>/saves", damit
     /// Savegames IMMER im Projektordner landen – egal von wo die exe

@@ -149,18 +149,55 @@ private:
 
 class PauseMenu {
 public:
+    // XP: Esc oeffnet das Spiel-MENUE (keine improvisierte Pause-Liste mehr).
+    // Show/Hide/IsVisible delegieren an GameUI::Menu() - die Callbacks
+    // (onResume/onSave/onExitToTitle) verdrahtet die Engine wie bisher.
     void Show();
-    void Hide() { mVisible = false; }
-    bool IsVisible() const { return mVisible; }
+    void Hide();
+    bool IsVisible() const;
     void Draw();
 
     std::function<void()> onResume;
     std::function<void()> onSave;
     std::function<void()> onExitToTitle;
+};
+
+// ---------------------------------------------------------------------------
+// Generisches Listen-Menue im XP-Stil (Titel + nummerierte Eintraege + Cursor)
+// Anzeige erfolgt ueber RmlUi (#menu_box); die Tastatursteuerung laeuft in
+// GameUI::UpdateModalInput. Basis fuer: Spielmenue (Esc), Gegenstandsliste,
+// Speicherbildschirm (4 Slots) und Shop (Kaufen/Verkaufen).
+// ---------------------------------------------------------------------------
+class MenuWindow {
+public:
+    struct Entry {
+        std::string text;   // komplette Zeile (z. B. "Trank ......... 50 G")
+        bool enabled = true; // ausgegraute Eintraege ueberspringt der Cursor
+    };
+
+    void Show(const std::string& title, const std::vector<Entry>& items,
+              std::function<void(int)> onPick, bool cancelable = true);
+    void Hide();
+    bool IsVisible() const { return mVisible; }
+
+    void MoveCursor(int dir); // +/-1, ueberspringt deaktivierte Eintraege
+    void Confirm();           // ruft onPick(cursor)
+    void Cancel();            // onCancel() oder Hide()
+
+    const std::string& GetTitle() const { return mTitle; }
+    const std::vector<Entry>& GetItems() const { return mItems; }
+    int GetCursor() const { return mCursor; }
+    bool IsCancelable() const { return mCancelable; }
+
+    std::function<void(int)> onPick;
+    std::function<void()> onCancel;
 
 private:
+    std::string mTitle;
+    std::vector<Entry> mItems;
+    int mCursor = 0;
     bool mVisible = false;
-    int mSelected = 0;
+    bool mCancelable = true;
 };
 
 class GameUI {
@@ -170,6 +207,25 @@ public:
     MessageWindow& Message() { return mMessage; }
     TitleScreen& Title() { return mTitle; }
     PauseMenu& Pause() { return mPause; }
+    MenuWindow& Menu() { return mMenu; }
+
+    // === XP-Spielmenue (Esc) ===
+    // Gegenstaende / Speichern / Spiel beenden / Zurueck - aufgebaut aus den
+    // in Pause() verdrahteten Callbacks. Respektiert Game::System().HasMenuAccess().
+    void OpenGameMenu();
+    // Untermenue: Inventarliste (Items, Waffen, Ruestungen mit Anzahl)
+    void OpenItemsMenu();
+
+    // === XP-Speicherbildschirm (4 Slots mit Infozeile) ===
+    // saveMode=true: Enter speichert in den Slot; false: nur belegte Slots ladbar.
+    // onClosed wird (auch bei Abbruch) genau einmal aufgerufen - nutzt der
+    // Event-Interpreter, um nach dem Schliessen weiterzulaufen.
+    void ShowSaveScreen(bool saveMode, std::function<void()> onClosed = nullptr);
+
+    // === XP-Laden (Event-Befehl 302) ===
+    // Kaufen/Verkaufen/Abbrechen, Preise aus der Datenbank; Enter kauft 1x.
+    void ShowShop(const std::vector<int>& itemIds, std::function<void()> onClosed = nullptr);
+    bool IsShopActive() const { return mShopActive; }
 
     void Update(float dt);
     void Draw();
@@ -245,6 +301,12 @@ private:
     MessageWindow mMessage;
     TitleScreen mTitle;
     PauseMenu mPause;
+    MenuWindow mMenu;
+
+    // Shop-State (ShowShop)
+    bool mShopActive = false;
+    std::vector<int> mShopGoods;
+    std::function<void()> mShopOnClosed;
 
     // Choices: Abbruch per Escape erlaubt? (XP: "Abbruch nicht erlaubt")
     bool mChoiceCancelAllowed = true;

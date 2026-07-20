@@ -100,6 +100,8 @@ void EventInterpreter::Setup(const std::vector<EventCommand>& list, int eventId,
     mChoiceWaiting = false;
     mNumberWaiting = false;
     mNameWaiting = false;
+    mShopWaiting = false;
+    mSaveWaiting = false;
     mMoveRouteWaiting = false;
     mButtonInputVariableId = 0;
     mBranch.clear();
@@ -171,6 +173,8 @@ void EventInterpreter::Update(float dt) {
         if (mChoiceWaiting) return;
         // Warte auf Zahleneingabe / Namenseingabe
         if (mNumberWaiting || mNameWaiting) return;
+        // Warte auf Shop- / Speicherbildschirm (302 / 352)
+        if (mShopWaiting || mSaveWaiting) return;
         // Warte auf Move-Completion
         if (mMoveRouteWaiting) {
             if (isAnyRouteForcing && isAnyRouteForcing()) return;
@@ -811,7 +815,13 @@ bool EventInterpreter::ExecuteCommand() {
             if (cmd.param3 > 0) items.push_back(cmd.param3);
         }
         if (items.empty()) items = {1, 2};
-        if (onShopProcessing) onShopProcessing(items);
+        if (onShopProcessing) {
+            onShopProcessing(items); // externer Override (kein eingebauter Screen)
+        } else {
+            // XP-Shopfenster (RmlUi): Interpreter wartet bis zum Schliessen
+            mShopWaiting = true;
+            GameUI::Get().ShowShop(items, [this]() { mShopWaiting = false; });
+        }
         return true;
     }
     case CC::NameInputProcessing: {
@@ -924,7 +934,13 @@ bool EventInterpreter::ExecuteCommand() {
         GameUI::Get().Pause().Show();
         return true;
     case CC::OpenSaveScreen:
-        if (onOpenSave) onOpenSave(1);
+        if (onOpenSave) {
+            onOpenSave(1); // externer Override
+        } else {
+            // XP-Speicherbildschirm (4 Slots): Interpreter wartet bis zum Ende
+            mSaveWaiting = true;
+            GameUI::Get().ShowSaveScreen(true, [this]() { mSaveWaiting = false; });
+        }
         return true;
     case CC::GameOver:
         if (onGameOver) onGameOver();
@@ -1156,24 +1172,9 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
         };
         RPG_LOG_INFO("[Event] Kampf gestartet: Troop " + std::to_string(troopId));
     };
-    interp.onShopProcessing = [](const std::vector<int>& itemIds) {
-        std::string list = "Laden: ";
-        for (size_t i = 0; i < itemIds.size(); ++i) {
-            const auto* it = Database::Get().GetItem(itemIds[i]);
-            if (i) list += ", ";
-            list += it ? it->name : ("#" + std::to_string(itemIds[i]));
-            if (it) list += " (" + std::to_string(it->price) + "G)";
-        }
-        GameUI::Get().ShowMessage(list);
-        // Einfacher Auto-Dialog: erstes Item kaufen wenn moeglich
-        if (!itemIds.empty()) {
-            const auto* it = Database::Get().GetItem(itemIds[0]);
-            if (it && Game::Get().Party().GetGold() >= it->price) {
-                Game::Get().Party().GainGold(-it->price);
-                Game::Get().Party().GainItem(it->id, 1);
-            }
-        }
-    };
+    // Hinweis: Der Laden (302) laeuft INTERNE ueber GameUI::ShowShop
+    // (XP-Shopfenster mit Kaufen/Verkaufen). onShopProcessing bleibt als
+    // externer Override erhalten und ist hier bewusst NICHT vorbelegt.
     interp.onRecoverAll = [](int actorId) {
         if ((int)actorId > 0) {
             if (auto* a = Game::Get().Party().GetActor(actorId)) a->RecoverAll();
@@ -1198,16 +1199,9 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
             a.level = std::max(1, level);
         });
     };
-    interp.onOpenSave = [](int slot) {
-        if (!Game::Get().System().HasSaveAccess()) {
-            GameUI::Get().ShowMessage("Speichern ist zur Zeit nicht möglich.");
-            return;
-        }
-        if (Game::Get().Save(slot > 0 ? slot : 1))
-            GameUI::Get().ShowMessage("Spiel gespeichert (Slot " + std::to_string(slot > 0 ? slot : 1) + ").");
-        else
-            GameUI::Get().ShowMessage("Speichern fehlgeschlagen.");
-    };
+    // Hinweis: "Speicherbildschirm aufrufen" (352) oeffnet INTERNE
+    // GameUI::ShowSaveScreen (4 XP-Slots). onOpenSave bleibt Override-Hook
+    // fuer externe UIs und ist hier bewusst NICHT vorbelegt.
     interp.onOpenLoad = [](int slot) {
         if (Game::Get().Load(slot > 0 ? slot : 1))
             GameUI::Get().ShowMessage("Spiel geladen (Slot " + std::to_string(slot > 0 ? slot : 1) + ").");

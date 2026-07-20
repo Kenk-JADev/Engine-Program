@@ -447,6 +447,71 @@ std::string Game::SavePath(int slot) const {
     return mSaveDirectory + "/save" + std::to_string(slot) + ".json";
 }
 
+// ---------------------------------------------------------------------------
+// SaveSlotInfo (XP-Speicherbildschirm): liest nur Kopfdaten der JSON-Datei.
+// ---------------------------------------------------------------------------
+bool Game::GetSaveSlotInfo(int slot, SaveSlotInfo& out) const {
+    out = SaveSlotInfo{};
+    const std::string path = SavePath(slot);
+    if (!std::filesystem::exists(path)) return false;
+    std::ifstream in(path);
+    if (!in) return false;
+    std::stringstream ss; ss << in.rdbuf();
+    const std::string c = ss.str();
+
+    auto findInt = [&](const char* key, int def, size_t from = 0) {
+        const auto p = c.find(key, from);
+        if (p == std::string::npos) return def;
+        const auto col = c.find(':', p);
+        if (col == std::string::npos) return def;
+        try { return std::stoi(c.substr(col + 1)); } catch (...) { return def; }
+    };
+
+    out.exists = true;
+    out.saveCount = findInt("\"saveCount\"", 1);
+    out.gold = findInt("\"gold\"", 0);
+    out.mapId = findInt("\"mapId\"", 0);
+
+    // Erstes Gruppenmitglied (Name + Level) aus dem actors-Block
+    const auto actorsPos = c.find("\"actors\"");
+    if (actorsPos != std::string::npos) {
+        const auto nameKey = c.find("\"name\":\"", actorsPos);
+        if (nameKey != std::string::npos) {
+            const size_t start = nameKey + 8;
+            const size_t end = c.find('"', start);
+            if (end != std::string::npos)
+                out.actorName = c.substr(start, end - start);
+        }
+        out.actorLevel = findInt("\"level\"", 1, actorsPos);
+    }
+
+    // Kartenname aus der Datenbank aufloesen (fallback: "Karte <id>")
+    for (const auto& mi : Database::Get().MapInfos()) {
+        if (mi.id == out.mapId) { out.mapName = mi.name; break; }
+    }
+    if (out.mapName.empty())
+        out.mapName = "Karte " + std::to_string(out.mapId);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Kampfstart gegen Trupp (Ruby Game.start_battle, Player --battletest)
+// ---------------------------------------------------------------------------
+void Game::StartBattleByTroop(int troopId, bool canEscape) {
+    std::vector<int> enemies;
+    if (const auto* tr = Database::Get().GetTroop(troopId))
+        enemies = tr->members;
+    if (enemies.empty()) enemies = {1}; // Fallback, damit der Test nie leer ist
+    BattleSystem::Get().Setup(enemies, canEscape, false);
+    BattleSystem::Get().onMessage = [](const std::string& msg) {
+        GameUI::Get().ShowMessage(msg);
+    };
+    BattleAction act; act.type = BattleActionType::Attack;
+    BattleSystem::Get().SetAction(act);
+    GameUI::Get().ShowMessage("Kampf!");
+    RPG_LOG_INFO("Kampf gestartet: Trupp " + std::to_string(troopId));
+}
+
 bool Game::Save(int slot) {
     try {
         if (slot < 1) slot = 1;

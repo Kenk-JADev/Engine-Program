@@ -106,6 +106,11 @@ static const char* kGameBody = R"RML(
         <div id="message_text" class="statlabel" style="font-size: 15px; color: #f0e6cc; white-space: pre-wrap;">{{message_text}}</div>
         <div class="hint">E / Enter / Space = weiter</div>
     </div>
+    <div id="menu_box" class="rpg-window" style="position: absolute; right: 4%; top: 12%; width: 46%; display: none;">
+        <div class="rpg-title">{{menu_title}}</div>
+        <div id="menu_text" style="white-space: pre-wrap; font-size: 15px; color: #f0e6cc;">{{menu_text}}</div>
+        <div class="hint">Pfeile/W-S waehlen | E/Enter bestaetigen | Esc zurueck</div>
+    </div>
     <div id="hud_root" class="rpg-window" style="position: absolute; left: 24px; top: 24px; width: 320px;">
         <div class="rpg-title">Spiel-HUD</div>
         <div>Map: <span class="badge">{{map_name}}</span></div>
@@ -205,6 +210,9 @@ public:
     Rml::String mpStyle = "width: 156px; height: 100%; background-color: #3b6fc8;";
     Rml::String messageText = "";
     Rml::String messageSpeaker = "Dialog";
+    Rml::String menuTitle = "";
+    Rml::String menuText = "";
+    bool menuVisible = false;
     Rml::String scriptLine = "";
     Rml::String stText[6];
     float stX[6] = {};
@@ -239,6 +247,8 @@ public:
             h.DirtyVariable("mp_style");
             h.DirtyVariable("message_text");
             h.DirtyVariable("message_speaker");
+            h.DirtyVariable("menu_title");
+            h.DirtyVariable("menu_text");
             h.DirtyVariable("script_line");
             h.DirtyVariable("gold");
             h.DirtyVariable("st0"); h.DirtyVariable("st1"); h.DirtyVariable("st2");
@@ -275,6 +285,8 @@ public:
         ctor.Bind("mp_style", &mpStyle);
         ctor.Bind("message_text", &messageText);
         ctor.Bind("message_speaker", &messageSpeaker);
+        ctor.Bind("menu_title", &menuTitle);
+        ctor.Bind("menu_text", &menuText);
         ctor.Bind("script_line", &scriptLine);
         ctor.Bind("gold", &gold);
         ctor.Bind("st0", &stText[0]); ctor.Bind("st1", &stText[1]); ctor.Bind("st2", &stText[2]);
@@ -559,6 +571,66 @@ void RmlUiSystem::SyncFromGameUI() {
         m->messageSpeaker = "Dialog";
     }
     if (wasVis != m->messageVisible) m->ApplyMessageVisibility();
+
+    // ------------------------------------------------------------------
+    // Modale Listen/Dialoge in #menu_box spiegeln (XP):
+    // 1. MenuWindow (Spielmenue/Gegenstaende/Speicherbildschirm/Laden)
+    // 2. Auswahl (102), 3. Zahleneingabe (103), 4. Namenseingabe (303)
+    // ------------------------------------------------------------------
+    {
+        auto& gui = GameUI::Get();
+        std::string mtitle, mtext;
+        const std::string cursorGlyph = "\xE2\x96\xB6 "; // "▶ "
+        if (gui.Menu().IsVisible()) {
+            mtitle = gui.Menu().GetTitle();
+            const auto& items = gui.Menu().GetItems();
+            const int cur = gui.Menu().GetCursor();
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (i) mtext += "\n";
+                mtext += ((int)i == cur) ? cursorGlyph : "    ";
+                mtext += items[i].text;
+            }
+        } else if (gui.Message().IsVisible() && gui.Message().HasChoices() &&
+                   gui.Message().IsTextComplete()) {
+            mtitle = "Auswahl";
+            const auto& ch = gui.Message().GetChoices();
+            const int sel = gui.Message().GetSelectedChoice();
+            for (size_t i = 0; i < ch.size(); ++i) {
+                if (i) mtext += "\n";
+                mtext += ((int)i == sel) ? cursorGlyph : "    ";
+                mtext += ch[i].text;
+            }
+        } else if (gui.IsNumberInputActive()) {
+            mtitle = gui.GetNumberInputPrompt().empty()
+                     ? "Zahleneingabe" : gui.GetNumberInputPrompt();
+            const int digits = gui.GetNumberInputDigits();
+            const int value = gui.GetNumberInputValue();
+            const int cur = gui.GetNumberInputCursor();
+            std::string line;
+            for (int pos = digits - 1; pos >= 0; --pos) { // links = hoechste Stelle
+                int div = 1;
+                for (int i = 0; i < pos; ++i) div *= 10;
+                const int d = (value / div) % 10;
+                if (!line.empty()) line += " ";
+                line += (pos == cur) ? "(" + std::to_string(d) + ")"
+                                     : std::to_string(d);
+            }
+            mtext = line + "\n(links/rechts Stelle, hoch/runter Ziffer, 0-9, Enter)";
+        } else if (gui.IsNameInputActive()) {
+            mtitle = gui.GetNameInputPrompt().empty()
+                     ? "Namenseingabe" : gui.GetNameInputPrompt();
+            mtext = gui.GetNameInputText() + "\xE2\x96\x88"; // "█" als Cursor
+            mtext += "\n(A-Z tippen, Alt+A/O/U = Umlaute, Enter fertig)";
+        }
+        const bool vis = !mtitle.empty() || !mtext.empty();
+        if (vis != m->menuVisible) {
+            if (auto* box = m->gameDoc ? m->gameDoc->GetElementById("menu_box") : nullptr)
+                box->SetProperty("display", vis ? "block" : "none");
+        }
+        m->menuVisible = vis;
+        m->menuTitle = mtitle;
+        m->menuText = mtext;
+    }
 
     // ScreenTexts aus Ruby -> RmlUi Overlays + script_line
     const auto& texts = GameUI::Get().GetScreenTexts();

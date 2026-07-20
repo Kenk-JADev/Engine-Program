@@ -1124,17 +1124,9 @@ static mrb_value rb_battle_start(mrb_state* mrb, mrb_value self) {
     (void)self;
     mrb_int troopId = 1;
     mrb_get_args(mrb, "|i", &troopId);
-    std::vector<int> enemies;
-    if (const auto* tr = Database::Get().GetTroop((int)troopId))
-        enemies = tr->members;
-    if (enemies.empty()) enemies = {1};
-    BattleSystem::Get().Setup(enemies, true, false);
-    BattleSystem::Get().onMessage = [](const std::string& msg) {
-        GameUI::Get().ShowMessage(msg);
-    };
-    BattleAction act; act.type = BattleActionType::Attack;
-    BattleSystem::Get().SetAction(act);
-    GameUI::Get().ShowMessage("Battle!");
+    // Gemeinsame Implementierung (auch Player --battletest): Trupp aus der
+    // Datenbank, Flucht erlaubt (XP-Standard beim Skriptaufruf).
+    Game::Get().StartBattleByTroop((int)troopId, true);
     return mrb_nil_value();
 }
 static mrb_value rb_battle_in_battle(mrb_state* mrb, mrb_value self) {
@@ -1386,6 +1378,20 @@ static mrb_value rb_game_map_height(mrb_state* mrb, mrb_value self) {
     return mrb_int_value(mrb, (e && e->IsInitialized()) ? (mrb_int)e->GetMap().GetHeight() : 0);
 }
 
+// ---------- Menue/Speicherbildschirm aus Ruby oeffnen (XP: Scene_Menu/Scene_Save) ----------
+static mrb_value rb_ui_open_menu(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    GameUI::Get().Pause().Show(); // XP-Spielmenue
+    return mrb_nil_value();
+}
+static mrb_value rb_ui_open_save_screen(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_bool saveMode = 1;
+    mrb_get_args(mrb, "|b", &saveMode);
+    GameUI::Get().ShowSaveScreen(saveMode != 0);
+    return mrb_nil_value();
+}
+
 // ---------- HUD an/aus aus Ruby (UI.hud_visible = true/false) ----------
 static mrb_value rb_ui_hud_set_visible(mrb_state* mrb, mrb_value self) {
     (void)self;
@@ -1419,6 +1425,9 @@ void RubyVM::BindUI() {
     // HUD ein-/ausblenden (zeigt im Game-Fenster HP/MP/Gold/Karte)
     mrb_define_module_function(mMrb, uiModule, "hud_visible=", rb_ui_hud_set_visible, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, uiModule, "hud_visible?", rb_ui_hud_visible, MRB_ARGS_NONE());
+    // XP-Bildschirme: Menue + Speicherbildschirm (4 Slots)
+    mrb_define_module_function(mMrb, uiModule, "open_menu", rb_ui_open_menu, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "open_save_screen", rb_ui_open_save_screen, MRB_ARGS_OPT(1));
 
     // Game module extensions for convenience.
     // WICHTIG: als KLASSE definieren (nicht Modul), damit die Spiellogik in

@@ -30,8 +30,18 @@ std::string ParseProjectPath(int argc, char* argv[]) {
             projectPath = argv[++i];
         } else if (a.rfind("--project=", 0) == 0) {
             projectPath = a.substr(10);
-        } else if (a == "--debug" || a == "--console" || a == "--battletest") {
-            // Flags ohne Wert (battletest: zukuenftig)
+        } else if (a == "--debug" || a == "--console") {
+            // Flags ohne Wert
+        } else if (a == "--battletest") {
+            // Kampftest: optionalen Zahlenwert dahinter konsumieren,
+            // damit er nicht als Projektpfad miterkannt wird
+            if (i + 1 < argc) {
+                const std::string n = argv[i + 1];
+                if (!n.empty() && n.find_first_not_of("0123456789") == std::string::npos)
+                    ++i;
+            }
+        } else if (a.rfind("--battletest=", 0) == 0) {
+            // Kampftest mit Wert (Trupp-ID)
         } else if (a.rfind("--", 0) != 0 && projectPath.empty()) {
             projectPath = a; // erstes Argument ohne "--" = Projektpfad
         }
@@ -42,6 +52,33 @@ std::string ParseProjectPath(int argc, char* argv[]) {
            (projectPath.back() == '/' || projectPath.back() == '\\'))
         projectPath.pop_back();
     return projectPath;
+}
+
+// --battletest[=N] / --battletest N  ->  Trupp-ID (0 = kein Kampftest).
+// Wie der XP-Kampftest im Datenbank-Trupps-Tab: Das Spiel startet und geht
+// sofort in den Kampf gegen diesen Trupp (Anfangsgruppe aus der Datenbank).
+int ParseBattletestTroop(int argc, char* argv[]) {
+    auto asTroop = [](const std::string& s) -> int {
+        if (s.empty() || s.find_first_not_of("0123456789") != std::string::npos) return 0;
+        try {
+            const int v = std::stoi(s);
+            return v > 0 ? v : 0;
+        } catch (...) { return 0; }
+    };
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "--battletest") {
+            if (i + 1 < argc) {
+                if (const int v = asTroop(argv[i + 1])) return v;
+            }
+            return 1; // Flag ohne Wert: Trupp 001
+        }
+        if (a.rfind("--battletest=", 0) == 0) {
+            if (const int v = asTroop(a.substr(13))) return v;
+            return 1;
+        }
+    }
+    return 0;
 }
 
 } // namespace
@@ -122,6 +159,17 @@ int main(int argc, char* argv[]) {
     // Spiel ab der in der Datenbank definierten Startposition
     rpg::Game::Get().NewGame();
     engine.SetPlaying(true); // laedt Map-Events + fuehrt Scripts aus
+
+    // --- Kampftest (--battletest[=Trupp]): sofort in den Kampf gegen den
+    // Trupp aus der Datenbank (wie der XP-Kampftest im Trupps-Tab).
+    {
+        const int battleTestTroop = ParseBattletestTroop(argc, argv);
+        if (battleTestTroop > 0) {
+            std::cout << "Kampftest: Trupp " << battleTestTroop << std::endl;
+            rpg::Game::Get().StartBattleByTroop(battleTestTroop, true);
+            engine.GetWindow().SetTitle(title + "  [Kampftest]");
+        }
+    }
 
     try {
         engine.Run();

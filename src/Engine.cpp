@@ -371,8 +371,13 @@ void Engine::SetPlaying(bool playing) {
             // Hide title during playtest; show a short intro message
             GameUI::Get().Title().Hide();
             GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
-            GameUI::Get().Pause().onSave = []() { Game::Get().Save(1); };
-            GameUI::Get().Pause().onExitToTitle = [this]() { this->SetPlaying(false); };
+            // XP: "Speichern" im Menue oeffnet den Speicherbildschirm (4 Slots)
+            GameUI::Get().Pause().onSave = []() { GameUI::Get().ShowSaveScreen(true); };
+            // "Spiel beenden": Editor-Playtest stoppt, Player beendet das Spiel
+            GameUI::Get().Pause().onExitToTitle = [this]() {
+                if (mEditorMode) this->SetPlaying(false);
+                else this->RequestQuit();
+            };
 #ifdef RPGMAKER3D_ENABLE_RMLUI
             if (mRmlUi) mRmlUi->SetVisible(true); // HUD im Playtest zeigen
 #endif
@@ -638,12 +643,9 @@ void Engine::Update(float dt) {
     }
 #endif // !RPGMAKER3D_EDITOR_QT
 
-    // Global Shortcuts auch außerhalb Editor
-    if (mInput->IsKeyPressed(Key::Escape) && !mEditorMode) {
-        // Im Spiel: Pause Menü
-        if (GameUI::Get().Pause().IsVisible()) GameUI::Get().Pause().Hide();
-        else GameUI::Get().Pause().Show();
-    }
+    // Hinweis: Esc (Spielmenue) wird NUR im PlayMode-Block weiter unten
+    // behandelt. Ein zweiter globaler Handler hier toggelte im Player
+    // oeffnend+schliessend im selben Frame (Menue kam nie hoch).
 
     // F5: Playtest-Toggle im Editor-Modus (SDL-Host ohne Qt / RmlUi-Panel)
     if (mEditorMode && mInput->IsKeyPressed(Key::F5)) {
@@ -733,21 +735,24 @@ void Engine::Update(float dt) {
 
         const bool modalActive = GameUI::Get().IsNumberInputActive() ||
                                  GameUI::Get().IsNameInputActive() ||
-                                 GameUI::Get().Message().HasChoices();
-        // Pause menu
-        if (!modalActive && mInput->IsKeyPressed(Key::Escape)) {
-            if (GameUI::Get().Pause().IsVisible()) GameUI::Get().Pause().Hide();
-            else if (!GameUI::Get().Message().IsBusy()) GameUI::Get().Pause().Show();
+                                 GameUI::Get().Message().HasChoices() ||
+                                 GameUI::Get().Menu().IsVisible();
+        // XP: Esc oeffnet das Spielmenue; Schliessen laeuft ueber
+        // MenuWindow::Cancel in UpdateModalInput (Teil von modalActive).
+        if (!modalActive && mInput->IsKeyPressed(Key::Escape) &&
+            !GameUI::Get().Message().IsBusy()) {
+            GameUI::Get().Pause().Show();
         }
         // Interact with nearby events (E or Enter) when not in dialog
-        if (!modalActive && !GameUI::Get().Message().IsBusy() && !GameUI::Get().Pause().IsVisible()) {
+        if (!modalActive && !GameUI::Get().Message().IsBusy() && !GameUI::Get().Menu().IsVisible()) {
             if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter)) {
                 EventSystem::Get().TryInteract(Game::Get().Player().GetPosition());
             }
         }
-        // Advance/close message with E/Enter/Space (nicht waehrend Choices/Inputs)
+        // Advance/close message with E/Enter/Space (nicht waehrend Choices/Inputs/Menue)
         if (!GameUI::Get().Message().HasChoices() &&
             !GameUI::Get().IsNumberInputActive() && !GameUI::Get().IsNameInputActive() &&
+            !GameUI::Get().Menu().IsVisible() &&
             GameUI::Get().Message().IsBusy()) {
             if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter) || mInput->IsKeyPressed(Key::Space)) {
                 GameUI::Get().Message().AdvanceInput();
@@ -755,7 +760,7 @@ void Engine::Update(float dt) {
         }
 
         Game::Get().Update(dt);
-        if (!GameUI::Get().Pause().IsVisible() && !BattleSystem::Get().IsInBattle()) {
+        if (!GameUI::Get().Menu().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);
         }
         // Battle commands: 1/A Attack, 2/S Skill, 3/I Item, 4 Escape

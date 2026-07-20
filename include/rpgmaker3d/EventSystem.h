@@ -395,6 +395,8 @@ private:
     bool mChoiceWaiting = false;
     bool mNumberWaiting = false;
     bool mNameWaiting = false;
+    bool mShopWaiting = false;   // Shop-Bildschirm (302) offen
+    bool mSaveWaiting = false;   // Speicherbildschirm (352) offen
     bool mMoveRouteWaiting = false;
     int mButtonInputVariableId = 0;
     int mChoiceIndent = 0;
