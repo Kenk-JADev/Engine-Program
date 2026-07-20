@@ -321,6 +321,20 @@ void Engine::SetPlaying(bool playing) {
             // Snapshot current editor scene so Stop restores everything
             if (mProject) {
                 SaveScene(mProject->GetProjectPath() + "/__editor_play_backup.json");
+                // Savegames des Playtests gehoeren ins Projekt, nicht ins
+                // Arbeitsverzeichnis des Editors (gleiche Regel wie Player)
+                Game::Get().SetSaveDirectory(mProject->GetProjectPath() + "/saves");
+            }
+
+            // Ruby-Startpruefung: alle .rb einmal parsen, Fehler (Datei:Zeile)
+            // landen im Editor-Log, bevor der Playtest loslaeuft.
+            if (mScriptManager) {
+                std::vector<std::string> scriptErrors;
+                if (!mScriptManager->ValidateAllScripts(scriptErrors)) {
+                    for (const auto& e : scriptErrors)
+                        RPG_LOG_ERROR("[Ruby] Playtest-Skriptfehler: " + e);
+                    RPG_LOG_ERROR("[Ruby] Bitte im Skript-Tab korrigieren und erneut speichern.");
+                }
             }
 
             // Start game at camera-look ground point if possible, else system start
@@ -367,6 +381,10 @@ void Engine::SetPlaying(bool playing) {
     } else {
         RPG_LOG_INFO(std::string("Play Mode ") + (playing ? "ON (Player)" : "OFF (Player)"));
         if (playing) {
+            // Player: Savegame-Ordner absichern (player_main setzt ihn schon;
+            // hier als Fallback, falls der Pfad anders zusammengesetzt wurde)
+            if (mProject && !mProject->GetProjectPath().empty())
+                Game::Get().SetSaveDirectory(mProject->GetProjectPath() + "/saves");
             EventSystem::Get().BindRuntimeCallbacks();
             EventSystem::Get().LoadMapEvents(Game::Get().Map().GetMapId(),
                 mProject ? mProject->GetProjectPath() : ".");

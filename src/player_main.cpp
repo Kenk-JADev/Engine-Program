@@ -58,6 +58,10 @@ int main(int argc, char* argv[]) {
     const bool validProject =
         std::filesystem::exists(projectPath + "/project.json");
 
+    // Savegames IMMER im Projektordner (nicht im Arbeitsverzeichnis der exe,
+    // sonst gingen Spielstaende verloren, wenn die exe anders gestartet wird).
+    rpg::Game::Get().SetSaveDirectory(projectPath + "/saves");
+
     rpg::Engine engine;
     if (!engine.Initialize("RPG Maker 3D Player",
                            rpg::EngineConfig::DEFAULT_WIDTH,
@@ -96,6 +100,24 @@ int main(int argc, char* argv[]) {
     std::string title = rpg::Database::Get().System().gameTitle;
     if (title.empty()) title = "RPG Maker 3D Player";
     engine.GetWindow().SetTitle(title);
+
+    // --- Ruby-Startpruefung: ALLE .rb-Dateien einmal auf Syntaxfehler
+    // parsen (ohne Ausfuehrung). Fehler werden mit Datei + Zeile angezeigt,
+    // BEVOR das Spiel startet (wie die Syntax-Meldung von RPG Maker XP).
+    {
+        std::vector<std::string> scriptErrors;
+        if (!engine.GetScriptManager().ValidateAllScripts(scriptErrors)) {
+            std::string msg = "Es wurden Ruby-Syntaxfehler gefunden.\n"
+                              "Das Spiel startet trotzdem, aber die betroffenen\n"
+                              "Skripte werden zur Laufzeit fehlschlagen:\n\n";
+            for (const auto& e : scriptErrors) {
+                std::cerr << "[Ruby] " << e << std::endl;
+                msg += "• " + e + "\n";
+                if (msg.size() > 1500) { msg += "… (weitere im Log)\n"; break; }
+            }
+            rpg::Platform::ShowMessageBox("Skript-Fehler im Projekt", msg, true);
+        }
+    }
 
     // Spiel ab der in der Datenbank definierten Startposition
     rpg::Game::Get().NewGame();

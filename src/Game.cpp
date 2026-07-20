@@ -37,13 +37,29 @@ bool GameSelfSwitches::Get(int mapId, int eventId, char ch) const {
     if (it!=mData.end()) return it->second;
     return false;
 }
+bool GameSelfSwitches::SetFromKey(const std::string& key, bool val) {
+    // Format "mapId_eventId_ch" (z.B. "1_3_A")
+    const auto p1 = key.find('_');
+    const auto p2 = p1 == std::string::npos ? std::string::npos : key.find('_', p1 + 1);
+    if (p1 == std::string::npos || p2 == std::string::npos || p2 + 1 >= key.size())
+        return false;
+    try {
+        const int mapId = std::stoi(key.substr(0, p1));
+        const int eventId = std::stoi(key.substr(p1 + 1, p2 - p1 - 1));
+        const char ch = key[p2 + 1];
+        Set(mapId, eventId, ch, val);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
 
 // --- GameActor ---
 void GameActor::Setup(int id) {
     actorId = id;
     const auto* data = Database::Get().GetActor(id);
     if (!data) {
-        name = "Actor"+std::to_string(id);
+        name = "Akteur "+std::to_string(id);
         hp = 100; mp = 30;
         return;
     }
@@ -409,18 +425,49 @@ void Game::NewGameAt(const Vec3& worldPos, int mapId) {
                  std::to_string(worldPos.x) + "," + std::to_string(worldPos.z) + ")");
 }
 
+void Game::SetSaveDirectory(const std::string& dir) {
+    mSaveDirectory = dir.empty() ? "saves" : dir;
+}
+
+std::string Game::SavePath(int slot) const {
+    if (slot < 1) slot = 1;
+    return mSaveDirectory + "/save" + std::to_string(slot) + ".json";
+}
+
 bool Game::Save(int slot) {
     try {
-        std::filesystem::create_directories("saves");
-        std::string path = "saves/save" + std::to_string(slot) + ".json";
+        if (slot < 1) slot = 1;
+        // Savegames landen IMMER im Save-Verzeichnis des Projekts (vom Player/
+        // Editor auf "<Projekt>/saves" gesetzt) – nie relativ zum aktuellen
+        // Arbeitsverzeichnis, sonst gehen Spielstaende je nach Startordner
+        // verloren oder landen im falschen Projekt.
+        std::filesystem::create_directories(mSaveDirectory);
+        const std::string path = SavePath(slot);
+
+        // saveCount aus einer vorhandenen Datei weiterzaehlen (XP-Stil)
+        int saveCount = 1;
+        if (std::filesystem::exists(path)) {
+            std::ifstream old(path);
+            std::stringstream oss; oss << old.rdbuf();
+            const std::string oc = oss.str();
+            const auto p = oc.find("\"saveCount\"");
+            if (p != std::string::npos) {
+                const auto col = oc.find(':', p);
+                try { saveCount = std::stoi(oc.substr(col + 1)) + 1; }
+                catch (...) { saveCount = 1; }
+            }
+        }
+
         std::ofstream f(path);
         if (!f) return false;
         const Vec3 pos = mPlayer.GetPosition();
         f << "{\n";
-        f << "  \"version\": 1,\n";
+        f << "  \"version\": 2,\n";
+        f << "  \"saveCount\": " << saveCount << ",\n";
         f << "  \"gold\": " << mParty.GetGold() << ",\n";
         f << "  \"mapId\": " << mMap.GetMapId() << ",\n";
         f << "  \"pos\": [" << pos.x << "," << pos.y << "," << pos.z << "],\n";
+        // Party-Mitglieder komplett (Level/HP/MP/EXP)
         f << "  \"actors\": [\n";
         auto& members = mParty.Members();
         for (size_t i = 0; i < members.size(); ++i) {
@@ -432,96 +479,233 @@ bool Game::Save(int slot) {
             f << "\n";
         }
         f << "  ],\n";
-        // switches (first 64)
+        // ALLE Switches/Variables (MAX_SWITCHES/MAX_VARIABLES, nicht nur 64)
         f << "  \"switches\": [";
-        for (int i = 0; i < 64; ++i) {
+        for (size_t i = 0; i < mSwitches.Size(); ++i) {
             if (i) f << ",";
-            f << (mSwitches.Get(i) ? "1" : "0");
+            f << (mSwitches.Get((int)i) ? "1" : "0");
         }
         f << "],\n";
         f << "  \"variables\": [";
-        for (int i = 0; i < 64; ++i) {
+        for (size_t i = 0; i < EngineConfig::MAX_VARIABLES; ++i) {
             if (i) f << ",";
-            f << mVariables.Get(i);
+            f << mVariables.Get((int)i);
         }
-        f << "]\n}\n";
+        f << "],\n";
+        // Self-Switches (A/B/C/D pro Event – nur gesetzte Eintraege)
+        f << "  \"selfSwitches\": {";
+        bool first = true;
+        for (const auto& kv : mSelfSwitches.Data()) {
+            if (!kv.second) continue;
+            if (!first) f << ",";
+            f << "\"" << kv.first << "\":1";
+            first = false;
+        }
+        f << "},\n";
+        // Inventar: Items, Waffen, Ruestungen
+        auto writeBag = [&](const char* key, const std::unordered_map<int,int>& bag) {
+            f << "  \"" << key << "\": {";
+            bool fst = true;
+            for (const auto& kv : bag) {
+                if (!fst) f << ",";
+                f << "\"" << kv.first << "\":" << kv.second;
+                fst = false;
+            }
+            f << "}";
+        };
+        writeBag("items", mParty.Items());
+        f << ",\n";
+        writeBag("weapons", mParty.Weapons());
+        f << ",\n";
+        writeBag("armors", mParty.Armors());
+        f << "\n}\n";
         f.close();
         RPG_LOG_INFO("Game saved to " + path);
         return true;
-    } catch (...) { return false; }
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Save failed: ") + e.what());
+        return false;
+    }
 }
 
 bool Game::Load(int slot) {
     try {
-        std::string path = "saves/save" + std::to_string(slot) + ".json";
-        // fallback binary old
+        if (slot < 1) slot = 1;
+        std::string path = SavePath(slot);
+        // fallback: altes binaeres Format (Legacy)
         if (!std::filesystem::exists(path)) {
-            path = "saves/save" + std::to_string(slot) + ".sav";
-            std::ifstream fb(path, std::ios::binary);
+            const std::string legacy = mSaveDirectory + "/save" + std::to_string(slot) + ".sav";
+            std::ifstream fb(legacy, std::ios::binary);
             if (!fb) return false;
             int gold; fb.read((char*)&gold, sizeof(gold));
             mParty.GainGold(gold - mParty.GetGold());
             Vec3 pos; fb.read((char*)&pos, sizeof(pos));
             mPlayer.SetPosition(pos);
             mGameStarted = true;
-            RPG_LOG_INFO("Game loaded (legacy) from " + path);
+            RPG_LOG_INFO("Game loaded (legacy) from " + legacy);
             return true;
         }
         std::ifstream f(path);
         if (!f) return false;
         std::stringstream ss; ss << f.rdbuf();
         std::string c = ss.str();
-        auto findNum = [&](const char* key, float def) -> float {
-            auto p = c.find(std::string("\"") + key + "\"");
+        auto findNumIn = [&](const std::string& hay, const char* key, float def) -> float {
+            auto p = hay.find(std::string("\"") + key + "\"");
             if (p == std::string::npos) return def;
-            auto col = c.find(':', p);
-            try { return std::stof(c.substr(col + 1)); } catch (...) { return def; }
+            auto col = hay.find(':', p);
+            try { return std::stof(hay.substr(col + 1)); } catch (...) { return def; }
         };
-        int gold = (int)findNum("gold", (float)mParty.GetGold());
-        mParty.GainGold(gold - mParty.GetGold());
-        int mapId = (int)findNum("mapId", 1);
-        // pos array
-        auto pp = c.find("\"pos\"");
-        if (pp != std::string::npos) {
-            auto b = c.find('[', pp);
-            auto e = c.find(']', b);
-            if (b != std::string::npos && e != std::string::npos) {
-                std::stringstream ps(c.substr(b + 1, e - b - 1));
-                char sep; float x=0,y=0,z=0;
+        auto section = [&](const char* key, char open, char close) -> std::string {
+            // liefert den Text zwischen { .. } bzw. [ .. ] nach "key"
+            auto p = c.find(std::string("\"") + key + "\"");
+            if (p == std::string::npos) return {};
+            auto b = c.find(open, p);
+            if (b == std::string::npos) return {};
+            int depth = 0;
+            for (size_t i = b; i < c.size(); ++i) {
+                if (c[i] == open) ++depth;
+                else if (c[i] == close) { if (--depth == 0) return c.substr(b + 1, i - b - 1); }
+            }
+            return {};
+        };
+        // {"id": n}-Objekt in int-Map parsen
+        auto parseBag = [&](const std::string& body) -> std::vector<std::pair<int,int>> {
+            std::vector<std::pair<int,int>> out;
+            size_t i = 0;
+            while (i < body.size()) {
+                auto q1 = body.find('"', i);
+                if (q1 == std::string::npos) break;
+                auto q2 = body.find('"', q1 + 1);
+                if (q2 == std::string::npos) break;
+                auto col = body.find(':', q2 + 1);
+                if (col == std::string::npos) break;
+                try {
+                    const int id = std::stoi(body.substr(q1 + 1, q2 - q1 - 1));
+                    const int n = std::stoi(body.substr(col + 1));
+                    out.emplace_back(id, n);
+                } catch (...) {}
+                i = col + 1;
+            }
+            return out;
+        };
+
+        const int gold = (int)findNumIn(c, "gold", (float)mParty.GetGold());
+        const int mapId = (int)findNumIn(c, "mapId", 1);
+        Vec3 pos = mPlayer.GetPosition();
+        {
+            const std::string body = section("pos", '[', ']');
+            if (!body.empty()) {
+                std::stringstream ps(body);
+                char sep; float x=pos.x,y=pos.y,z=pos.z;
                 ps >> x >> sep >> y >> sep >> z;
-                mPlayer.SetPosition(Vec3(x, y, z));
+                pos = Vec3(x, y, z);
             }
         }
+
+        // --- Party komplett neu aufbauen (wie XP: Spielstand ersetzt Stand) ---
+        struct ActorData { int id; std::string name; int level, hp, mp, exp; };
+        std::vector<ActorData> savedActors;
+        {
+            const std::string body = section("actors", '[', ']');
+            size_t i = 0;
+            while (i < body.size()) {
+                auto b = body.find('{', i);
+                if (b == std::string::npos) break;
+                auto e = body.find('}', b);
+                if (e == std::string::npos) break;
+                const std::string blk = body.substr(b, e - b);
+                ActorData a{};
+                a.id = (int)findNumIn(blk, "id", 0);
+                a.level = (int)findNumIn(blk, "level", 1);
+                a.hp = (int)findNumIn(blk, "hp", 100);
+                a.mp = (int)findNumIn(blk, "mp", 30);
+                a.exp = (int)findNumIn(blk, "exp", 0);
+                auto n1 = blk.find("\"name\"");
+                if (n1 != std::string::npos) {
+                    auto q1 = blk.find('"', n1 + 6);
+                    auto q2 = q1 == std::string::npos ? std::string::npos : blk.find('"', q1 + 1);
+                    if (q2 != std::string::npos) a.name = blk.substr(q1 + 1, q2 - q1 - 1);
+                }
+                if (a.id > 0) savedActors.push_back(a);
+                i = e + 1;
+            }
+        }
+
+        mParty.Clear(); // setzt Members/Inventar zurueck (Gold=0, unten neu)
+        for (const auto& sa : savedActors) {
+            mParty.AddActor(sa.id);
+            if (auto* ga = mParty.GetActor(sa.id)) {
+                ga->level = sa.level;
+                ga->hp = sa.hp;
+                ga->mp = sa.mp;
+                ga->exp = sa.exp;
+                if (!sa.name.empty()) ga->name = sa.name;
+            }
+        }
+        mParty.GainGold(gold); // Gold von 0 auf Zielwert
+
+        // Items/Waffen/Ruestungen
+        for (const auto& kv : parseBag(section("items", '{', '}')))
+            mParty.SetItemCount(kv.first, kv.second);
+        for (const auto& kv : parseBag(section("weapons", '{', '}')))
+            mParty.SetWeaponCount(kv.first, kv.second);
+        for (const auto& kv : parseBag(section("armors", '{', '}')))
+            mParty.SetArmorCount(kv.first, kv.second);
+
+        // Karte + Position
         if (mapId > 0) mMap.Setup(mapId);
-        // switches
-        auto sp = c.find("\"switches\"");
-        if (sp != std::string::npos) {
-            auto b = c.find('[', sp); auto e = c.find(']', b);
-            if (b != std::string::npos && e != std::string::npos) {
-                std::stringstream ss2(c.substr(b+1, e-b-1));
+        mPlayer.SetPosition(pos);
+
+        // Switches / Variables (Arraylaenge flexibel, v1=64, v2=alle)
+        {
+            const std::string body = section("switches", '[', ']');
+            if (!body.empty()) {
+                std::stringstream ss2(body);
                 std::string item; int idx=0;
-                while (std::getline(ss2, item, ',') && idx < 64) {
+                while (std::getline(ss2, item, ',') && idx < (int)mSwitches.Size()) {
                     mSwitches.Set(idx, item.find('1') != std::string::npos);
                     ++idx;
                 }
             }
         }
-        auto vp = c.find("\"variables\"");
-        if (vp != std::string::npos) {
-            auto b = c.find('[', vp); auto e = c.find(']', b);
-            if (b != std::string::npos && e != std::string::npos) {
-                std::stringstream ss2(c.substr(b+1, e-b-1));
+        {
+            const std::string body = section("variables", '[', ']');
+            if (!body.empty()) {
+                std::stringstream ss2(body);
                 std::string item; int idx=0;
-                while (std::getline(ss2, item, ',') && idx < 64) {
+                while (std::getline(ss2, item, ',') && idx < EngineConfig::MAX_VARIABLES) {
                     try { mVariables.Set(idx, std::stoi(item)); } catch (...) {}
                     ++idx;
                 }
             }
         }
+        // Self-Switches (Keys sind Strings "mapId_eventId_ch", keine Zahlen!)
+        mSelfSwitches.Clear();
+        {
+            const std::string body = section("selfSwitches", '{', '}');
+            size_t i = 0;
+            while (i < body.size()) {
+                auto q1 = body.find('"', i);
+                if (q1 == std::string::npos) break;
+                auto q2 = body.find('"', q1 + 1);
+                if (q2 == std::string::npos) break;
+                auto col = body.find(':', q2 + 1);
+                if (col == std::string::npos) break;
+                const std::string key = body.substr(q1 + 1, q2 - q1 - 1);
+                bool on = false;
+                try { on = std::stoi(body.substr(col + 1)) != 0; } catch (...) {}
+                if (!key.empty()) mSelfSwitches.SetFromKey(key, on);
+                i = col + 1;
+            }
+        }
+
         mGameStarted = true;
         RPG_LOG_INFO("Game loaded from " + path);
         return true;
-    } catch (...) { return false; }
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Load failed: ") + e.what());
+        return false;
+    }
 }
 
 void Game::Update(float dt) {

@@ -1176,7 +1176,7 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     };
     interp.onOpenSave = [](int slot) {
         if (!Game::Get().System().HasSaveAccess()) {
-            GameUI::Get().ShowMessage("Speichern ist zur Zeit nicht moeglich.");
+            GameUI::Get().ShowMessage("Speichern ist zur Zeit nicht möglich.");
             return;
         }
         if (Game::Get().Save(slot > 0 ? slot : 1))
@@ -1195,7 +1195,7 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
         RPG_LOG_INFO("[Event] Game Over");
     };
     interp.onReturnToTitle = []() {
-        RPG_LOG_INFO("[Event] Zurueck zum Titel");
+        RPG_LOG_INFO("[Event] Zurück zum Titel");
     };
     interp.onCallCommonEvent = nullptr; // intern (child interpreter)
     interp.onChangeSelfSwitch = [](int eventId, char ch, bool value) {

@@ -35,6 +35,7 @@
 #include <QShortcut>
 #include <QSize>
 #include <QSpinBox>
+#include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -305,14 +306,14 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     // Easy-to-use: Rückgängig / Wiederholen für das 2D-Malen
     tb->addSpacing(12);
     auto* undoBtn = new QToolButton(this);
-    undoBtn->setText(QL("Rückgängig"));
-    undoBtn->setToolTip(QL("Letzten Mal-Schritt rückgängig machen [Strg+Z]"));
+    undoBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    undoBtn->setToolTip(QL("Rückgängig [Strg+Z]"));
     undoBtn->setAutoRaise(true);
     connect(undoBtn, &QToolButton::clicked, this, [this]() { undo(); });
     tb->addWidget(undoBtn);
     auto* redoBtn = new QToolButton(this);
-    redoBtn->setText(QL("Wiederholen"));
-    redoBtn->setToolTip(QL("Rückgängig gemachten Schritt wiederholen [Strg+Y]"));
+    redoBtn->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
+    redoBtn->setToolTip(QL("Wiederholen [Strg+Y]"));
     redoBtn->setAutoRaise(true);
     connect(redoBtn, &QToolButton::clicked, this, [this]() { redo(); });
     tb->addWidget(redoBtn);

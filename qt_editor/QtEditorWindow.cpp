@@ -55,6 +55,7 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTabWidget>
 #include <QTimer>
 #include <QToolBar>
@@ -75,6 +76,36 @@ QDoubleSpinBox* makeSpin(double min, double max, double step, double value) {
     s->setSingleStep(step);
     s->setValue(value);
     return s;
+}
+
+/// Standard-Symbol eines Qt-Styles (keine Asset-Dateien noetig)
+QIcon stdIcon(QWidget* w, QStyle::StandardPixmap sp) {
+    return w->style()->standardIcon(sp);
+}
+
+/// Automatische Symbol-Zuordnung fuer Ribbon-/Menue-Texte (easy-to-use:
+/// erkennbare Icons statt nur Text). Leerstring sicher, kein Treffer = 0.
+QStyle::StandardPixmap iconForText(const QString& text) {
+    QString t = text;
+    t.remove('\n');
+    t.remove('&');
+    if (t.contains(QStringLiteral("Neues Projekt")))     return QStyle::SP_FileIcon;
+    if (t.contains(QStringLiteral("Projekt öffnen")))    return QStyle::SP_DirOpenIcon;
+    if (t.contains(QStringLiteral("Speichern")))         return QStyle::SP_DialogSaveButton;
+    if (t.contains(QStringLiteral("Rückgängig")))        return QStyle::SP_ArrowBack;
+    if (t.contains(QStringLiteral("Wiederholen")))       return QStyle::SP_ArrowForward;
+    if (t.contains(QStringLiteral("Löschen")))           return QStyle::SP_TrashIcon;
+    if (t.contains(QStringLiteral("Beenden")))           return QStyle::SP_DialogCloseButton;
+    if (t.contains(QStringLiteral("Playtest")))          return QStyle::SP_MediaPlay;
+    if (t.contains(QStringLiteral("Sound-Test")))        return QStyle::SP_MediaVolume;
+    if (t.contains(QStringLiteral("Datenbank")))         return QStyle::SP_FileDialogContentsView;
+    if (t.contains(QStringLiteral("Karteneigenschaften"))) return QStyle::SP_FileDialogInfoView;
+    if (t.contains(QStringLiteral("neu laden")))         return QStyle::SP_BrowserReload;
+    if (t.contains(QStringLiteral("Neu laden")))         return QStyle::SP_BrowserReload;
+    if (t.contains(QStringLiteral("Tastenkürzel")))      return QStyle::SP_FileDialogDetailedView;
+    if (t.contains(QStringLiteral("ber RPG Maker")))     return QStyle::SP_MessageBoxInformation;
+    if (t.contains(QStringLiteral("Willkommens")))       return QStyle::SP_TitleBarMenuButton;
+    return QStyle::SP_CustomBase; // kein Symbol vorhanden
 }
 } // namespace
 
@@ -173,13 +204,18 @@ void QtEditorWindow::buildCentral() {
     mPlayTab = buildPlayTab();
     mCode = new QtCodeWorkspace(mEngine.get(), mCentralTabs);
 
-    mCentralTabs->addTab(mView, QStringLiteral("Spielansicht"));
+    // Zentrale Tabs mit erkennbaren Symbolen (Qt-Standardicons, keine Assets)
+    mCentralTabs->addTab(mView, stdIcon(mCentralTabs, QStyle::SP_ComputerIcon),
+                         QStringLiteral("Spielansicht"));
     mCentralTabs->setTabToolTip(0, QStringLiteral("3D-Szene bearbeiten, Objekte wählen, Karten malen"));
-    mCentralTabs->addTab(mMapTab, QStringLiteral("Landkarte"));
+    mCentralTabs->addTab(mMapTab, stdIcon(mCentralTabs, QStyle::SP_DesktopIcon),
+                         QStringLiteral("Landkarte"));
     mCentralTabs->setTabToolTip(1, QStringLiteral("Karte in der 2D-Draufsicht betrachten und malen"));
-    mCentralTabs->addTab(mPlayTab, QStringLiteral("Spiel"));
+    mCentralTabs->addTab(mPlayTab, stdIcon(mCentralTabs, QStyle::SP_MediaPlay),
+                         QStringLiteral("Spiel"));
     mCentralTabs->setTabToolTip(2, QStringLiteral("Playtest starten (Player-exe oder eingebettet)"));
-    mCentralTabs->addTab(mCode, QStringLiteral("Skript"));
+    mCentralTabs->addTab(mCode, stdIcon(mCentralTabs, QStyle::SP_FileIcon),
+                         QStringLiteral("Skript"));
     mCentralTabs->setTabToolTip(3, QStringLiteral("Ruby-Skripte und C++ Engine-Referenz"));
 
     setCentralWidget(mCentralTabs);
@@ -275,13 +311,16 @@ void QtEditorWindow::onCentralTabChanged(int index) {
 
 void QtEditorWindow::buildMenus() {
     QMenu* mFile = menuBar()->addMenu(QStringLiteral("&Datei"));
-    QAction* aNew = mFile->addAction(QStringLiteral("&Neues Projekt …"),
+    QAction* aNew = mFile->addAction(stdIcon(this, QStyle::SP_FileIcon),
+                                     QStringLiteral("&Neues Projekt …"),
                                      this, [this]() { actionNewProject(); });
     aNew->setShortcut(QKeySequence(QStringLiteral("Ctrl+N")));
-    QAction* aOpen = mFile->addAction(QStringLiteral("Projekt ö&ffnen …"),
+    QAction* aOpen = mFile->addAction(stdIcon(this, QStyle::SP_DirOpenIcon),
+                                      QStringLiteral("Projekt ö&ffnen …"),
                                       this, [this]() { actionOpenProject(); });
     aOpen->setShortcut(QKeySequence(QStringLiteral("Ctrl+O")));
-    mSaveAction = mFile->addAction(QStringLiteral("&Speichern"),
+    mSaveAction = mFile->addAction(stdIcon(this, QStyle::SP_DialogSaveButton),
+                                   QStringLiteral("&Speichern"),
                                    this, [this]() { actionSaveProject(); });
     mSaveAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+S")));
     mFile->addSeparator();
@@ -291,7 +330,8 @@ void QtEditorWindow::buildMenus() {
                      this, [this]() { actionSaveSceneAs(); });
     mFile->addSeparator();
     // Easy-to-use: Zuletzt geöffnete Projekte (QSettings-persistent)
-    mRecentMenu = mFile->addMenu(QStringLiteral("Zu&letzt geöffnete Projekte"));
+    mRecentMenu = mFile->addMenu(stdIcon(this, QStyle::SP_FileDialogListView),
+                                 QStringLiteral("Zu&letzt geöffnete Projekte"));
     connect(mRecentMenu, &QMenu::aboutToShow, this, [this]() {
         rebuildRecentProjectsMenu();
     });
@@ -300,13 +340,17 @@ void QtEditorWindow::buildMenus() {
         if (mCode) mCode->saveAll();
     });
     mFile->addSeparator();
-    mFile->addAction(QStringLiteral("&Beenden"), this, &QWidget::close);
+    mFile->addAction(stdIcon(this, QStyle::SP_DialogCloseButton),
+                     QStringLiteral("&Beenden"), this, &QWidget::close);
 
     QMenu* mEdit = menuBar()->addMenu(QStringLiteral("&Bearbeiten"));
-    mUndoAction = mEdit->addAction(QStringLiteral("Rückgängig"), this, [this]() { actionUndo(); });
-    mRedoAction = mEdit->addAction(QStringLiteral("Wiederholen"), this, [this]() { actionRedo(); });
+    mUndoAction = mEdit->addAction(stdIcon(this, QStyle::SP_ArrowBack),
+                                   QStringLiteral("Rückgängig"), this, [this]() { actionUndo(); });
+    mRedoAction = mEdit->addAction(stdIcon(this, QStyle::SP_ArrowForward),
+                                   QStringLiteral("Wiederholen"), this, [this]() { actionRedo(); });
     mEdit->addSeparator();
-    mDeleteAction = mEdit->addAction(QStringLiteral("Ausgewähltes löschen"),
+    mDeleteAction = mEdit->addAction(stdIcon(this, QStyle::SP_TrashIcon),
+                                     QStringLiteral("Ausgewähltes löschen"),
                                      this, [this]() { deleteSelected(); });
     mUndoAction->setEnabled(false);
     mRedoAction->setEnabled(false);
@@ -357,7 +401,8 @@ void QtEditorWindow::buildMenus() {
 #endif
 
     QMenu* mPlay = menuBar()->addMenu(QStringLiteral("&Playtest"));
-    mPlayPlayerAction = mPlay->addAction(QStringLiteral("Playtest starten (Player-exe)"),
+    mPlayPlayerAction = mPlay->addAction(stdIcon(this, QStyle::SP_MediaPlay),
+                                         QStringLiteral("Playtest starten (Player-exe)"),
                                          this, [this]() { actionPlaytestPlayer(); });
     mPlayPlayerAction->setShortcut(QKeySequence(Qt::Key_F5));
     mPlayPlayerAction->setShortcutContext(Qt::ApplicationShortcut);
@@ -368,15 +413,17 @@ void QtEditorWindow::buildMenus() {
     connect(mPlayAction, &QAction::toggled, this, &QtEditorWindow::onPlaytestToggled);
 
     QMenu* mHelp = menuBar()->addMenu(QStringLiteral("&Hilfe"));
-    mHelp->addAction(QStringLiteral("&Tastenkürzel anzeigen …"), this, [this]() {
+    mHelp->addAction(stdIcon(this, QStyle::SP_FileDialogDetailedView),
+                     QStringLiteral("&Tastenkürzel anzeigen …"), this, [this]() {
         showShortcutsDialog();
     })->setShortcut(QKeySequence(QStringLiteral("Ctrl+?")));
-    QAction* aWelcome = mHelp->addAction(QStringLiteral("&Willkommens-Dialog öffnen"), this, [this]() {
+    mHelp->addAction(stdIcon(this, QStyle::SP_TitleBarMenuButton),
+                     QStringLiteral("&Willkommens-Dialog öffnen"), this, [this]() {
         showWelcomeDialog();
     });
-    (void)aWelcome;
     mHelp->addSeparator();
-    mHelp->addAction(QStringLiteral("Ü&ber RPG Maker 3D …"), this, [this]() {
+    mHelp->addAction(stdIcon(this, QStyle::SP_MessageBoxInformation),
+                     QStringLiteral("Ü&ber RPG Maker 3D …"), this, [this]() {
         QMessageBox::about(this, QStringLiteral("RPG Maker 3D Editor"),
             QStringLiteral(
                 "RPG Maker 3D – Editor (Qt)\n"
@@ -555,24 +602,32 @@ QWidget* QtEditorWindow::buildQuickAccessBar() {
     lay->setSpacing(2);
 
     const auto mkBtn = [this, lay](const QString& text, const QString& tip,
+                                   QStyle::StandardPixmap sp,
                                    std::function<void()> fn) {
         auto* b = new QToolButton(this);
         b->setText(text);
         b->setToolTip(tip);
         b->setAutoRaise(true);
+        if (sp != QStyle::SP_CustomBase) {
+            b->setIcon(stdIcon(b, sp));
+            b->setIconSize(QSize(18, 18));
+            b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        }
         connect(b, &QToolButton::clicked, this, [fn]() { fn(); });
         lay->addWidget(b);
         return b;
     };
 
-    mkBtn(QStringLiteral("💾 Speichern"), QStringLiteral("Projekt speichern [Strg+S]"),
-          [this]() { actionSaveProject(); });
-    mkBtn(QStringLiteral("↶"), QStringLiteral("Rückgängig [Strg+Z]"), [this]() { actionUndo(); });
-    mkBtn(QStringLiteral("↷"), QStringLiteral("Wiederholen [Strg+Y]"), [this]() { actionRedo(); });
+    mkBtn(QStringLiteral("Speichern"), QStringLiteral("Projekt speichern [Strg+S]"),
+          QStyle::SP_DialogSaveButton, [this]() { actionSaveProject(); });
+    mkBtn(QString(), QStringLiteral("Rückgängig [Strg+Z]"), QStyle::SP_ArrowBack,
+          [this]() { actionUndo(); });
+    mkBtn(QString(), QStringLiteral("Wiederholen [Strg+Y]"), QStyle::SP_ArrowForward,
+          [this]() { actionRedo(); });
     lay->addSpacing(10);
-    mkBtn(QStringLiteral("▶ Playtest (Player-exe)"),
+    mkBtn(QStringLiteral("Playtest (Player-exe)"),
           QStringLiteral("Projekt speichern und in der Player-exe testen [F5]"),
-          [this]() { actionPlaytestPlayer(); });
+          QStyle::SP_MediaPlay, [this]() { actionPlaytestPlayer(); });
     lay->addStretch(1);
     return bar;
 }
@@ -604,7 +659,16 @@ void QtEditorWindow::ribbonButton(QWidget* page, const QString& text, const QStr
     b->setToolTip(tip);
     b->setCheckable(checkable);
     b->setChecked(checked);
-    b->setMinimumHeight(40);
+    // Easy-to-use: bekannte Aktionen bekommen ein erkennbares Symbol
+    const QStyle::StandardPixmap sp = iconForText(text);
+    if (sp != QStyle::SP_CustomBase) {
+        b->setIcon(stdIcon(b, sp));
+        b->setIconSize(QSize(26, 26));
+        b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon); // Ribbon-Optik
+        b->setMinimumHeight(56);
+    } else {
+        b->setMinimumHeight(40);
+    }
     if (checkable) {
         connect(b, &QToolButton::toggled, this, [fn](bool) { fn(); });
     } else {
@@ -1059,7 +1123,11 @@ void QtEditorWindow::loadScenePackage() {
     auto& proj = mEngine->GetProject();
     const std::string scenePath = proj.GetProjectPath() + "/scene.json";
     if (!mEngine->LoadScene(scenePath)) {
-        const std::string mapPath = proj.GetMapPath(1);
+        // Startkarte aus der Datenbank laden (nicht fest Karte 1 – der Player
+        // laedt ebenfalls die Startkarte, so verhalten sich beide gleich)
+        int startId = rpg::Database::Get().System().startMapId;
+        if (startId <= 0) startId = 1;
+        const std::string mapPath = proj.GetMapPath(startId);
         if (mEngine->GetMap().Load(mapPath)) {
             log(QStringLiteral("Karte geladen (binär): ") + QString::fromStdString(mapPath));
         } else {
@@ -1077,10 +1145,20 @@ void QtEditorWindow::saveScenePackage() {
     auto& proj = mEngine->GetProject();
     const std::string pp = proj.GetProjectPath();
     mEngine->SaveScene(pp + "/scene.json");
-    mEngine->GetMap().Save(proj.GetMapPath(1));
+    // Aktive Karte unter IHRER ID speichern (nicht fest map1 – sonst wuerde
+    // bei Startkarte != 1 die falsche Datei beschrieben und der Player laedt
+    // eine andere Karte als im Editor bearbeitet wurde).
+    int activeId = rpg::Database::Get().System().startMapId;
+    if (mMapDockWidget) {
+        const int idx = mMapDockWidget->selectedMapIndex();
+        auto& infos = rpg::Database::Get().MapInfos();
+        if (idx >= 0 && idx < static_cast<int>(infos.size()))
+            activeId = infos[static_cast<size_t>(idx)].id;
+    }
+    if (activeId <= 0) activeId = 1;
+    mEngine->GetMap().Save(proj.GetMapPath(activeId));
     rpg::Database::Get().Save(pp);
-    const int mapId = rpg::Database::Get().System().startMapId;
-    rpg::EventSystem::Get().SaveMapEvents(mapId > 0 ? mapId : 1, pp);
+    rpg::EventSystem::Get().SaveMapEvents(activeId, pp);
     proj.Save();
 }
 

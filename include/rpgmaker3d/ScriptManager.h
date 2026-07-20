@@ -37,6 +37,12 @@ public:
     void ReloadFromDisk();
     void ExecuteAllScripts();
 
+    /// Prueft ALLE .rb-Dateien einmal per Ruby-Parser auf Syntaxfehler,
+    /// ohne sie auszufuehren (Start-Pruefung vor dem Spielstart).
+    /// errors erhaelt pro defektem Skript einen Eintrag
+    /// "<datei>:<zeile>: <meldung>". true = alle Skripte ok.
+    bool ValidateAllScripts(std::vector<std::string>& errors);
+
     std::string GetScriptsDirectory() const;
 
 private:

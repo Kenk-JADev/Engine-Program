@@ -41,6 +41,10 @@ public:
     void Set(int mapId, int eventId, char ch, bool val);
     bool Get(int mapId, int eventId, char ch) const;
     void Clear() { mData.clear(); }
+    /// Direkter Zugriff fuer das Savegame-System (Key: "mapId_eventId_ch")
+    const std::unordered_map<std::string, bool>& Data() const { return mData; }
+    /// Key aus Savegame ("1_3_A") wiederherstellen; false bei ungueltigem Key
+    bool SetFromKey(const std::string& key, bool val);
 private:
     // key: mapId_eventId_ch
     std::unordered_map<std::string, bool> mData;
@@ -147,6 +151,15 @@ public:
 
     std::vector<GameActor>& Members() { return mActors; }
     const std::vector<GameActor>& Members() const { return mActors; }
+
+    /// Read-Only-Zugriff fuer das Savegame-System
+    const std::unordered_map<int,int>& Items() const { return mItems; }
+    const std::unordered_map<int,int>& Weapons() const { return mWeapons; }
+    const std::unordered_map<int,int>& Armors() const { return mArmors; }
+    /// Direktes Setzen beim Laden (ohne Delta-Rechnung)
+    void SetItemCount(int id, int n) { if (n <= 0) mItems.erase(id); else mItems[id] = n; }
+    void SetWeaponCount(int id, int n) { if (n <= 0) mWeapons.erase(id); else mWeapons[id] = n; }
+    void SetArmorCount(int id, int n) { if (n <= 0) mArmors.erase(id); else mArmors[id] = n; }
 
     GameActor* GetActor(int actorId);
     void Clear() { mActors.clear(); mGold=0; mItems.clear(); mWeapons.clear(); mArmors.clear(); }
@@ -262,6 +275,15 @@ public:
     void NewGameAt(const Vec3& worldPos, int mapId = -1);
     bool Save(int slot);
     bool Load(int slot);
+    /// Ordner fuer Spielstaende (Standard "saves" relativ zum Arbeits-
+    /// verzeichnis). Player/Editor setzen hier "<Projekt>/saves", damit
+    /// Savegames IMMER im Projektordner landen – egal von wo die exe
+    /// gestartet wird. Zusaetzlich existiert (XP-RMXP-Stil) der Ordner im
+    /// Projekt, damit Savegames mit ausgeliefert werden koennen.
+    void SetSaveDirectory(const std::string& dir);
+    const std::string& GetSaveDirectory() const { return mSaveDirectory; }
+    /// Vollstaendiger Pfad zu "save<slot>.json" im Save-Verzeichnis
+    std::string SavePath(int slot) const;
 
     void Update(float dt);
 
@@ -285,6 +307,7 @@ private:
     GamePlayer mPlayer;
     GameMap mMap;
     GameSystem mSystem;
+    std::string mSaveDirectory = "saves";
     bool mGameStarted = false;
 };
 

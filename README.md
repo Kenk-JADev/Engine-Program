@@ -89,6 +89,10 @@ Im Editor:
 
 ## Bedienkomfort (Easy to use)
 
+- **Symbole überall**: Ribbon, Schnellzugriff, Menüs, zentrale Tabs und die
+  Landkarten-Werkzeuge nutzen erkennbare Qt-Standardsymbole (Diskette = Speichern,
+  ▶ = Playtest, Papierkorb = Löschen, Pfeile = Rückgängig/Wiederholen …) –
+  ganz ohne Asset-Dateien.
 - **Willkommens-Dialog** beim Start (ohne geladenes Projekt): Neues Projekt,
   Projekt öffnen oder direkt ein **zuletzt geöffnetes Projekt** per
   Doppelklick. Abschaltbar über „Beim Start anzeigen“
@@ -143,6 +147,37 @@ erlaubt.
   (exakt wie beim Spieler; das Player-Target ist `RPGMAKER3D_BUILD_PLAYER=ON`, Standard)
 - **Umschalt+F5** – schneller eingebetteter Test direkt in der Spielansicht
 - Player von Hand: `RPGMaker3D_Player --project SampleProject` (oder Pfad als 1. Argument)
+
+## Editor (Engine-exe) vs. Player (Game-exe)
+
+Beide Programme lesen **dieselben Projektdateien** – was du im Editor baust,
+spielt der Player unverändert:
+
+| Inhalt | Editor schreibt nach | Player liest von |
+|---|---|---|
+| Projekt | `<Projekt>/project.json` | `<Projekt>/project.json` |
+| Szene | `<Projekt>/scene.json` | `<Projekt>/scene.json` |
+| Karten | `maps/map<ID>.map` (aktive Karten-ID, nicht fest 1) | `maps/map<Startkarten-ID>.map` |
+| Karten-Events | `maps/Map<ID>_events.json` | `maps/Map<ID>_events.json` |
+| Datenbank | `<Projekt>/database/*.json` | `<Projekt>/database/*.json` |
+| Ruby-Skripte | `<Projekt>/scripts/*.rb` | `<Projekt>/scripts/*.rb` |
+| **Spielstände** | **`<Projekt>/saves/save<N>.json`** | **`<Projekt>/saves/save<N>.json`** |
+
+Wichtig dabei:
+- **Speicherort der Spielstände**: liegt immer im Projektordner
+  (`<Projekt>/saves/`), nie relativ zum Arbeitsverzeichnis der exe –
+  egal, von wo aus Player oder Editor gestartet werden.
+- **Speicherinhalt** (Format `version: 2`, lesbarer JSON): Gold, Karten-ID,
+  Position, Party (Akteure mit Level/HP/MP/EXP), **alle** 5000 Switches und
+  5000 Variables, **Self-Switches** (A/B/C/D), Items, Waffen, Rüstungen und
+  die Speicher-Anzahl. Ältere Stände (`version: 1` + Legacy-Binär) werden
+  weiterhin geladen.
+- **Ruby-Startprüfung**: Player und Playtest parsen vor dem Start **alle**
+  `.rb`-Dateien mit dem echten Ruby-Parser, **ohne sie auszuführen**.
+  Syntaxfehler werden mit Datei + Zeile gemeldet (Player: Dialog + Konsole,
+  Editor: Konsole-Log). Laufzeitfehler landen mit **Backtrace**
+  (Aufrufkette, Datei/Zeile) im Log.
+- Fenstertitel des Players = **Spieltitel** aus der Datenbank (System-Tab).
 
 ## Events (XP-Befehlssatz)
 

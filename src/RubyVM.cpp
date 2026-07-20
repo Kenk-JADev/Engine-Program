@@ -118,6 +118,28 @@ bool RubyVM::CaptureException(const std::string& context) {
         text = "(unprintable exception)";
     }
     mLastError = context.empty() ? text : (context + ": " + text);
+
+    // Backtrace anhaengen (mruby-error Gem; bei Laueftzeitfehlern zeigt er
+    // Datei/Zeile der Aufrufkette — genau das, was man zum Debuggen braucht)
+    if (mMrb->exc) { // inspect koennte theoretisch selbst werfen
+        mrb_value bt = mrb_funcall(mMrb, exc, "backtrace", 0);
+        if (!mMrb->exc && mrb_array_p(bt)) {
+            const mrb_int n = RARRAY_LEN(bt);
+            std::string lines;
+            for (mrb_int i = 0; i < n && i < 16; ++i) {
+                mrb_value line = mrb_funcall(mMrb, mrb_ary_ref(mMrb, bt, i), "to_s", 0);
+                if (mMrb->exc) { mMrb->exc = nullptr; break; }
+                if (mrb_string_p(line)) {
+                    lines += "\n  from ";
+                    lines.append(RSTRING_PTR(line), RSTRING_LEN(line));
+                }
+            }
+            if (!lines.empty())
+                mLastError += "; Backtrace:" + lines;
+        }
+        if (mMrb->exc) mMrb->exc = nullptr; // Backtrace-Fehler ignorieren
+    }
+
     RPG_LOG_ERROR("[Ruby] " + mLastError);
     mrb_print_error(mMrb);
     mMrb->exc = nullptr;
@@ -171,6 +193,41 @@ bool RubyVM::ExecuteFile(const std::string& path) {
         return false;
     }
     return true;
+}
+
+bool RubyVM::CheckSyntax(const std::string& code, const std::string& sourceName,
+                         std::string& errorOut) {
+    errorOut.clear();
+    if (!mMrb) {
+        errorOut = "RubyVM not initialized";
+        return false;
+    }
+    // Nur der Parser laeuft – der Code wird NICHT ausgefuehrt und erzeugt
+    // auch keinen Bytecode. Syntaxfehler meldet mruby ueber den Parser
+    // (mrb_parser_state, API von mruby 4.0.0, die die CI pinnt).
+    mrbc_context* cxt = mrbc_context_new(mMrb);
+    if (cxt && !sourceName.empty())
+        mrbc_filename(mMrb, cxt, sourceName.c_str());
+    mrb_parser_state* parser = mrb_parse_nstring(mMrb, code.c_str(), code.size(), cxt);
+    bool ok = true;
+    if (!parser || parser->nerr > 0) {
+        ok = false;
+        int line = 0;
+        const char* msg = "(Syntaxfehler)";
+        if (parser && parser->nerr > 0) {
+            line = parser->error_buffer[0].lineno;
+            if (parser->error_buffer[0].message)
+                msg = parser->error_buffer[0].message;
+        }
+        errorOut = sourceName;
+        if (line > 0)
+            errorOut += ":" + std::to_string(line);
+        errorOut += ": " + std::string(msg);
+    }
+    if (parser) mrb_parser_free(parser);
+    if (cxt) mrbc_context_free(mMrb, cxt);
+    if (mMrb->exc) mMrb->exc = nullptr; // Parser kann Exception hinterlassen
+    return ok;
 }
 
 bool RubyVM::Update(float deltaTime) {
@@ -1565,6 +1622,14 @@ bool RubyVM::ExecuteFile(const std::string& path) {
 bool RubyVM::Update(float deltaTime) {
     (void)deltaTime;
     return false;
+}
+
+// Ohne mruby kann die Syntax nicht geprueft werden -> als ok melden.
+bool RubyVM::CheckSyntax(const std::string& code, const std::string& sourceName,
+                         std::string& errorOut) {
+    (void)code; (void)sourceName;
+    errorOut.clear();
+    return true;
 }
 
 void RubyVM::CollectGarbage() {} // ScriptManager ruft das ungeschuetzt

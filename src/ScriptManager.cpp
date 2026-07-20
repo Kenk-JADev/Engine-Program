@@ -516,6 +516,33 @@ void ScriptManager::ReloadFromDisk() {
     }
 }
 
+bool ScriptManager::ValidateAllScripts(std::vector<std::string>& errors) {
+    errors.clear();
+    if (!mRubyVM) return true; // ohne Ruby laeuft nichts -> nichts zu pruefen
+    for (auto& script : mScripts) {
+        // Frisch von Disk pruefen (Editor hat evtl. ungespeicherte Inhalte
+        // bereits geflusht; der Player liest ohnehin von Disk).
+        std::string code = script->content;
+        if (!script->path.empty() && std::filesystem::exists(script->path)) {
+            std::ifstream f(script->path);
+            if (f.is_open()) {
+                std::stringstream ss; ss << f.rdbuf();
+                code = ss.str();
+            }
+        }
+        if (code.empty()) continue;
+        std::string err;
+        if (!mRubyVM->CheckSyntax(code, script->name, err))
+            errors.push_back(err);
+    }
+    for (const auto& e : errors)
+        RPG_LOG_ERROR("[Ruby] Syntaxfehler: " + e);
+    if (!errors.empty())
+        RPG_LOG_ERROR("[Ruby] " + std::to_string(errors.size()) +
+                      " Skriptdatei(en) mit Syntaxfehlern gefunden!");
+    return errors.empty();
+}
+
 void ScriptManager::ExecuteAllScripts() {
     // Vor wiederholtem Script-Reload (Playtest) den mruby-Heap bereinigen,
     // damit tote Ruby-Objekte aus vorigen Durchlaeufen eingesammelt werden

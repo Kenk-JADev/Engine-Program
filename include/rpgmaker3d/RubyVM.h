@@ -23,6 +23,14 @@ public:
     bool ExecuteFile(const std::string& path);
     bool Update(float deltaTime);
 
+    // Prueft Ruby-Code NUR auf Syntaxfehler (Parser), OHNE ihn auszufuehren.
+    // Dient der Start-Pruefung aller .rb-Dateien (Player/Playtest), damit
+    // Tippfehler sofort mit Datei + Zeile gemeldet werden, statt dass das
+    // Spiel mitten im Lauf crasht. true = Syntax ok; bei false steht der
+    // Fehler inkl. Zeile in errorOut.
+    bool CheckSyntax(const std::string& code, const std::string& sourceName,
+                     std::string& errorOut);
+
     // Erzwingt einen vollstaendigen Garbage-Collection-Durchlauf. Nuetzlich
     // vor wiederholtem Script-Reload (Playtest), damit tote Ruby-Objekte
     // (z.B. neu zugewiesene $game/$game_pictures aus vorigen Durchlaeufen)
