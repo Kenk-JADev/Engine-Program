@@ -156,6 +156,7 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
         if (mEventDockWidget) mEventDockWidget->refresh();
         if (mAssetDockWidget) mAssetDockWidget->refresh();
         updateMapStatus();
+        updatePlayTabInfo();
         rebuildRecentProjectsMenu();
         // Easy-to-use: Willkommens-Dialog, wenn (noch) kein Projekt geladen ist
         if (mEngine->GetProject().GetProjectPath().empty() &&
@@ -238,37 +239,74 @@ QWidget* QtEditorWindow::buildPlayTab() {
     auto* page = new QWidget(mCentralTabs);
     auto* lay = new QVBoxLayout(page);
     lay->setContentsMargins(32, 32, 32, 32);
-    lay->setSpacing(14);
+    lay->setSpacing(12);
 
     auto* title = new QLabel(QStringLiteral("Playtest"), page);
     title->setObjectName(QStringLiteral("playTabTitle"));
     lay->addWidget(title);
 
-    auto* desc = new QLabel(
-        QStringLiteral("Starte das Spiel, um es zu testen. Das Projekt wird vorher "
-                       "automatisch gespeichert.\n\n"
-                       "• Player-exe (empfohlen): Startet RPGMaker3D_Player mit dem "
-                       "Projektordner – so läuft das Spiel exakt wie bei Spielern.\n"
-                       "• Eingebettet: Schneller Test direkt hier in der Spielansicht."),
-        page);
-    desc->setWordWrap(true);
-    lay->addWidget(desc);
+    // --- Projekt-Übersicht (wird von updatePlayTabInfo() befüllt) ----------
+    auto* infoBox = new QGroupBox(QStringLiteral("Projekt-Übersicht"), page);
+    auto* infoLay = new QVBoxLayout(infoBox);
+    mPlayTabInfo = new QLabel(QStringLiteral("(kein Projekt geladen)"), infoBox);
+    mPlayTabInfo->setWordWrap(true);
+    mPlayTabInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    infoLay->addWidget(mPlayTabInfo);
+    lay->addWidget(infoBox);
 
-    auto* btnPlayer = new QPushButton(QStringLiteral("▶  Playtest starten (Player-exe)   [F5]"), page);
+    // --- Start-Knopf + Alternativen ----------------------------------------
+    auto* btnPlayer = new QPushButton(QStringLiteral("Playtest starten (Player-exe)   [F5]"), page);
     btnPlayer->setObjectName(QStringLiteral("playTabPrimary"));
+    btnPlayer->setIcon(stdIcon(btnPlayer, QStyle::SP_MediaPlay));
+    btnPlayer->setIconSize(QSize(22, 22));
     btnPlayer->setMinimumHeight(48);
     connect(btnPlayer, &QPushButton::clicked, this, [this]() { actionPlaytestPlayer(); });
     lay->addWidget(btnPlayer);
 
-    auto* btnEmbedded = new QPushButton(
-        QStringLiteral("⏵  Eingebetteten Playtest umschalten   [Umschalt+F5]"), page);
-    btnEmbedded->setCheckable(true);
-    btnEmbedded->setMinimumHeight(40);
-    connect(btnEmbedded, &QPushButton::toggled, this, [this](bool on) {
+    mPlayTabEmbeddedBtn = new QPushButton(
+        QStringLiteral("Eingebetteten Playtest umschalten   [Umschalt+F5]"), page);
+    mPlayTabEmbeddedBtn->setCheckable(true);
+    mPlayTabEmbeddedBtn->setMinimumHeight(40);
+    connect(mPlayTabEmbeddedBtn, &QPushButton::toggled, this, [this](bool on) {
         if (mPlayAction && mPlayAction->isChecked() != on) mPlayAction->setChecked(on);
         else onPlaytestToggled(on);
     });
-    lay->addWidget(btnEmbedded);
+    lay->addWidget(mPlayTabEmbeddedBtn);
+
+    // Speichern-Verhalten vor dem Playtest (merkt die Frage-Dialog-Option)
+    mAutoSaveCheck = new QCheckBox(
+        QStringLiteral("Vor dem Playtest immer speichern (Speicherfrage überspringen)"), page);
+    mAutoSaveCheck->setChecked(
+        QSettings().value(QStringLiteral("ui/autoSaveBeforePlaytest"), false).toBool());
+    connect(mAutoSaveCheck, &QCheckBox::toggled, this, [](bool on) {
+        QSettings().setValue(QStringLiteral("ui/autoSaveBeforePlaytest"), on);
+    });
+    lay->addWidget(mAutoSaveCheck);
+
+    mPlayTabExeStatus = new QLabel(page);
+    mPlayTabExeStatus->setWordWrap(true);
+    lay->addWidget(mPlayTabExeStatus);
+
+    // --- Ruby-Prüfung ohne Start --------------------------------------------
+    auto* checkBox = new QGroupBox(QStringLiteral("Ruby-Skripte prüfen"), page);
+    auto* checkLay = new QVBoxLayout(checkBox);
+    auto* checkRow = new QHBoxLayout();
+    auto* btnCheck = new QPushButton(QStringLiteral("Alle .rb jetzt prüfen"), checkBox);
+    btnCheck->setIcon(stdIcon(btnCheck, QStyle::SP_DialogApplyButton));
+    btnCheck->setToolTip(QStringLiteral(
+        "Parst alle Ruby-Skripte mit dem echten Parser (ohne Ausführung) und\n"
+        "zeigt Syntaxfehler mit Datei + Zeile – bevor der Playtest sie findet."));
+    connect(btnCheck, &QPushButton::clicked, this, [this]() { runScriptCheck(); });
+    checkRow->addWidget(btnCheck);
+    checkRow->addStretch(1);
+    checkLay->addLayout(checkRow);
+    mScriptCheckOutput = new QPlainTextEdit(checkBox);
+    mScriptCheckOutput->setReadOnly(true);
+    mScriptCheckOutput->setMaximumHeight(110);
+    mScriptCheckOutput->setPlaceholderText(QStringLiteral(
+        "Noch nicht geprüft. Der Playtest prüft automatisch beim Start – hier kannst du es vorab tun."));
+    checkLay->addWidget(mScriptCheckOutput);
+    lay->addWidget(checkBox);
 
     mPlayTabStatus = new QLabel(QStringLiteral("Status: bereit"), page);
     lay->addWidget(mPlayTabStatus);
@@ -301,6 +339,7 @@ void QtEditorWindow::onCentralTabChanged(int index) {
         statusBar()->showMessage(QStringLiteral(
             "Skript – Ruby-Spiellogik editieren, C++ Engine-API als Referenz."));
     } else if (w == mPlayTab) {
+        updatePlayTabInfo();
         statusBar()->showMessage(QStringLiteral("Spiel – Playtest starten."));
     }
 }
@@ -542,6 +581,7 @@ void QtEditorWindow::buildDocks() {
         refreshHierarchy();
         if (mMapTab) mMapTab->refresh();
         updateMapStatus();
+        updatePlayTabInfo(); // Ereignis-Zahl/Startkarte der Übersicht aktualisieren
     });
     // Landkarte: Karten-ID für Ereignis-Speicherung + Dock-Sync bei Event-Edits
     if (mMapTab) {
@@ -905,8 +945,23 @@ void QtEditorWindow::onUiTick() {
 
 void QtEditorWindow::onPlaytestToggled(bool on) {
     if (!mView->IsEngineReady()) return;
-    if (on && mCode) {
-        mCode->saveAll(); // Skripte vor Playtest speichern
+    if (on) {
+        // Vor dem Start fragen (oder automatisch), ob gespeichert werden soll:
+        // Skripte/Events/Karte liest die Runtime von der Festplatte.
+        if (!confirmPlaytestSave()) {
+            if (mPlayAction) {
+                mPlayAction->blockSignals(true);
+                mPlayAction->setChecked(false);
+                mPlayAction->blockSignals(false);
+            }
+            if (mPlayTabEmbeddedBtn) {
+                mPlayTabEmbeddedBtn->blockSignals(true);
+                mPlayTabEmbeddedBtn->setChecked(false);
+                mPlayTabEmbeddedBtn->blockSignals(false);
+            }
+            log(QStringLiteral("Eingebetteter Playtest abgebrochen (Speicherfrage)."));
+            return;
+        }
     }
     mEngine->SetPlaying(on);
     log(on ? QStringLiteral("Eingebetteter Playtest gestartet.")
@@ -915,6 +970,9 @@ void QtEditorWindow::onPlaytestToggled(bool on) {
         mCentralTabs->setCurrentWidget(mView);
     }
     if (mCode) mCode->refresh(); // Skripte während Playtest schreibgeschützt
+    if (mPlayTabStatus)
+        mPlayTabStatus->setText(on ? QStringLiteral("Status: Playtest läuft (eingebettet) …")
+                                   : QStringLiteral("Status: bereit"));
 }
 
 QString QtEditorWindow::findPlayerExecutable() const {
@@ -955,9 +1013,13 @@ void QtEditorWindow::actionPlaytestPlayer() {
         return;
     }
 
-    // Immer frisch speichern, damit der Player den aktuellen Stand sieht
-    if (mCode) mCode->saveAll();
-    saveScenePackage();
+    // Vor dem Start fragen (bzw. automatisch speichern, wenn so eingestellt).
+    // Die Player-exe liest ALLES von der Festplatte – ohne Speichern würde
+    // sie einen alten Stand testen.
+    if (!confirmPlaytestSave()) {
+        log(QStringLiteral("Playtest abgebrochen (Speicherfrage)."));
+        return;
+    }
 
     const QString exe = findPlayerExecutable();
     if (exe.isEmpty()) {
@@ -1173,6 +1235,7 @@ void QtEditorWindow::afterProjectChanged() {
     if (mEventDockWidget) mEventDockWidget->refresh();
     if (mAssetDockWidget) mAssetDockWidget->refresh();
     updateMapStatus();
+    updatePlayTabInfo();
 }
 
 // ---------------------------------------------------------------------------
@@ -1332,6 +1395,126 @@ void QtEditorWindow::updateMapStatus() {
     mStatusMap->setText(QStringLiteral("Karte: %1 (ID %2, %3×%4)")
         .arg(QString::fromStdString(info.name))
         .arg(info.id).arg(info.width).arg(info.height));
+}
+
+// ---------------------------------------------------------------------------
+// Spiel-Tab: Übersicht + Speicherfrage + Ruby-Prüfung
+// ---------------------------------------------------------------------------
+
+void QtEditorWindow::updatePlayTabInfo() {
+    if (!mPlayTabInfo) return;
+    const auto& proj = mEngine->GetProject();
+    const std::string pp = proj.GetProjectPath();
+    if (pp.empty()) {
+        mPlayTabInfo->setText(QStringLiteral(
+            "(Kein Projekt geladen – Datei > Neues Projekt anlegen oder öffnen.)"));
+    } else {
+        const auto& sys = rpg::Database::Get().System();
+        const auto& infos = rpg::Database::Get().MapInfos();
+        QString startName = QStringLiteral("(keine)");
+        for (const auto& mi : infos)
+            if (mi.id == sys.startMapId) {
+                startName = QStringLiteral("%1 (ID %2)")
+                    .arg(QString::fromStdString(mi.name)).arg(mi.id);
+                break;
+            }
+        const int scripts = static_cast<int>(
+            mEngine->GetScriptManager().GetScripts().size());
+        const int events = static_cast<int>(
+            rpg::EventSystem::Get().GetEvents().size());
+        QString gameTitle = QString::fromStdString(sys.gameTitle);
+        if (gameTitle.trimmed().isEmpty()) gameTitle = QStringLiteral("(nicht gesetzt)");
+        mPlayTabInfo->setText(QStringLiteral(
+            "Name: %1\nOrdner: %2\nSpieltitel: %3\nStartkarte: %4\n"
+            "Karten: %5   •   Ereignisse (aktive Karte): %6   •   Ruby-Skripte: %7")
+            .arg(QString::fromStdString(proj.GetInfo().name))
+            .arg(QString::fromStdString(pp))
+            .arg(gameTitle)
+            .arg(startName)
+            .arg(static_cast<int>(infos.size()))
+            .arg(events)
+            .arg(scripts));
+    }
+    if (mPlayTabExeStatus) {
+        const QString exe = findPlayerExecutable();
+        if (exe.isEmpty()) {
+            mPlayTabExeStatus->setText(QStringLiteral(
+                "⚠ Player-exe nicht gefunden: Bitte das CMake-Target „RPGMaker3D_Player“ "
+                "bauen (CI baut beides). Der eingebettete Test funktioniert trotzdem."));
+        } else {
+            mPlayTabExeStatus->setText(QStringLiteral("✓ Player-exe gefunden: %1").arg(exe));
+        }
+    }
+}
+
+bool QtEditorWindow::confirmPlaytestSave() {
+    if (QSettings().value(QStringLiteral("ui/autoSaveBeforePlaytest"), false).toBool()) {
+        saveAllForPlaytest();
+        return true;
+    }
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("Playtest"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(QStringLiteral("Das Projekt vor dem Playtest speichern?"));
+    box.setInformativeText(QStringLiteral(
+        "Skripte, Karte, Events und Datenbank liest das Spiel von der Festplatte –\n"
+        "ohne Speichern testest du einen älteren Stand."));
+    auto* saveBtn = box.addButton(QStringLiteral("Speichern && Starten"),
+                                  QMessageBox::AcceptRole);
+    auto* skipBtn = box.addButton(QStringLiteral("Ohne Speichern starten"),
+                                  QMessageBox::DestructiveRole);
+    auto* cancelBtn = box.addButton(QStringLiteral("Abbrechen"),
+                                    QMessageBox::RejectRole);
+    (void)cancelBtn;
+    box.setDefaultButton(saveBtn);
+    QCheckBox chk(QStringLiteral("Immer speichern – nicht mehr fragen"));
+    box.setCheckBox(&chk);
+    box.exec();
+    if (box.clickedButton() == saveBtn) {
+        if (chk.isChecked()) {
+            QSettings().setValue(QStringLiteral("ui/autoSaveBeforePlaytest"), true);
+            if (mAutoSaveCheck) {
+                mAutoSaveCheck->blockSignals(true);
+                mAutoSaveCheck->setChecked(true);
+                mAutoSaveCheck->blockSignals(false);
+            }
+        }
+        saveAllForPlaytest();
+        return true;
+    }
+    if (box.clickedButton() == skipBtn) {
+        log(QStringLiteral("Playtest OHNE Speichern – das Spiel zeigt den letzten gespeicherten Stand."));
+        return true;
+    }
+    return false; // Abbrechen / Fenster geschlossen
+}
+
+void QtEditorWindow::saveAllForPlaytest() {
+    if (mCode) mCode->saveAll();
+    actionSaveProject(); // prüft selbst auf fehlendes Projekt (mit Hinweis)
+}
+
+void QtEditorWindow::runScriptCheck() {
+    if (!mView || !mView->IsEngineReady() || !mScriptCheckOutput) return;
+    if (mCode) mCode->saveAll(); // sonst würden alte Datei-Stände geprüft
+    std::vector<std::string> errors;
+    const auto& scripts = mEngine->GetScriptManager().GetScripts();
+    mEngine->GetScriptManager().ValidateAllScripts(errors);
+    if (errors.empty()) {
+        mScriptCheckOutput->setPlainText(QStringLiteral(
+            "✓ Alle %1 Ruby-Skripte sind syntaktisch korrekt.")
+            .arg(static_cast<int>(scripts.size())));
+        log(QStringLiteral("Ruby-Prüfung: alle Skripte OK."));
+    } else {
+        QString txt = QStringLiteral("✗ %1 Syntaxfehler gefunden:\n\n").arg(errors.size());
+        for (const auto& e : errors)
+            txt += QStringLiteral("• ") + QString::fromStdString(e) + QStringLiteral("\n");
+        mScriptCheckOutput->setPlainText(txt);
+        log(QStringLiteral("Ruby-Prüfung: %1 Fehler gefunden (Details im Spiel-Tab).")
+            .arg(errors.size()));
+        if (mCentralTabs) mCentralTabs->setCurrentWidget(mPlayTab);
+    }
+    updatePlayTabInfo();
 }
 
 // ---------------------------------------------------------------------------

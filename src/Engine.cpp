@@ -103,6 +103,11 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         RPG_LOG_WARN("RmlUi initialization failed - continuing without RmlUi");
         mRmlUi.reset();
     }
+    // Im Editor (Qt) ist das In-Game-HUD standardmaessig AUS: Der Editor
+    // zeigt FPS/Karte/Status in der eigenen Statuszeile an – das HUD wuerde
+    // nur im Weg liegen. Es wird beim Playtest-Start sichtbar (F9 toggelt
+    // jederzeit manuell). Im Player startet es sichtbar.
+    if (mRmlUi && mEditorMode) mRmlUi->SetVisible(false);
 #endif
 
     // Core Systeme
@@ -360,6 +365,9 @@ void Engine::SetPlaying(bool playing) {
             GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
             GameUI::Get().Pause().onSave = []() { Game::Get().Save(1); };
             GameUI::Get().Pause().onExitToTitle = [this]() { this->SetPlaying(false); };
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+            if (mRmlUi) mRmlUi->SetVisible(true); // HUD im Playtest zeigen
+#endif
             GameUI::Get().ShowMessage(std::string("PLAYTEST\nWASD bewegen | E/Enter sprechen | Esc Pause\nGehe zum Dorfältesten (NPC) und drücke E."));
 
             if (mScriptManager) mScriptManager->ExecuteAllScripts();
@@ -370,6 +378,9 @@ void Engine::SetPlaying(bool playing) {
             RPG_LOG_INFO("=== PLAYTEST STOP ===");
             GameUI::Get().Message().Hide();
             GameUI::Get().Pause().Hide();
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+            if (mRmlUi) mRmlUi->SetVisible(false); // Editor: HUD wieder aus
+#endif
             if (mProject) {
                 std::string backup = mProject->GetProjectPath() + "/__editor_play_backup.json";
                 if (std::filesystem::exists(backup)) LoadScene(backup);

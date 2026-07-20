@@ -24,6 +24,8 @@ class QDoubleSpinBox;
 class QAction;
 class QWidget;
 class QTabWidget;
+class QCheckBox;
+class QPushButton;
 
 namespace rpg { class Engine; }
 
@@ -95,6 +97,15 @@ private:
     void showShortcutsDialog();
     /// Statuszeile: aktive Karte (Name, ID, Größe) anzeigen
     void updateMapStatus();
+    /// Spiel-Tab: Projekt-Übersicht/Statusanzeige aktualisieren
+    void updatePlayTabInfo();
+    /// Fragt vor dem Playtest, ob gespeichert werden soll (mit Merk-Option).
+    /// true = fortfahren, false = abgebrochen
+    bool confirmPlaytestSave();
+    /// Skripte + Szene speichern (für den Playtest, Player liest von Disk)
+    void saveAllForPlaytest();
+    /// Spiel-Tab: alle Ruby-Skripte ohne Start prüfen, Ergebnis anzeigen
+    void runScriptCheck();
 
     // Engine-Aktionen
     void loadScenePackage();
@@ -146,6 +157,12 @@ private:
     QLabel* mStatusTile = nullptr;  // permanente Statuszeile: Maus-Feld (Landkarte)
     QLabel* mPlayTabStatus = nullptr;
     class QMenu* mRecentMenu = nullptr;
+    // Spiel-Tab (Playtest-Übersicht)
+    QLabel* mPlayTabInfo = nullptr;
+    QLabel* mPlayTabExeStatus = nullptr;
+    QPushButton* mPlayTabEmbeddedBtn = nullptr;
+    QCheckBox* mAutoSaveCheck = nullptr;
+    QPlainTextEdit* mScriptCheckOutput = nullptr;
 
     // Menü-Aktionen
     QAction* mUndoAction = nullptr;

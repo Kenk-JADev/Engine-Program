@@ -143,10 +143,21 @@ erlaubt.
 
 ## Playtest
 
-- **F5** – speichert das Projekt und startet **`RPGMaker3D_Player.exe --project <Pfad>`**
+- **F5** – startet **`RPGMaker3D_Player.exe --project <Pfad>`**
   (exakt wie beim Spieler; das Player-Target ist `RPGMAKER3D_BUILD_PLAYER=ON`, Standard)
 - **Umschalt+F5** – schneller eingebetteter Test direkt in der Spielansicht
 - Player von Hand: `RPGMaker3D_Player --project SampleProject` (oder Pfad als 1. Argument)
+- **Speicherfrage vor jedem Test**: Da das Spiel alles von der Festplatte liest,
+  fragt der Editor vorher: *Speichern & Starten / Ohne Speichern starten /
+  Abbrechen*. Wer immer speichern will, aktiviert die Merk-Checkbox
+  (einstellbar auch im Spiel-Tab).
+- **Spiel-Tab = Playtest-Übersicht**: Projekt-Info (Name, Ordner, Spieltitel,
+  Startkarte, Zähler für Karten/Ereignisse/Skripte), Status der Player-exe,
+  Auto-Speichern-Option und ein Knopf **„Alle .rb jetzt prüfen“**, der alle
+  Ruby-Skripte ohne Start auf Syntaxfehler testet (Datei + Zeile).
+- **HUD**: Im Editor ist das In-Game-HUD standardmäßig aus (die Statuszeile
+  zeigt FPS/Karte/Projekt); beim Playtest wird es sichtbar, **F9** schaltet es
+  jederzeit um.
 
 ## Editor (Engine-exe) vs. Player (Game-exe)
 

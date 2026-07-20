@@ -25,9 +25,16 @@ static const char* kRc = R"RCSS(
 body {
     font-family: "DejaVu Sans";
     font-size: 15px;
+    line-height: 1.45em;
     color: #e8dcc0;
     background-color: transparent;
 }
+/* Zeilen innerhalb der HUD-Fenster niemals aufeinander legen
+   (Schutz vor gestapeltem Text, falls ein Font-Fallback ohne
+   Zeilenhoehe durchruscht). */
+#hud_root div, #editor_root div { display: block; margin: 2px 0; }
+#hud_root .statbar { margin: 4px 0 8px 0; }
+#hud_root .fill, #editor_root .fill { margin: 0; }
 .rpg-window {
     background-color: #1c1c28f2;
     border-width: 2px;
@@ -100,7 +107,7 @@ static const char* kGameBody = R"RML(
         <div class="hint">E / Enter / Space = weiter</div>
     </div>
     <div id="hud_root" class="rpg-window" style="position: absolute; left: 24px; top: 24px; width: 320px;">
-        <div class="rpg-title">Game HUD</div>
+        <div class="rpg-title">Spiel-HUD</div>
         <div>Map: <span class="badge">{{map_name}}</span></div>
         <div style="margin: 6px 0;">FPS: <span class="badge">{{fps}}</span>  Modus: <span class="badge">{{mode}}</span></div>
         <div class="statlabel">HP {{hp}} / {{hp_max}}   Gold {{gold}}</div>
@@ -120,7 +127,7 @@ static const char* kGameBody = R"RML(
 )RML";
 
 static const char* kEditorBody = R"RML(
-    <div class="rpg-window" style="position: absolute; right: 24px; top: 24px; width: 300px;">
+    <div id="editor_root" class="rpg-window" style="position: absolute; right: 24px; top: 24px; width: 300px;">
         <div class="rpg-title">RPG Maker 3D</div>
         <div class="statlabel">{{host_hint}}</div>
         <div style="margin: 8px 0;">FPS: <span class="badge">{{fps}}</span></div>

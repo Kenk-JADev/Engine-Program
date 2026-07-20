@@ -52,7 +52,11 @@ void QtAssetBrowserDock::buildUi() {
 
     mTree = new QTreeWidget(this);
     mTree->setHeaderLabels(QStringList() << "Asset" << "Typ");
-    mTree->header()->setStretchLastSection(true);
+    // Easy-to-use: Name darf so breit wie möglich sein (nichts abschneiden),
+    // "Typ" nur so breit wie nötig; voller Name steht im Tooltip.
+    mTree->header()->setStretchLastSection(false);
+    mTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    mTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     mTree->setRootIsDecorated(true);
     mTree->setAlternatingRowColors(true);
     connect(mTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem*, int) {
@@ -111,6 +115,7 @@ void QtAssetBrowserDock::refresh() {
         top->setText(0, QDir(mRootPath).relativeFilePath(fi.absoluteFilePath()));
         if (top->text(0).isEmpty() || top->text(0) == ".") top->setText(0, fi.fileName());
         top->setText(1, "Ordner");
+        top->setToolTip(0, fi.absoluteFilePath());
         top->setData(0, Qt::UserRole, fi.absoluteFilePath());
         QDirIterator it(fi.absoluteFilePath(), QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
         while (it.hasNext()) {
@@ -119,6 +124,7 @@ void QtAssetBrowserDock::refresh() {
             auto* item = new QTreeWidgetItem(top);
             item->setText(0, QDir(fi.absoluteFilePath()).relativeFilePath(f.absoluteFilePath()));
             item->setText(1, f.suffix().toLower());
+            item->setToolTip(0, f.absoluteFilePath()); // voller Pfad im Tooltip
             item->setData(0, Qt::UserRole, f.absoluteFilePath());
         }
         top->setExpanded(true);
