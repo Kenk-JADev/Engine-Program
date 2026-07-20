@@ -410,6 +410,14 @@ private:
 void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn);
 // Optional: Tasten-Abfrage fuer "Button Input Processing" / Bedingung "Taste"
 void EventSystem_SetButtonProvider(std::function<int()> fn);
+/// Audio-Bruecke fuer Event-Befehle + Karten-Autoplay:
+/// Die Engine injiziert hier ihre Wiedergabe (die Projekt-Pfadaufloesung
+/// nach Audio/BGM|BGS|ME|SE passiert engine-seitig).
+/// kind: 0=BGM, 1=BGS, 2=ME, 3=SE. Leerer name stoppt die Art (Fadeout).
+void EventSystem_SetAudioPlayer(
+    std::function<void(const std::string& name, int kind, bool loop)> fn);
+/// Bequemer Aufruf ueber die Bruecke (no-op, wenn nichts injiziert wurde).
+void EventSystem_PlayAudio(const std::string& name, int kind, bool loop);
 
 class EventSystem {
 public:

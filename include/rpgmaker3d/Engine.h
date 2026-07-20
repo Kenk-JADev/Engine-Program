@@ -114,6 +114,11 @@ public:
 
 private:
     bool InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow);
+    /// Event-Audio (BGM/BGS/ME/SE) + Karten-Autoplay: loest Dateinamen gegen
+    /// <Projekt>/Audio/<Art>/ (XP-Struktur) und assets/audio/<Art>/ auf und
+    /// spielt ueber den AudioManager ab. kind: 0=BGM,1=BGS,2=ME,3=SE.
+    void PlayEventAudio(const std::string& name, int kind, bool loop);
+    std::string ResolveAudioPath(const std::string& name, int kind) const;
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
     std::unique_ptr<Input> mInput;

@@ -205,6 +205,19 @@ void GameMap::Setup(int mapId) {
     mMapId = mapId;
     mVisible = true; // beim Map Wechsel sichtbar machen
     RPG_LOG_INFO("GameMap setup mapId="+std::to_string(mapId));
+
+    // XP: Karten-BGM/BGS automatisch abspielen (Karteneigenschaften-Dialog:
+    // „Automatisch abspielen" + Dateiname). Die Audio-Bruecke loest den
+    // Dateinamen gegen <Projekt>/Audio/BGM|BGS auf; ohne Engine-Injection
+    // ist der Aufruf ein no-op.
+    for (const auto& mi : Database::Get().MapInfos()) {
+        if (mi.id != mapId) continue;
+        if (mi.bgmAutoPlay)
+            EventSystem_PlayAudio(mi.bgmName, 0, true); // leer = FadeOut (XP)
+        if (mi.bgsAutoPlay)
+            EventSystem_PlayAudio(mi.bgsName, 1, true);
+        break;
+    }
 }
 
 bool GameMap::LoadFromFile(const std::string& path) {

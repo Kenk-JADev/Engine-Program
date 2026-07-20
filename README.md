@@ -132,14 +132,18 @@ Ribbon **Werkzeuge → Karteneigenschaften** (oder **Doppelklick** auf eine Kart
 in der Map-Liste) öffnet den XP-Dialog: Name, **Tileset**, **Größe** (Resize
 erhält den Inhalt links-oben, wie XP), Scroll-Typ, Encounter (Schritte +
 Trupp-Liste), **BGM/BGS mit ▶-Anhören** und „Rennen verboten". OK speichert
-Karte + Datenbank und aktualisiert 2D/3D sofort.
+Karte + Datenbank und aktualisiert 2D/3D sofort. Das gewählte **BGM/BGS
+wird im Spiel automatisch abgespielt**, sobald die Karte betreten wird
+(wie in XP mit „Automatisch abspielen"); die Dateien liegen in
+`Audio/BGM` bzw. `Audio/BGS` im Projektordner.
 
 ## Skript-Editor
 
 Der Skript-Tab folgt dem XP-Aufbau: links die Skriptliste, rechts der Editor.
 Neu / **Umbenennen (F2 oder Doppelklick auf den Eintrag)** / Löschen /
-Suchen (Strg+F) / Snippets / Ausführen / Hot-Reload. Umlaute sind überall
-erlaubt.
+Suchen (Strg+F) / **Snippets** (fertige Bausteine, u. a. XP-Beispiele mit
+`$game_switches`, `$game_party`, `$game_player` und HUD-Steuerung) /
+Ausführen / Hot-Reload. Umlaute sind überall erlaubt.
 
 ## Playtest
 
@@ -197,10 +201,80 @@ Der Event-Interpreter unterstützt den **vollständigen RPG-Maker-XP-Befehlssatz
 Zahlen-/Namenseingabe, Bedingungen (13 Typen), Schleifen, Bewegungsrouten,
 Bildschirmeffekte, Kampfverarbeitung mit Sieg/Flucht/Niederlage-Zweigen usw.
 
+Die Audio-Befehle (**BGM/BGS/ME/SE abspielen**, Fadeout BGM/BGS, SE stoppen)
+spielen dabei **echtes Audio** ab – gesucht wird in `<Projekt>/Audio/BGM|BGS|ME|SE/`
+(XP-Struktur, Groß- oder Kleinschreibung) und `assets/audio/<art>/`; fehlt eine
+Datei, erscheint eine Warnung mit dem gesuchten Namen im Log.
+
 Im Editor: Dock **Events** → Doppelklick auf ein Event öffnet den **XP-artigen
 Event-Dialog** (Seiten, Bedingungen, Grafik, Autonome Bewegung, Optionen,
 Auslöser und die Befehlsliste mit `@>`-Einrückung). Der Befehlsdialog bietet
 alle XP-Befehle auf drei Seiten.
+
+## Ruby-API (Spiel aus Skripten steuern)
+
+Das Prinzip entspricht RPG Maker XP: **Die exe liefert nur den C++-Kern**
+(Renderer, Audio, Eingabe, Event-Interpreter) – **die Spielsteuerung erfolgt
+in Ruby** aus dem Skript-Editor heraus. Alle Skripte liegen in
+`<Projekt>/scripts/*.rb` (plus `plugins/*.rb`) und werden **alphabetisch nach
+Dateiname** geladen, daher XP-artig `00_Config.rb` … `main.rb` zuletzt.
+Dateien sind UTF-8 (Umlaute erlaubt). Vor dem Start parsen Player und Editor
+jedes Skript mit dem echten Ruby-Parser (Fehler = Datei + Zeile);
+Laufzeitfehler melden sich mit **Backtrace** im Log.
+
+### XP-Spielobjekte ($game_*)
+
+Wie in XP stehen die Spiel-Daten als globale Objekte bereit. **Alle Setter
+aktualisieren sofort die Event-Seiten** (XP: `$game_map.need_refresh`) – eine
+Seite mit der Bedingung „Schalter 3 ist AN" klappt also in dem Moment um, in
+dem das Skript den Schalter setzt:
+
+| Ruby | Bedeutung (XP-Gegenstück) |
+|---|---|
+| `$game_switches[id]`, `$game_switches[id] = true` | Game_Switches (5000 Stück, `size` liefert die Anzahl) |
+| `$game_variables[id]`, `$game_variables[id] = 5` | Game_Variables (5000 Stück) |
+| `$game_self_switches[[map, ev, "A"]] = true` | Game_SelfSwitches – Schlüssel = [Karten-ID, Event-ID, „A"–„D"] |
+| `$game_party.gold`, `.gain_gold(n)`, `.lose_gold(n)` | Game_Party – Gold (Bedingung „Gold oder mehr" reagiert sofort) |
+| `$game_party.gain_item(id, n)`, `.item_count(id)` | Gegenstände (analog `.gain_weapon/.weapon_count`, `.gain_armor/.armor_count`) |
+| `$game_party.add_actor(id)`, `.remove_actor(id)`, `.has_actor(id)` | Gruppenmitglieder (Bedingung „Akteur in der Gruppe") |
+| `$game_party.members` | Array aus Hashes `{:id, :name, :level, :hp, :mp, :exp}` |
+| `$game_player.x`, `.y`, `.z`, `.move_to(x, y, z)` | Game_Player – Position/Teleport |
+| `$game_player.locked?`, `$game_player.locked = true`, `.moving?` | Spielerbewegung sperren/abfragen |
+| `$game_map.id`, `.setup(id)`, `.width`, `.height`, `.visible?` | Game_Map – aktive Karte |
+
+### HUD & Oberfläche aus Ruby
+
+Der Skript-Editor steuert auch die Anzeige – **inklusive HUD** (HP/MP/Gold/
+Kartenname im Spiel-Fenster):
+
+| Ruby | Wirkung |
+|---|---|
+| `UI.show_message("Text")` | XP-Nachrichtenfenster |
+| `UI.show_screen_text(text, x, y, r, g, b, a)` | freier Bildschirmtext (HUD-Ebene) |
+| `UI.show_world_text(...)`, `UI.clear_texts` | Texte in der 3D-Welt |
+| `UI.show_picture / .move_picture / .tween_picture / .remove_picture / .clear_pictures` | Bilder wie XP „Bild anzeigen/bewegen" |
+| `UI.hud_visible = false`, `UI.hud_visible?` | **HUD ein-/ausblenden** (z. B. für Zwischensequenzen) |
+| `UI.gold`, `UI.add_gold(n)` | Gold-Anzeige lesen/ändern |
+
+### Weitere Module
+
+- **Game** (Komfort-API): `Game.save(slot)` / `Game.load(slot)` – Datei
+  `<Projekt>/saves/save<N>.json`; `Game.start_battle(trupp_id)`,
+  `Game.in_battle?`, `Game.map_id`, `Game.setup_map(id)`.
+- **Audio**: `Audio.bgm_play("name.ogg")` sowie BGS/ME/SE und Fades.
+- **Input**: `Input.key_down?(:return)` & Co.
+- **Engine / Map / Camera / Actor**: Fenster, Kartenmaße, Kamera, Akteurswerte.
+
+### Regeln für eigene Skripte
+
+1. **Ladereihenfolge über Dateinamen steuern** (`00_` lädt zuerst) – spätere
+   Skripte dürfen Klassen/Methoden früherer erweitern (XP-Skriptliste).
+2. **Setter benutzen, nichts doppeln**: `$game_switches[1] = true` löst
+   bereits den Seiten-Refresh aus – kein extra Interpreter-Aufruf nötig.
+3. **Audio-Dateien** gehören nach `Audio/BGM|BGS|ME|SE` (XP-Struktur);
+   Karten-BGM läuft automatisch über die Karteneigenschaften.
+4. **Fehlersuche**: erst „Alle .rb jetzt prüfen" im Spiel-Tab (Syntax), dann
+   Playtest – Laufzeitfehler zeigen Datei/Zeile + Aufrufkette im Konsole-Log.
 
 ## Datenbank (XP-Dialog)
 

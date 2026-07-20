@@ -55,6 +55,39 @@ const char* kRubySnippets[][2] = {
      "SceneManager.goto(Scene_Map)\n"},
     {"Audio BGM",
      "Audio.bgm_play(\"town.ogg\")\n"},
+    // --- XP-Spielobjekte ($game_*): Das Spiel direkt aus Skripten steuern ---
+    {"Schalter setzen (XP)",
+     "$game_switches[1] = true  # Event-Seiten reagieren sofort\n"},
+    {"Schalter abfragen (XP)",
+     "if $game_switches[3]\n"
+     "  UI.show_message(\"Schalter 3 ist AN\")\n"
+     "end\n"},
+    {"Variable erhoehen (XP)",
+     "$game_variables[2] += 1  # Zaehler hochsetzen, Seiten pruefen neu\n"},
+    {"Self-Switch setzen (XP)",
+     "key = [$game_map.id, 1, \"A\"]  # [Karten-ID, Event-ID, Buchstabe]\n"
+     "$game_self_switches[key] = true\n"},
+    {"Gold geben / nehmen (XP)",
+     "$game_party.gain_gold(100)\n"
+     "$game_party.lose_gold(50)\n"},
+    {"Gegenstand geben (XP)",
+     "$game_party.gain_item(1, 3)  # Gegenstand 1, 3 Stueck\n"},
+    {"Akteur in die Gruppe (XP)",
+     "$game_party.add_actor(2)\n"
+     "if $game_party.has_actor(2)\n"
+     "  UI.show_message(\"Akteur 2 ist dabei!\")\n"
+     "end\n"},
+    {"Gruppen-Mitglieder auflisten (XP)",
+     "for m in $game_party.members\n"
+     "  UI.show_screen_text(m[:name], 0.05, 0.15, 1.0, 1.0, 1.0, 0.0)\n"
+     "end\n"},
+    {"Spieler teleportieren",
+     "$game_player.move_to(10.0, 0.0, 10.0)  # x, y, z\n"},
+    {"HUD ein-/ausblenden",
+     "UI.hud_visible = false  # true blendet es wieder ein\n"},
+    {"Speichern / Laden",
+     "Game.save(1)  # Slot 1 (Datei <Projekt>/saves/save1.json)\n"
+     "Game.load(1)\n"},
 };
 
 const char* kCppSnippets[][2] = {

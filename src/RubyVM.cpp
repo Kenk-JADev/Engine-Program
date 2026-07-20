@@ -11,6 +11,8 @@
 #include "rpgmaker3d/Game.h"
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/EventSystem.h"
+#include "rpgmaker3d/RmlUiSystem.h"
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -1101,6 +1103,7 @@ static mrb_value rb_game_switch_set(mrb_state* mrb, mrb_value self) {
     mrb_int id; mrb_bool val;
     mrb_get_args(mrb, "ib", &id, &val);
     Game::Get().Switches().Set((int)id, val);
+    EventSystem::Get().RefreshAllPages(); // XP: $game_map.need_refresh
     return mrb_nil_value();
 }
 static mrb_value rb_game_var_get(mrb_state* mrb, mrb_value self) {
@@ -1114,6 +1117,7 @@ static mrb_value rb_game_var_set(mrb_state* mrb, mrb_value self) {
     mrb_int id, val;
     mrb_get_args(mrb, "ii", &id, &val);
     Game::Get().Variables().Set((int)id, (int)val);
+    EventSystem::Get().RefreshAllPages(); // Bedingungen reagieren sofort
     return mrb_nil_value();
 }
 static mrb_value rb_battle_start(mrb_state* mrb, mrb_value self) {
@@ -1138,6 +1142,265 @@ static mrb_value rb_battle_in_battle(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(BattleSystem::Get().IsInBattle());
 }
 
+// ==================== XP-Spielobjekte (Ruby <-> C++) ====================
+// Damit Skripte wie in RPG Maker XP DIREKT auf die Spiel-Daten zugreifen
+// koennen ($game_switches[3] = true, $game_party.gold, $game_player.x ...),
+// gibt es diese Bridges. Alle Setter loesen EventSystem::RefreshAllPages()
+// aus (XP: $game_map.need_refresh), damit Event-Seiten, deren Bedingungen
+// auf Switches/Variables/SelfSwitches/Items/Mitglieder zeigen, sofort
+// reagieren – genau das macht das Spiel "vom Skript-Editor aus steuerbar".
+
+// ---------- $game_switches (Game_Switches) ----------
+static mrb_value rb_gsw_aref(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_bool_value(Game::Get().Switches().Get((int)id));
+}
+static mrb_value rb_gsw_aset(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id; mrb_bool val;
+    mrb_get_args(mrb, "ib", &id, &val);
+    Game::Get().Switches().Set((int)id, val);
+    EventSystem::Get().RefreshAllPages();
+    return mrb_bool_value(val);
+}
+static mrb_value rb_gsw_size(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Switches().Size());
+}
+
+// ---------- $game_variables (Game_Variables) ----------
+static mrb_value rb_gvar_aref(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Variables().Get((int)id));
+}
+static mrb_value rb_gvar_aset(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id, val;
+    mrb_get_args(mrb, "ii", &id, &val);
+    Game::Get().Variables().Set((int)id, (int)val);
+    EventSystem::Get().RefreshAllPages();
+    return mrb_int_value(mrb, val);
+}
+static mrb_value rb_gvar_size(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, (mrb_int)EngineConfig::MAX_VARIABLES);
+}
+
+// ---------- $game_self_switches (Game_SelfSwitches, Key = [map, event, "A"]) ----------
+static bool ssw_parse_key(mrb_state* mrb, mrb_value key, int& mapId, int& evId, char& ch) {
+    if (!mrb_array_p(key)) return false;
+    if (RARRAY_LEN(key) < 3) return false;
+    mrb_value v0 = mrb_ary_ref(mrb, key, 0);
+    mrb_value v1 = mrb_ary_ref(mrb, key, 1);
+    mrb_value v2 = mrb_ary_ref(mrb, key, 2);
+    if (!(mrb_integer_p(v0) || mrb_float_p(v0))) return false;
+    if (!(mrb_integer_p(v1) || mrb_float_p(v1))) return false;
+    if (!mrb_string_p(v2) || RSTRING_LEN(v2) < 1) return false;
+    mapId = (int)(mrb_integer_p(v0) ? mrb_integer(v0) : (mrb_int)mrb_float(v0));
+    evId  = (int)(mrb_integer_p(v1) ? mrb_integer(v1) : (mrb_int)mrb_float(v1));
+    ch = RSTRING_PTR(v2)[0];
+    return true;
+}
+static mrb_value rb_gssw_aref(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value key;
+    mrb_get_args(mrb, "o", &key);
+    int mapId = 0, evId = 0; char ch = 'A';
+    if (!ssw_parse_key(mrb, key, mapId, evId, ch)) return mrb_false_value();
+    return mrb_bool_value(Game::Get().SelfSwitches().Get(mapId, evId, ch));
+}
+static mrb_value rb_gssw_aset(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value key; mrb_bool val;
+    mrb_get_args(mrb, "ob", &key, &val);
+    int mapId = 0, evId = 0; char ch = 'A';
+    if (!ssw_parse_key(mrb, key, mapId, evId, ch)) return mrb_bool_value(val);
+    Game::Get().SelfSwitches().Set(mapId, evId, ch, val);
+    EventSystem::Get().RefreshAllPages();
+    return mrb_bool_value(val);
+}
+static mrb_value rb_gssw_size(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, (mrb_int)Game::Get().SelfSwitches().Data().size());
+}
+
+// ---------- $game_party (Game_Party) ----------
+static mrb_value rb_gp_gold(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().GetGold());
+}
+static mrb_value rb_gp_gain_gold(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int n;
+    mrb_get_args(mrb, "i", &n);
+    Game::Get().Party().GainGold((int)n);
+    EventSystem::Get().RefreshAllPages(); // Bedingung "Gold oder mehr"
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().GetGold());
+}
+static mrb_value rb_gp_lose_gold(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int n;
+    mrb_get_args(mrb, "i", &n);
+    Game::Get().Party().GainGold(-(int)n);
+    EventSystem::Get().RefreshAllPages();
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().GetGold());
+}
+static mrb_value rb_gp_item_count(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().GetItemCount((int)id));
+}
+static mrb_value rb_gp_gain_item(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id, n;
+    mrb_get_args(mrb, "ii", &id, &n);
+    Game::Get().Party().GainItem((int)id, (int)n);
+    EventSystem::Get().RefreshAllPages(); // Bedingung "Gegenstand vorhanden"
+    return mrb_nil_value();
+}
+static mrb_value rb_gp_weapon_count(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().GetWeaponCount((int)id));
+}
+static mrb_value rb_gp_gain_weapon(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id, n;
+    mrb_get_args(mrb, "ii", &id, &n);
+    Game::Get().Party().GainWeapon((int)id, (int)n);
+    return mrb_nil_value();
+}
+static mrb_value rb_gp_armor_count(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().GetArmorCount((int)id));
+}
+static mrb_value rb_gp_gain_armor(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id, n;
+    mrb_get_args(mrb, "ii", &id, &n);
+    Game::Get().Party().GainArmor((int)id, (int)n);
+    return mrb_nil_value();
+}
+static mrb_value rb_gp_has_actor(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_bool_value(Game::Get().Party().HasActor((int)id));
+}
+static mrb_value rb_gp_add_actor(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    Game::Get().Party().AddActor((int)id);
+    EventSystem::Get().RefreshAllPages(); // Bedingung "Akteur in der Gruppe"
+    return mrb_nil_value();
+}
+static mrb_value rb_gp_remove_actor(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id;
+    mrb_get_args(mrb, "i", &id);
+    Game::Get().Party().RemoveActor((int)id);
+    EventSystem::Get().RefreshAllPages();
+    return mrb_nil_value();
+}
+static mrb_value rb_gp_members_size(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_int_value(mrb, (mrb_int)Game::Get().Party().Members().size());
+}
+static mrb_value rb_gp_members(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    auto& members = Game::Get().Party().Members();
+    mrb_value ary = mrb_ary_new_capa(mrb, (mrb_int)members.size());
+    for (const auto& a : members) {
+        mrb_value h = mrb_hash_new_capa(mrb, 6);
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "id")),
+                     mrb_int_value(mrb, (mrb_int)a.actorId));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "name")),
+                     mrb_str_new(mrb, a.name.c_str(), (mrb_int)a.name.size()));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "level")),
+                     mrb_int_value(mrb, (mrb_int)a.level));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "hp")),
+                     mrb_int_value(mrb, (mrb_int)a.hp));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "mp")),
+                     mrb_int_value(mrb, (mrb_int)a.mp));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "exp")),
+                     mrb_int_value(mrb, (mrb_int)a.exp));
+        mrb_ary_push(mrb, ary, h);
+    }
+    return ary;
+}
+
+// ---------- $game_player (Game_Player) ----------
+static mrb_value rb_gpl_x(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_float_value(mrb, Game::Get().Player().GetPosition().x);
+}
+static mrb_value rb_gpl_y(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_float_value(mrb, Game::Get().Player().GetPosition().y);
+}
+static mrb_value rb_gpl_z(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_float_value(mrb, Game::Get().Player().GetPosition().z);
+}
+static mrb_value rb_gpl_move_to(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_float x, y, z;
+    mrb_get_args(mrb, "fff", &x, &y, &z);
+    Game::Get().Player().SetPosition(Vec3((float)x, (float)y, (float)z));
+    return mrb_nil_value();
+}
+static mrb_value rb_gpl_locked(mrb_state* mrb, mrb_value self) {
+    (void)self; (void)mrb;
+    return mrb_bool_value(Game::Get().Player().IsLocked());
+}
+static mrb_value rb_gpl_set_locked(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_bool v;
+    mrb_get_args(mrb, "b", &v);
+    Game::Get().Player().SetLocked(v);
+    return mrb_bool_value(v);
+}
+static mrb_value rb_gpl_moving(mrb_state* mrb, mrb_value self) {
+    (void)self; (void)mrb;
+    return mrb_bool_value(Game::Get().Player().IsMoving());
+}
+
+// ---------- $game_map Zusatz: Breite/Hoehe der geladenen Karte ----------
+static mrb_value rb_game_map_width(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    return mrb_int_value(mrb, (e && e->IsInitialized()) ? (mrb_int)e->GetMap().GetWidth() : 0);
+}
+static mrb_value rb_game_map_height(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    return mrb_int_value(mrb, (e && e->IsInitialized()) ? (mrb_int)e->GetMap().GetHeight() : 0);
+}
+
+// ---------- HUD an/aus aus Ruby (UI.hud_visible = true/false) ----------
+static mrb_value rb_ui_hud_set_visible(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_bool v;
+    mrb_get_args(mrb, "b", &v);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (e && e->GetRmlUi()) e->GetRmlUi()->SetVisible(v);
+    return mrb_bool_value(v);
+}
+static mrb_value rb_ui_hud_visible(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    return mrb_bool_value(e && e->GetRmlUi() && e->GetRmlUi()->IsVisible());
+}
+
 void RubyVM::BindUI() {
     struct RClass* uiModule = mrb_define_module(mMrb, "UI");
 
@@ -1153,6 +1416,9 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, uiModule, "tween_picture", rb_ui_tween_picture, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(7));
     mrb_define_module_function(mMrb, uiModule, "remove_picture", rb_ui_remove_picture, MRB_ARGS_OPT(1));
     mrb_define_module_function(mMrb, uiModule, "clear_pictures", rb_ui_remove_picture, MRB_ARGS_NONE());
+    // HUD ein-/ausblenden (zeigt im Game-Fenster HP/MP/Gold/Karte)
+    mrb_define_module_function(mMrb, uiModule, "hud_visible=", rb_ui_hud_set_visible, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "hud_visible?", rb_ui_hud_visible, MRB_ARGS_NONE());
 
     // Game module extensions for convenience.
     // WICHTIG: als KLASSE definieren (nicht Modul), damit die Spiellogik in
@@ -1185,6 +1451,66 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, gameMapModule, "visible=", rb_game_map_set_visible, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gameMapModule, "id", rb_game_map_id, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gameMapModule, "setup", rb_game_map_setup, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, gameMapModule, "width", rb_game_map_width, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gameMapModule, "height", rb_game_map_height, MRB_ARGS_NONE());
+
+    // ---------- XP-Spielobjekte als globale Variablen ($game_*) ----------
+    // Exakt wie in RPG Maker XP: Skripte schreiben $game_switches[5] = true
+    // statt eines umstaendlichen Funktionsaufrufs. Setter refreshen die
+    // Event-Seiten sofort (XP: $game_map.need_refresh).
+    struct RClass* cSwitches = mrb_define_class(mMrb, "Game_Switches", mMrb->object_class);
+    mrb_define_method(mMrb, cSwitches, "[]", rb_gsw_aref, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cSwitches, "[]=", rb_gsw_aset, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cSwitches, "size", rb_gsw_size, MRB_ARGS_NONE());
+    mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_switches"),
+               mrb_obj_new(mMrb, cSwitches, 0, nullptr));
+
+    struct RClass* cVariables = mrb_define_class(mMrb, "Game_Variables", mMrb->object_class);
+    mrb_define_method(mMrb, cVariables, "[]", rb_gvar_aref, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cVariables, "[]=", rb_gvar_aset, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cVariables, "size", rb_gvar_size, MRB_ARGS_NONE());
+    mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_variables"),
+               mrb_obj_new(mMrb, cVariables, 0, nullptr));
+
+    struct RClass* cSelfSwitches = mrb_define_class(mMrb, "Game_SelfSwitches", mMrb->object_class);
+    mrb_define_method(mMrb, cSelfSwitches, "[]", rb_gssw_aref, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cSelfSwitches, "[]=", rb_gssw_aset, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cSelfSwitches, "size", rb_gssw_size, MRB_ARGS_NONE());
+    mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_self_switches"),
+               mrb_obj_new(mMrb, cSelfSwitches, 0, nullptr));
+
+    struct RClass* cParty = mrb_define_class(mMrb, "Game_Party", mMrb->object_class);
+    mrb_define_method(mMrb, cParty, "gold", rb_gp_gold, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cParty, "gain_gold", rb_gp_gain_gold, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "lose_gold", rb_gp_lose_gold, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "item_count", rb_gp_item_count, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "gain_item", rb_gp_gain_item, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cParty, "weapon_count", rb_gp_weapon_count, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "gain_weapon", rb_gp_gain_weapon, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cParty, "armor_count", rb_gp_armor_count, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "gain_armor", rb_gp_gain_armor, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cParty, "has_actor", rb_gp_has_actor, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "add_actor", rb_gp_add_actor, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "remove_actor", rb_gp_remove_actor, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "members_size", rb_gp_members_size, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cParty, "members", rb_gp_members, MRB_ARGS_NONE());
+    mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_party"),
+               mrb_obj_new(mMrb, cParty, 0, nullptr));
+
+    struct RClass* cPlayer = mrb_define_class(mMrb, "Game_Player", mMrb->object_class);
+    mrb_define_method(mMrb, cPlayer, "x", rb_gpl_x, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cPlayer, "y", rb_gpl_y, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cPlayer, "z", rb_gpl_z, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cPlayer, "move_to", rb_gpl_move_to, MRB_ARGS_REQ(3));
+    mrb_define_method(mMrb, cPlayer, "locked?", rb_gpl_locked, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cPlayer, "locked=", rb_gpl_set_locked, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cPlayer, "moving?", rb_gpl_moving, MRB_ARGS_NONE());
+    mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_player"),
+               mrb_obj_new(mMrb, cPlayer, 0, nullptr));
+
+    // $game_map zeigt auf das Game_Map-Modul (gleiche Methoden erreichbar)
+    mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_map"),
+               mrb_obj_value(gameMapModule));
 }
 
 // ==================== Actor Bindings ====================

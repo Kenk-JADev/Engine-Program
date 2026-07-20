@@ -30,6 +30,19 @@ void EventSystem_SetButtonProvider(std::function<int()> fn) {
     s_buttonProvider = std::move(fn);
 }
 
+// Audio-Bruecke fuer Event-Befehle + Karten-Autoplay (Engine injiziert in
+// Initialize; PlayAudio ist no-op, wenn nichts injiziert wurde).
+static std::function<void(const std::string&, int, bool)> s_audioPlayer;
+
+void EventSystem_SetAudioPlayer(
+    std::function<void(const std::string&, int, bool)> fn) {
+    s_audioPlayer = std::move(fn);
+}
+
+void EventSystem_PlayAudio(const std::string& name, int kind, bool loop) {
+    if (s_audioPlayer) s_audioPlayer(name, kind, loop);
+}
+
 // ============================================================================
 // Screen Effects (223 / 224 / 225)
 // ============================================================================
@@ -733,24 +746,35 @@ bool EventInterpreter::ExecuteCommand() {
     case CC::SetTimeOfDay:
         return true; // Wetter/Tageszeit: Renderer-Hook (bereits als 3D-Befehl reserviert)
     case CC::PlayBGM:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 0, true); return true; }
         if (onPlayBGM) onPlayBGM(cmd.text, true);
         return true;
     case CC::FadeOutBGM:
-        if (onPlayBGM) onPlayBGM("", false);
+        EventSystem_PlayAudio("", 0, false);
+        if (!s_audioPlayer && onPlayBGM) onPlayBGM("", false);
         return true;
     case CC::PlayBGS:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 1, true); return true; }
+        if (onPlaySE) onPlaySE(cmd.text);
+        return true;
     case CC::PlayME:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 2, false); return true; }
         if (onPlaySE) onPlaySE(cmd.text);
         return true;
     case CC::FadeOutBGS:
+        EventSystem_PlayAudio("", 1, false);
+        if (!s_audioPlayer && onPlaySE) onPlaySE("");
+        return true;
     case CC::StopSE:
-        if (onPlaySE) onPlaySE("");
+        EventSystem_PlayAudio("", 3, false);
+        if (!s_audioPlayer && onPlaySE) onPlaySE("");
         return true;
     case CC::MemorizeBGM:
     case CC::RestoreBGM:
         Game::Get().System().MemorizeBgm(cmd.code == CC::MemorizeBGM);
         return true;
     case CC::PlaySE:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 3, false); return true; }
         if (onPlaySE) onPlaySE(cmd.text);
         return true;
 

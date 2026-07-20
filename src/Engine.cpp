@@ -37,6 +37,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <vector>
 
 namespace rpg {
 
@@ -158,6 +159,13 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     if (!mAudio->Initialize()) {
         RPG_LOG_WARN("Audio initialization failed - continuing without audio");
     }
+
+    // Event-Audio-Bruecke: Ab sofort spielen Befehle BGM/BGS/ME/SE abspielen,
+    // FadeOut BGM/BGS/SE stoppen und Karten-Autoplay wirklich Audio ab -
+    // statt wie bisher nur ins Log zu schreiben.
+    EventSystem_SetAudioPlayer([this](const std::string& name, int kind, bool loop) {
+        PlayEventAudio(name, kind, loop);
+    });
 
     mScene = std::make_unique<Scene>();
     mProject = std::make_unique<Project>();
@@ -403,6 +411,67 @@ void Engine::SetPlaying(bool playing) {
             if (mScriptManager) mScriptManager->ExecuteAllScripts();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Event-Audio (BGM/BGS/ME/SE) mit XP-Pfadaufloesung
+// ---------------------------------------------------------------------------
+
+std::string Engine::ResolveAudioPath(const std::string& name, int kind) const {
+    static const char* kDirs[4] = {"BGM", "BGS", "ME", "SE"};
+    static const char* kDirsLower[4] = {"bgm", "bgs", "me", "se"};
+    const int k = (kind >= 0 && kind < 4) ? kind : 3;
+    const std::string base = mProject ? mProject->GetProjectPath() : std::string();
+
+    // Suchreihenfolge: XP-Projektstruktur zuerst, dann Engine-Assets,
+    // zuletzt der Name selbst (falls der Aufrufer schon einen Pfad gab).
+    std::vector<std::string> roots;
+    if (!base.empty()) {
+        roots.push_back(base + "/Audio/" + kDirs[k] + "/");
+        roots.push_back(base + "/Audio/" + kDirsLower[k] + "/");
+        roots.push_back(base + "/audio/" + kDirsLower[k] + "/");
+        roots.push_back(base + "/assets/audio/" + kDirsLower[k] + "/");
+        roots.push_back(base + "/assets/audio/" + std::string(kDirs[k]) + "/");
+    }
+    roots.push_back("assets/audio/" + std::string(kDirs[k]) + "/");
+    roots.push_back("assets/audio/" + std::string(kDirsLower[k]) + "/");
+    roots.push_back("");
+
+    static const char* kExts[] = {"", ".ogg", ".mp3", ".wav", ".flac"};
+    for (const auto& root : roots) {
+        for (const char* ext : kExts) {
+            const std::string p = root + name + ext;
+            if (!p.empty() && std::filesystem::exists(p) &&
+                !std::filesystem::is_directory(p))
+                return p;
+        }
+    }
+    return {};
+}
+
+void Engine::PlayEventAudio(const std::string& name, int kind, bool loop) {
+    if (!mAudio) return;
+    if (name.empty()) {
+        // Stop-Befehle (FadeOut): nur bei Musik-Hintergrundarten sinnvoll
+        if (kind == 0) mAudio->FadeOutBGM(0.5f);
+        else if (kind == 1) mAudio->FadeOutBGS(0.5f);
+        return;
+    }
+    const std::string path = ResolveAudioPath(name, kind);
+    if (path.empty()) {
+        RPG_LOG_WARN("[Audio] Datei nicht gefunden (Audio/" +
+                     std::string(kind == 0 ? "BGM" : kind == 1 ? "BGS" :
+                                 kind == 2 ? "ME" : "SE") + "): " + name);
+        return;
+    }
+    switch (kind) {
+        case 0:  mAudio->PlayBGM(path, loop); break;
+        case 1:  mAudio->PlayBGS(path, loop); break;
+        case 2:  mAudio->PlayME(path, false); break;
+        default: mAudio->PlaySE(path, false); break;
+    }
+    RPG_LOG_INFO("[Audio] " + std::string(kind == 0 ? "BGM" : kind == 1 ? "BGS" :
+                 kind == 2 ? "ME" : "SE") + ": " + name);
 }
 
 void Engine::Shutdown() {
