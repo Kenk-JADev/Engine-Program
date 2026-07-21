@@ -220,14 +220,21 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   XP-Titel mit dem Spieltitel aus der Datenbank: **Neues Spiel /
   Weiterspielen / Beenden**. „Weiterspielen" ist nur aktiv, wenn ein
   Savegame existiert, und öffnet die Lade-Ansicht des Speicherbildschirms;
-  Abbruch führt zurück zum Titel. Das HUD ist auf dem Titel ausgeblendet.
-- **Spielmenü (Esc)** – wie in XP: **Gegenstände** (Liste mit Anzahl;
-  Heil-Items werden per Enter direkt **benutzt** – Ziel wählen, Konsumation,
-  Wirkung sofort; andere zeigen ihren Beschreibungstext), **Status** (Level/
-  HP/MP/EXP der Gruppe), **Speichern**, **Spiel beenden** (mit Rückfrage;
-  im Editor-Playtest stoppt der Test, im Player endet das Spiel), **Zurück**.
-  Respektiert die Event-Befehle „Menüaufruf/speichern (nicht) erlauben"
-  (134/135).
+  Abbruch führt zurück zum Titel. Das HUD ist auf dem Titel ausgeblendet,
+  **Titelgrafik** (`Graphics/Titles/<Name>` im Projekt, Name aus dem
+  System-Tab) und **Titel-BGM** laufen wie in XP; aus dem Spielmenü führt
+  „Spiel beenden → Zum Titelbildschirm" jederzeit hierher zurück.
+- **Spielmenü (Esc)** – wie in XP mit allen Hauptpunkten:
+  **Gegenstände** (Heil-Items per Enter direkt **benutzen**: Ziel wählen,
+  Wirkung sofort, Gegenstand verbraucht; andere zeigen ihren Beschreibungstext),
+  **Fertigkeiten** (Heil-Skills aus dem Menü einsetzbar, kosten MP),
+  **Ausrüstung** (Waffe + Schild/Helm/Körper/Accessoire wechseln – Tausch
+  läuft über das Inventar, Equip-SE), **Status** (Level, HP/MP mit
+  Maximalwerten, EXP), **Speichern**, **Spiel beenden**
+  (**Zum Titelbildschirm** / **Spiel verlassen** / Abbrechen), **Zurück**.
+  Max-HP/MP werden aus den Datenbank-Startwerten hochgerechnet
+  (+5 %/Level, bis ein Kurven-Editor existiert). Respektiert die
+  Event-Befehle „Menüaufruf/speichern (nicht) erlauben" (134/135).
 - **Kartenwechsel funktioniert**: Der Transfer-Befehl (201) und das Laden
   eines Savegames wechseln jetzt wirklich Karte + Events + BGM (vorher
   blieb die alte Karte sichtbar). Spiele mit mehreren Karten laufen damit
@@ -243,7 +250,10 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   Inventar. Bei zu wenig Gold ertönt der Buzzer-SE.
 - **Sichtbar gemacht**: Auch **Auswahl (102)**, **Zahleneingabe (103)** und
   **Namenseingabe (303)** zeigen jetzt ein eigenes XP-Fenster im Player
-  (vorher nur Tastatursteuerung ohne Anzeige).
+  (vorher nur Tastatursteuerung ohne Anzeige). **Bilder** (231,
+  `UI.show_picture`) werden ebenfalls im Player dargestellt; gesucht wird in
+  `<Projekt>/Graphics/Pictures|Titles/` (XP-Struktur), `assets/pictures/`
+  u. a. (png/jpg/jpeg/bmp/tga).
 - **Kampftest** wie im XP-Datenbank-Dialog: Button **„Kampftest"** im
   Trupps-Tab der Datenbank (startet die Player-exe, vorher die übliche
   Speicherfrage) oder per Kommandozeile:

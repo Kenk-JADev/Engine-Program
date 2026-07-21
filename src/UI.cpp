@@ -272,13 +272,53 @@ void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial
 // XP-Spielmenue (Esc) / Speicherbildschirm / Laden - alles ueber MenuWindow
 // ============================================================================
 
+namespace {
+// --- XP-Helfer: provisorische Max-Kurven ----------------------------------
+// Die Datenbank hat initialStats (Stufe 1); bis ein Kurven-Editor existiert,
+// gilt +5% der Basis pro Level (XP-typische Groessenordnung), aber mindestens
+// der aktuelle Wert (kein Absenken unter den Ist-Stand).
+int MaxHpFor(const GameActor& a) {
+    if (const auto* ad = Database::Get().GetActor(a.actorId)) {
+        const int base = std::max(1, ad->initialStats.mhp);
+        return std::max(a.hp, base + (a.level - 1) * std::max(1, base / 20));
+    }
+    return std::max(a.hp, 100);
+}
+int MaxMpFor(const GameActor& a) {
+    if (const auto* ad = Database::Get().GetActor(a.actorId)) {
+        const int base = std::max(1, ad->initialStats.mmp);
+        return std::max(a.mp, base + (a.level - 1) * std::max(1, base / 20));
+    }
+    return std::max(a.mp, 30);
+}
+
+// --- Ausruestungs-Helfer --------------------------------------------------
+const char* kArmorSlotNames[4] = {"Schild", "Helm", "Körper", "Accessoire"};
+
+const ArmorData* FindArmorDef(int id) {
+    if (id <= 0) return nullptr;
+    for (const auto& d : Database::Get().Armors())
+        if (d.id == id) return &d;
+    return nullptr;
+}
+const WeaponData* FindWeaponDef(int id) {
+    if (id <= 0) return nullptr;
+    for (const auto& w : Database::Get().Weapons())
+        if (w.id == id) return &w;
+    return nullptr;
+}
+} // namespace
+
 void GameUI::OpenGameMenu() {
     // XP: "Menueaufruf verboten" respektieren
     if (!Game::Get().System().HasMenuAccess()) return;
 
     std::vector<MenuWindow::Entry> items;
+    const bool hasMembers = !Game::Get().Party().Members().empty();
     items.push_back({"Gegenstände", true});
-    items.push_back({"Status", true});
+    items.push_back({"Fertigkeiten", hasMembers});
+    items.push_back({"Ausrüstung", hasMembers});
+    items.push_back({"Status", hasMembers});
     items.push_back({"Speichern", Game::Get().System().HasSaveAccess()});
     items.push_back({"Spiel beenden", true});
     items.push_back({"Zurück", true});
@@ -286,21 +326,30 @@ void GameUI::OpenGameMenu() {
     mMenu.Show("Menü", items, [this](int idx) {
         switch (idx) {
             case 0: OpenItemsMenu(); break;
-            case 1: OpenStatusMenu(); break;
-            case 2:
+            case 1: OpenSkillsMenu(); break;
+            case 2: OpenEquipMenu(); break;
+            case 3: OpenStatusMenu(); break;
+            case 4:
                 // Nach dem Speichern/Abbruch wieder ins Menue (XP-Verhalten)
                 ShowSaveScreen(true, [this]() { OpenGameMenu(); });
                 break;
-            case 3: {
-                // XP: Sicherheitsfrage vor dem Beenden
+            case 5: {
+                // XP „Spiel beenden": Zum Titelbildschirm / Verlassen / Abbrechen
                 std::vector<MenuWindow::Entry> q = {
-                    {"Ja, beenden", true}, {"Nein, zurück", true}};
+                    {"Zum Titelbildschirm", true},
+                    {"Spiel verlassen", true},
+                    {"Zurück", true}};
                 auto& pause = mPause;
-                mMenu.Show("Spiel wirklich beenden?", q,
+                mMenu.Show("Spiel beenden?", q,
                     [this, &pause](int a) {
                         if (a == 0) {
                             mMenu.Hide();
                             auto cb = pause.onExitToTitle;
+                            if (cb) cb();
+                        } else if (a == 1) {
+                            mMenu.Hide();
+                            auto cb = pause.onQuitGame ? pause.onQuitGame
+                                                       : pause.onExitToTitle;
                             if (cb) cb();
                         } else {
                             OpenGameMenu();
@@ -369,9 +418,9 @@ void GameUI::OpenItemTargetMenu(int itemId) {
         auto& party = Game::Get().Party();
         if (it2 && idx >= 0 && idx < (int)party.Members().size()) {
             auto& a = party.Members()[(size_t)idx];
-            // Heil-Obergrenze: XP-Standard 999 (bis Klassen-Kurven existieren)
-            a.hp = std::min(a.hp + it2->hpRecovery, 999);
-            a.mp = std::min(a.mp + it2->mpRecovery, 999);
+            // Heil-Obergrenzen aus den Datenbank-Werten (initialStats + Kurve)
+            a.hp = std::min(a.hp + it2->hpRecovery, MaxHpFor(a));
+            a.mp = std::min(a.mp + it2->mpRecovery, MaxMpFor(a));
             party.GainItem(itemId, -1);
             EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
             ShowMessage(a.name + " erholt sich:  +" + std::to_string(it2->hpRecovery) +
@@ -393,11 +442,222 @@ void GameUI::OpenStatusMenu() {
         if (idx < 0 || idx >= (int)members.size()) return;
         const auto& a = members[(size_t)idx];
         ShowMessage(a.name + "  –  Level " + std::to_string(a.level) +
-                    "\nHP " + std::to_string(a.hp) +
-                    " | MP " + std::to_string(a.mp) +
-                    " | EXP " + std::to_string(a.exp));
+                    "\nHP " + std::to_string(a.hp) + " / " + std::to_string(MaxHpFor(a)) +
+                    " | MP " + std::to_string(a.mp) + " / " + std::to_string(MaxMpFor(a)) +
+                    "\nEXP " + std::to_string(a.exp));
     });
     mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+// ============================================================================
+// Fertigkeiten (XP: Heil-Skills aus dem Menue benutzbar, kostet MP)
+// ============================================================================
+void GameUI::OpenSkillsMenu() {
+    auto& party = Game::Get().Party();
+    if (party.Members().empty()) {
+        ShowMessage("Keine Gruppenmitglieder.");
+        OpenGameMenu();
+        return;
+    }
+    std::vector<MenuWindow::Entry> mem;
+    for (const auto& a : party.Members())
+        mem.push_back({a.name + "   MP " + std::to_string(a.mp) +
+                       " / " + std::to_string(MaxMpFor(a)), true});
+    mMenu.Show("Fertigkeiten: Mitglied wählen", mem,
+        [this](int mi) { OpenSkillListMenu(mi); });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::OpenSkillListMenu(int memberIndex) {
+    auto& party = Game::Get().Party();
+    if (memberIndex < 0 || memberIndex >= (int)party.Members().size()) {
+        OpenSkillsMenu();
+        return;
+    }
+    const auto& actor = party.Members()[(size_t)memberIndex];
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> skillIds;
+    for (int sid : actor.skills) {
+        const auto* sk = Database::Get().GetSkill(sid);
+        const std::string name = sk ? sk->name : ("Fertigkeit #" + std::to_string(sid));
+        const int cost = sk ? sk->mpCost : 0;
+        // Aus dem Menue benutzbar: Heil-Skills (Scope auf Gruppe zielend)
+        const bool heal = sk && sk->scope >= 3 && sk->power > 0;
+        items.push_back({name + "   " + std::to_string(cost) + " MP",
+                         heal && actor.mp >= cost});
+        skillIds.push_back(sid);
+    }
+    if (items.empty()) items.push_back({"(keine Fertigkeiten)", false});
+
+    mMenu.Show(actor.name + ": Fertigkeiten   (MP " + std::to_string(actor.mp) +
+               " / " + std::to_string(MaxMpFor(actor)) + ")", items,
+        [this, memberIndex, skillIds](int idx) {
+            if (idx >= 0 && idx < (int)skillIds.size())
+                OpenSkillTargetMenu(memberIndex, skillIds[(size_t)idx]);
+        });
+    mMenu.onCancel = [this]() { OpenSkillsMenu(); };
+}
+
+void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId) {
+    const auto* sk = Database::Get().GetSkill(skillId);
+    if (!sk) { OpenSkillsMenu(); return; }
+    std::vector<MenuWindow::Entry> items;
+    auto& members = Game::Get().Party().Members();
+    for (const auto& a : members)
+        items.push_back({a.name + "   HP " + std::to_string(a.hp) +
+                         " / " + std::to_string(MaxHpFor(a)), a.hp > 0});
+    if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
+
+    mMenu.Show(sk->name + ": Ziel wählen", items,
+        [this, memberIndex, skillId](int ti) {
+            const auto* sk2 = Database::Get().GetSkill(skillId);
+            auto& party = Game::Get().Party();
+            if (sk2 && memberIndex >= 0 && memberIndex < (int)party.Members().size() &&
+                ti >= 0 && ti < (int)party.Members().size()) {
+                auto& caster = party.Members()[(size_t)memberIndex];
+                auto& target = party.Members()[(size_t)ti];
+                if (caster.mp >= sk2->mpCost) {
+                    caster.mp -= sk2->mpCost;
+                    target.hp = std::min(target.hp + sk2->power, MaxHpFor(target));
+                    EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+                    ShowMessage(target.name + " erholt sich um " +
+                                std::to_string(sk2->power) + " HP.  (-" +
+                                std::to_string(sk2->mpCost) + " MP)");
+                } else {
+                    EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+                }
+            }
+            OpenSkillListMenu(memberIndex);
+        });
+    mMenu.onCancel = [this, memberIndex]() { OpenSkillListMenu(memberIndex); };
+}
+
+// ============================================================================
+// Ausruestung (XP: Waffe + Schild/Helm/Koerper/Accessoire wechseln)
+// ============================================================================
+void GameUI::OpenEquipMenu() {
+    auto& party = Game::Get().Party();
+    if (party.Members().empty()) {
+        ShowMessage("Keine Gruppenmitglieder.");
+        OpenGameMenu();
+        return;
+    }
+    std::vector<MenuWindow::Entry> mem;
+    for (const auto& a : party.Members()) mem.push_back({a.name, true});
+    mMenu.Show("Ausrüstung: Mitglied wählen", mem,
+        [this](int mi) { OpenEquipSlotMenu(mi, -1); });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::OpenEquipSlotMenu(int memberIndex, int slotKind) {
+    auto& party = Game::Get().Party();
+    if (memberIndex < 0 || memberIndex >= (int)party.Members().size()) {
+        OpenEquipMenu();
+        return;
+    }
+    auto& actor = party.Members()[(size_t)memberIndex];
+
+    if (slotKind == -1) {
+        // Uebersicht: Waffe + Ruestungs-Slots (Schild/Helm/Koerper/Accessoire)
+        std::vector<MenuWindow::Entry> items;
+        const auto* w = FindWeaponDef(actor.weaponId);
+        items.push_back({std::string("Waffe: ") + (w ? w->name : "—"), true});
+        for (int t = 0; t < 4; ++t) {
+            std::string nm = "—";
+            for (int aid : actor.armors) {
+                if (const auto* ad = FindArmorDef(aid);
+                    ad && (int)ad->armorType == t) { nm = ad->name; break; }
+            }
+            items.push_back({std::string(kArmorSlotNames[t]) + ": " + nm, true});
+        }
+        mMenu.Show(actor.name + ": Ausrüstung", items, [this, memberIndex](int idx) {
+            if (idx == 0) OpenEquipSlotMenu(memberIndex, -2); // Waffe
+            else OpenEquipSlotMenu(memberIndex, idx - 1);      // 0..3 Ruestungstyp
+        });
+        mMenu.onCancel = [this]() { OpenEquipMenu(); };
+        return;
+    }
+
+    // Slot-Auswahl: Inventar-Kandidaten + „(abnehmen)"
+    const bool isWeapon = (slotKind == -2);
+    int curId = 0;
+    if (isWeapon) {
+        curId = actor.weaponId;
+    } else {
+        for (int aid : actor.armors) {
+            if (const auto* ad = FindArmorDef(aid);
+                ad && (int)ad->armorType == slotKind) { curId = aid; break; }
+        }
+    }
+
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> cand; // Index -> Gegenstands-ID (0 = abnehmen)
+    if (curId > 0) { items.push_back({"(abnehmen)", true}); cand.push_back(0); }
+
+    if (isWeapon) {
+        std::vector<std::pair<int,int>> bag(
+            party.Weapons().begin(), party.Weapons().end());
+        std::sort(bag.begin(), bag.end());
+        for (const auto& kv : bag) {
+            const auto* wd = FindWeaponDef(kv.first);
+            if (!wd) continue;
+            std::string label = wd->name + "   ATK " + std::to_string(wd->atk);
+            if (kv.first == curId) { label += "   [angelegt]"; }
+            items.push_back({label, kv.first != curId});
+            cand.push_back(kv.first);
+        }
+        if (items.empty()) items.push_back({"(keine Waffen im Inventar)", false});
+    } else {
+        std::vector<std::pair<int,int>> bag(
+            party.Armors().begin(), party.Armors().end());
+        std::sort(bag.begin(), bag.end());
+        for (const auto& kv : bag) {
+            const auto* ad = FindArmorDef(kv.first);
+            if (!ad || (int)ad->armorType != slotKind) continue;
+            std::string label = ad->name + "   ABW " + std::to_string(ad->def) +
+                                " / GABW " + std::to_string(ad->mdf);
+            if (kv.first == curId) { label += "   [angelegt]"; }
+            items.push_back({label, kv.first != curId});
+            cand.push_back(kv.first);
+        }
+        if (items.empty())
+            items.push_back({std::string("(") + kArmorSlotNames[slotKind] +
+                             " im Inventar leer)", false});
+    }
+
+    const std::string what = isWeapon ? "Waffe" : kArmorSlotNames[slotKind];
+    mMenu.Show(actor.name + ": " + what + " wählen", items,
+        [this, memberIndex, slotKind, isWeapon, cand](int idx) {
+            if (idx < 0 || idx >= (int)cand.size()) {
+                OpenEquipSlotMenu(memberIndex, -1);
+                return;
+            }
+            auto& party2 = Game::Get().Party();
+            auto& a = party2.Members()[(size_t)memberIndex];
+            const int newId = cand[(size_t)idx];
+            if (isWeapon) {
+                if (a.weaponId > 0) party2.GainWeapon(a.weaponId, +1);
+                if (newId > 0) party2.GainWeapon(newId, -1);
+                a.weaponId = newId;
+            } else {
+                // vorhandene Ruestung dieses Typs ablegen
+                for (size_t i = 0; i < a.armors.size(); ++i) {
+                    if (const auto* ad = FindArmorDef(a.armors[i]);
+                        ad && (int)ad->armorType == slotKind) {
+                        party2.GainArmor(a.armors[i], +1);
+                        a.armors.erase(a.armors.begin() + (ptrdiff_t)i);
+                        break;
+                    }
+                }
+                if (newId > 0) {
+                    party2.GainArmor(newId, -1);
+                    a.armors.push_back(newId);
+                }
+            }
+            EventSystem_PlayAudio(Database::Get().System().equipSe, 3, false);
+            OpenEquipSlotMenu(memberIndex, -1);
+        });
+    mMenu.onCancel = [this, memberIndex]() { OpenEquipSlotMenu(memberIndex, -1); };
 }
 
 void GameUI::ShowSaveScreen(bool saveMode, std::function<void()> onClosed) {
@@ -848,7 +1108,15 @@ void GameUI::DrawScreenTexts() {
 namespace {
     std::unordered_map<std::string, std::shared_ptr<Texture>> s_PictureCache;
 
+    std::function<std::string(const std::string&)> s_pictureResolver;
+
     std::string ResolvePicturePath(const std::string& filename) {
+        // 1) Engine-injizierter Resolver: <Projekt>/Graphics/Pictures|Titles/…
+        if (s_pictureResolver) {
+            const std::string r = s_pictureResolver(filename);
+            if (!r.empty()) return r;
+        }
+        // 2) Engine-Asset-Fallbacks
         std::vector<std::string> tryPaths = {
             filename,
             "assets/textures/" + filename,
@@ -863,6 +1131,15 @@ namespace {
         }
         return filename;
     }
+}
+
+void GameUI::SetPicturePathResolver(
+    std::function<std::string(const std::string&)> fn) {
+    s_pictureResolver = std::move(fn);
+}
+
+std::string GameUI::ResolvePicturePath(const std::string& filename) { // static
+    return rpg::ResolvePicturePath(filename);
 }
 
 bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
@@ -1087,6 +1364,10 @@ void GameUI::SetPictureScale(int id, float scale) {
 
 void GameUI::SetPictureRotation(int id, float degrees) {
     for (auto& pic : mPictures) if (pic.id == id) pic.rotation = degrees;
+}
+
+void GameUI::SetPictureSize(int id, float sizeX, float sizeY) {
+    for (auto& pic : mPictures) if (pic.id == id) pic.size = Vec2(sizeX, sizeY);
 }
 
 void GameUI::UpdatePictures(float dt) {

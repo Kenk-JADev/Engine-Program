@@ -122,6 +122,13 @@ private:
     /// spielt ueber den AudioManager ab. kind: 0=BGM,1=BGS,2=ME,3=SE.
     void PlayEventAudio(const std::string& name, int kind, bool loop);
     std::string ResolveAudioPath(const std::string& name, int kind) const;
+    /// Bild-Pfadaufloesung fuer UI.show_picture + Titelgrafik:
+    /// <Projekt>/Graphics/Pictures|Titles/ (XP), Pictures/, assets/…
+    std::string ResolvePicturePathFor(const std::string& filename) const;
+    /// Titelmodus beenden (Titelgrafik entfernen, Titel-BGM ausblenden)
+    void EndTitleMode();
+    /// „Zum Titelbildschirm" aus dem Menue: Spiel sauber stoppen + Titel
+    void ReturnToTitle();
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
     std::unique_ptr<Input> mInput;

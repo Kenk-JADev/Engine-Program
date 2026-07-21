@@ -159,7 +159,8 @@ public:
 
     std::function<void()> onResume;
     std::function<void()> onSave;
-    std::function<void()> onExitToTitle;
+    std::function<void()> onExitToTitle; // „Zum Titelbildschirm" (Editor: Playtest-Stop)
+    std::function<void()> onQuitGame;    // „Spiel verlassen" (Player: RequestQuit)
 };
 
 // ---------------------------------------------------------------------------
@@ -217,6 +218,13 @@ public:
     void OpenItemsMenu();
     // Untermenue: Ziel fuer benutzbaren Gegenstand (Heil-Items, XP)
     void OpenItemTargetMenu(int itemId);
+    // Untermenue: Fertigkeiten eines Mitglieds (Heil-Skills benutzbar, XP)
+    void OpenSkillsMenu();
+    // Untermenue: Ausruestung eines Mitglieds (Waffe/Schild/Helm/Koerper/Accessoire)
+    void OpenEquipMenu();
+    /// Loest einen Bilddateinamen gegen Projekt-/Engine-Ordner auf
+    /// (nutzt den von der Engine injizierten Resolver; leer = nicht gefunden)
+    static std::string ResolvePicturePath(const std::string& filename);
     // Untermenue: Gruppenmitglieder-Status (Level/HP/MP/EXP)
     void OpenStatusMenu();
 
@@ -291,10 +299,20 @@ public:
     void SetPictureOpacity(int id, float opacity);
     void SetPictureScale(int id, float scale);
     void SetPictureRotation(int id, float degrees);
+    void SetPictureSize(int id, float sizeX, float sizeY); // normalisiert 0..1
+    /// Pfad-Aufloeser fuer Bilddateien (Engine injiziert Projekt-Suche
+    /// nach Graphics/Pictures|Titles etc.; XP-Ordnerstruktur).
+    static void SetPicturePathResolver(
+        std::function<std::string(const std::string&)> fn);
     // Easing helpers
     static float ApplyEasing(float t, int easingType);
 
 private:
+    // Interne Untermenues (Member-Auswahl -> Listen)
+    void OpenSkillListMenu(int memberIndex);
+    void OpenSkillTargetMenu(int memberIndex, int skillId);
+    void OpenEquipSlotMenu(int memberIndex, int slotKind); // -1 Uebersicht, -2 Waffe, 0..3 Ruestungstyp
+
     void UpdateScreenTexts(float dt);
     void DrawScreenTexts();
     void UpdatePictures(float dt);

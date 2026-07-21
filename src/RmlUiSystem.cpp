@@ -12,6 +12,7 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 
 namespace rpg {
@@ -101,6 +102,10 @@ body {
 // data-attr-style statt inline style="width: {{x}}px" (}}px bricht den Rml-Parser).
 // message_box: wird aus GameUI::Message gespiegelt (Ruby UI.show_message / Events).
 static const char* kGameBody = R"RML(
+    <img id="pic0" src="" style="position:absolute; display:none; z-index: 1;"/>
+    <img id="pic1" src="" style="position:absolute; display:none; z-index: 1;"/>
+    <img id="pic2" src="" style="position:absolute; display:none; z-index: 1;"/>
+    <img id="pic3" src="" style="position:absolute; display:none; z-index: 1;"/>
     <div id="message_box" class="rpg-window" style="position: absolute; left: 50%; bottom: 28px; margin-left: -36%; width: 72%; display: none;">
         <div class="rpg-title">{{message_speaker}}</div>
         <div id="message_text" class="statlabel" style="font-size: 15px; color: #f0e6cc; white-space: pre-wrap;">{{message_text}}</div>
@@ -220,6 +225,7 @@ public:
     float stX[6] = {};
     float stY[6] = {};
     bool stOn[6] = {};
+    std::string picSrc[4]; // zuletzt gesetzte <img>-Quellen (Pic-Mirror)
     int gold = 0;
     bool messageVisible = false;
     int hp = 65, hpMax = 100;
@@ -652,6 +658,67 @@ void RmlUiSystem::SyncFromGameUI() {
             if (auto* hud = m->gameDoc ? m->gameDoc->GetElementById("hud_root") : nullptr)
                 hud->SetProperty("display", titleMode ? "none" : "block");
             m->hudHiddenForTitle = titleMode;
+        }
+    }
+
+    // ScreenPictures (UI.show_picture / Titelgrafik) -> <img>-Overlays.
+    // Bis zu 4 Stueck; Position/Groesse/Opacity werden pro Frame gespiegelt.
+    if (m->gameDoc) {
+        const auto& pics = GameUI::Get().GetPictures();
+        const Rml::Vector2i dims = m->gameContext
+            ? m->gameContext->GetDimensions() : Rml::Vector2i(800, 600);
+        for (int i = 0; i < 4; ++i) {
+            Rml::Element* el = m->gameDoc->GetElementById(
+                ("pic" + std::to_string(i)).c_str());
+            if (!el) continue;
+            bool visible = false;
+            std::string src, left, top, wpx, hpx;
+            float opacity = 1.0f;
+            bool centered = true;
+            if (i < (int)pics.size() && !pics[i].filename.empty()) {
+                const auto& pic = pics[(size_t)i];
+                const bool expired = pic.fading && pic.duration > 0.0f &&
+                                     pic.elapsed >= pic.duration;
+                src = GameUI::ResolvePicturePath(pic.filename);
+                if (!expired && !src.empty() && std::filesystem::exists(src)) {
+                    visible = true;
+                    opacity = pic.opacity;
+                    if (pic.fading && pic.duration > 0.0f) {
+                        const float remaining = pic.duration - pic.elapsed;
+                        if (remaining < 1.0f) opacity *= std::max(0.0f, remaining);
+                    }
+                    centered = pic.centered;
+                    left = std::to_string((int)(pic.screenPos.x * dims.x)) + "px";
+                    top  = std::to_string((int)(pic.screenPos.y * dims.y)) + "px";
+                    // Groesse: explizite size*Fenster*scale, sonst 128px*scale
+                    const float sx = pic.size.x > 0.01f
+                        ? pic.size.x * dims.x * pic.scale : 128.0f * pic.scale;
+                    const float sy = pic.size.y > 0.01f
+                        ? pic.size.y * dims.y * pic.scale : 128.0f * pic.scale;
+                    wpx = std::to_string((int)sx) + "px";
+                    hpx = std::to_string((int)sy) + "px";
+                }
+            }
+            el->SetProperty("display", visible ? "block" : "none");
+            if (visible) {
+                const std::string absSrc =
+                    std::filesystem::absolute(src).generic_string();
+                if (m->picSrc[i] != absSrc) {
+                    el->SetAttribute("src", absSrc);
+                    m->picSrc[i] = absSrc;
+                }
+                el->SetProperty("left", left);
+                el->SetProperty("top", top);
+                el->SetProperty("width", wpx);
+                el->SetProperty("height", hpx);
+                el->SetProperty("opacity", std::to_string(opacity));
+                el->SetProperty("transform",
+                    centered ? "translate(-50%, -50%)" : "translate(0px, 0px)");
+                el->SetProperty("pointer-events", "none");
+            } else if (!m->picSrc[i].empty()) {
+                el->SetAttribute("src", "");
+                m->picSrc[i].clear();
+            }
         }
     }
 

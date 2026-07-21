@@ -191,11 +191,22 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
     // "Speichern" oeffnet den XP-Speicherbildschirm (4 Slots)
     GameUI::Get().Pause().onSave = []() { GameUI::Get().ShowSaveScreen(true); };
-    // "Spiel beenden": Editor-Playtest stoppt, Player beendet das Spiel
+    // "Zum Titelbildschirm": Editor-Playtest stoppt, Player -> Titel
     GameUI::Get().Pause().onExitToTitle = [this]() {
+        if (mEditorMode) this->SetPlaying(false);
+        else this->ReturnToTitle();
+    };
+    // "Spiel verlassen": Editor-Playtest stoppt, Player beendet das Spiel
+    GameUI::Get().Pause().onQuitGame = [this]() {
         if (mEditorMode) this->SetPlaying(false);
         else this->RequestQuit();
     };
+
+    // Bild-Pfadaufloeser fuer GameUI (UI.show_picture + Titelgrafik):
+    // sucht in den XP-Projektordnern (Graphics/Pictures|Titles) usw.
+    GameUI::SetPicturePathResolver([this](const std::string& filename) {
+        return ResolvePicturePathFor(filename);
+    });
 
     mScene = std::make_unique<Scene>();
     mProject = std::make_unique<Project>();
@@ -447,9 +458,18 @@ void Engine::SetPlaying(bool playing) {
 // ---------------------------------------------------------------------------
 void Engine::StartTitleMode() {
     auto& title = GameUI::Get().Title();
+
+    // Titel-BGM + Titelgrafik aus der Datenbank (System-Tab, XP)
+    const auto& sys = Database::Get().System();
+    if (!sys.titleBgm.empty()) PlayEventAudio(sys.titleBgm, 0, true);
+    if (!sys.titleGraphicName.empty()) {
+        const int picId = GameUI::Get().ShowPicture(
+            sys.titleGraphicName, Vec2(0.5f, 0.5f), 1.0f, 1.0f, 0.0f, "$title");
+        GameUI::Get().SetPictureSize(picId, 1.0f, 1.0f); // Vollbild
+    }
+
     title.onNewGame = [this]() {
-        GameUI::Get().Title().Hide();
-        GameUI::Get().Menu().Hide(); // Titelmenue schliessen
+        EndTitleMode();
         Game::Get().NewGame();
         SetPlaying(true); // Player-Zweig: laedt Events + fuehrt Skripte aus
     };
@@ -458,8 +478,7 @@ void Engine::StartTitleMode() {
         // weiterfuehren (Slot geladen) oder Abbruch -> zurueck zum Titel.
         GameUI::Get().ShowSaveScreen(false, [this]() {
             if (Game::Get().IsGameStarted()) {
-                GameUI::Get().Title().Hide();
-                GameUI::Get().Menu().Hide(); // Lade-Ansicht schliessen
+                EndTitleMode();
                 // Karte/Events/BGM kamen bereits per Game::Load-
                 // Map-Wechsel-Hook; SetPlaying startet Logik + Skripte.
                 SetPlaying(true);
@@ -471,6 +490,51 @@ void Engine::StartTitleMode() {
     title.onExit = [this]() { RequestQuit(); };
     title.Show();
     RPG_LOG_INFO("Titelbildschirm aktiv (Neues Spiel / Weiterspielen / Beenden)");
+}
+
+void Engine::EndTitleMode() {
+    GameUI::Get().Title().Hide();
+    GameUI::Get().Menu().Hide();
+    GameUI::Get().RemovePicture(std::string("$title"));
+    if (mAudio) mAudio->FadeOutBGM(0.3f); // Karten-BGM uebernimmt danach
+}
+
+void Engine::ReturnToTitle() {
+    // Spiel sauber anhalten (analog PLAYTEST STOP), dann Titel zeigen
+    GameUI::Get().Message().Hide();
+    GameUI::Get().Menu().Hide();
+    EventSystem::Get().Clear();
+    if (BattleSystem::Get().IsInBattle()) BattleSystem::Get().Abort();
+    Game::Get().SetGameStarted(false);
+    Game::Get().Player().SetLocked(false);
+    SetPlaying(false);
+    StartTitleMode();
+}
+
+// ---------------------------------------------------------------------------
+// Bild-Pfadaufloesung (Graphics/Pictures|Titles, XP-Struktur)
+// ---------------------------------------------------------------------------
+std::string Engine::ResolvePicturePathFor(const std::string& filename) const {
+    if (filename.empty()) return {};
+    const std::string base = mProject ? mProject->GetProjectPath() : std::string();
+    static const char* kDirs[] = {
+        "Graphics/Pictures/", "Graphics/Titles/", "Pictures/", "pictures/",
+        "assets/pictures/", "assets/textures/", "assets/", ""
+    };
+    static const char* kExts[] = {"", ".png", ".jpg", ".jpeg", ".bmp", ".tga"};
+    std::vector<std::string> roots;
+    if (!base.empty())
+        for (const char* d : kDirs) roots.push_back(base + "/" + d);
+    for (const char* d : kDirs) roots.push_back(d); // Fallback: relativ zum CWD
+    for (const auto& root : roots) {
+        for (const char* ext : kExts) {
+            const std::string p = root + filename + ext;
+            if (!p.empty() && std::filesystem::exists(p) &&
+                !std::filesystem::is_directory(p))
+                return p;
+        }
+    }
+    return {};
 }
 
 // ---------------------------------------------------------------------------
