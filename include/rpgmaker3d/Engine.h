@@ -172,6 +172,9 @@ private:
     int mBattleStatusEnemiesId = -1;
     int mBattleStatusPartyId = -1;
     float mBattleStatusTimer = 0.0f;
+    // Gegner-Grafiken im Kampf (Graphics/Battlers/, XP-Battler-Bilder):
+    // Namen der aktiven $battler-Pictures, damit kein Flackern/Reload entsteht
+    std::vector<std::string> mBattlerPicNames;
 
     // Game Over: Anzeige laeuft, wartet auf Bestaetigung -> Titel/Stopp
     bool mGameOverPending = false;

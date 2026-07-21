@@ -122,6 +122,7 @@ Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht 
 | Battle | Event `BattleProcessing` / `Game.start_battle(troopId)` / Random Encounter / `Battle.*` Ruby-Modul (Custom-Szenen) |
 | Shop | Event `ShopProcessing` → `GameUI::ShowShopGoods` (Items + `w<ID>` Waffen + `a<ID>` Ruestungen) |
 | Custom-UIs | `Game.ini` (NativeTitle/Hud/GameMenu/BattleMenu/BattleStatus) + `UI.native_*=` + `CallGameHook("custom_title")` + `UI.open_list_menu` + `RmlUiSystem::ReloadDocumentsIfChanged` (`UI/Skin.rcss`, `UI/Game.rml`) |
+| Pictures | bis 8 RmlUi-`<img>` (pic0..pic7), Rotation via `transform: rotate(); Kampf: bis 4 Gegnerbilder `$battlerN` aus `Graphics/Battlers/` (EnemyData.battlerName) |
 | Script-Befehl | Event `Script` → RubyVM (Script-Editor-Code) |
 | Troops/States | `database/Troops.json`, `States.json` |
 

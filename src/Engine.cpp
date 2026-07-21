@@ -39,6 +39,7 @@
 #include <sstream>
 #include <filesystem>
 #include <vector>
+#include <algorithm>
 
 namespace rpg {
 
@@ -583,6 +584,7 @@ std::string Engine::ResolvePicturePathFor(const std::string& filename) const {
     const std::string base = mProject ? mProject->GetProjectPath() : std::string();
     static const char* kDirs[] = {
         "Graphics/Pictures/", "Graphics/Titles/", "Graphics/Gameovers/",
+        "Graphics/Battlers/", // XP-Gegnergrafiken (Kampf)
         "Pictures/", "pictures/",
         "assets/pictures/", "assets/textures/", "assets/", ""
     };
@@ -1000,6 +1002,42 @@ void Engine::Update(float dt) {
                 }
                 GameUI::Get().SetScreenText(mBattleStatusEnemiesId, enemies);
                 GameUI::Get().SetScreenText(mBattleStatusPartyId, party);
+
+                // --- Gegner-Grafiken (Graphics/Battlers/<battlerName>, XP) ---
+                // Max. 4 Stueck; Bilder entstehen einmal und bleiben (kein
+                // Flackern/Reload), tote Gegner verschwinden sofort.
+                const int enemyCount = (int)bs.Enemies().size();
+                auto removeBattlerPic = [this](const std::string& tag) {
+                    auto it2 = std::find(mBattlerPicNames.begin(), mBattlerPicNames.end(), tag);
+                    if (it2 != mBattlerPicNames.end()) {
+                        GameUI::Get().RemovePicture(*it2);
+                        mBattlerPicNames.erase(it2);
+                    }
+                };
+                for (int i = 0; i < enemyCount && i < 4; ++i) {
+                    const auto& e = bs.Enemies()[(size_t)i];
+                    const std::string tag = "$battler" + std::to_string(i);
+                    const bool exists = std::find(mBattlerPicNames.begin(),
+                        mBattlerPicNames.end(), tag) != mBattlerPicNames.end();
+                    if (!e.isDead) {
+                        if (!exists) {
+                            std::string gfx;
+                            if (const auto* ed = Database::Get().GetEnemy(e.id))
+                                gfx = ed->battlerName;
+                            if (gfx.empty()) gfx = "slime";
+                            const float x = enemyCount > 1
+                                ? (0.25f + 0.5f * (float)i / (float)(enemyCount - 1))
+                                : 0.5f;
+                            GameUI::Get().ShowPicture(gfx, tag, Vec2(x, 0.30f),
+                                                      1.5f, 1.0f, 0.0f);
+                            mBattlerPicNames.push_back(tag);
+                        }
+                    } else {
+                        removeBattlerPic(tag);
+                    }
+                }
+                for (int i = enemyCount; i < 4; ++i)
+                    removeBattlerPic("$battler" + std::to_string(i));
             }
         } else if (mBattleStatusEnemiesId >= 0) {
             GameUI::Get().RemoveScreenText(mBattleStatusEnemiesId);
@@ -1007,6 +1045,8 @@ void Engine::Update(float dt) {
             mBattleStatusEnemiesId = -1;
             mBattleStatusPartyId = -1;
             mBattleStatusTimer = 0.0f;
+            for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
+            mBattlerPicNames.clear(); // Gegner-Grafiken weg
         }
         if (mRubyVM) mRubyVM->Update(dt);
     }
@@ -1032,6 +1072,8 @@ void Engine::Update(float dt) {
         mBattleStatusEnemiesId = -1;
         mBattleStatusPartyId = -1;
         mBattleStatusTimer = 0.0f;
+        for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
+        mBattlerPicNames.clear(); // Gegner-Grafiken weg
     }
 
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode

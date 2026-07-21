@@ -254,9 +254,11 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
 - **Sichtbar gemacht**: Auch **Auswahl (102)**, **Zahleneingabe (103)** und
   **Namenseingabe (303)** zeigen jetzt ein eigenes XP-Fenster im Player
   (vorher nur Tastatursteuerung ohne Anzeige). **Bilder** (231,
-  `UI.show_picture`) werden ebenfalls im Player dargestellt; gesucht wird in
-  `<Projekt>/Graphics/Pictures|Titles/` (XP-Struktur), `assets/pictures/`
-  u. a. (png/jpg/jpeg/bmp/tga).
+  `UI.show_picture`) werden ebenfalls im Player dargestellt – jetzt **bis zu
+  8 gleichzeitig** und mit **Drehung** (232 Bildausschnitt bewegen/drehen bzw.
+  `UI.tween_picture`); gesucht wird in `<Projekt>/Graphics/Pictures|Titles/
+  Gameovers|Battlers/` (XP-Struktur), `assets/pictures/` u. a.
+  (png/jpg/jpeg/bmp/tga).
 - **Kampfsystem im XP-Stil**: Sobald ein Akteur an der Reihe ist, öffnet sich
   das **Befehlsmenü** – **Angriff / Fertigkeit / Gegenstand / Verteidigen /
   Flucht** (Flucht gesperrt bei „Kann nicht fliehen“, Menüaufruf im Kampf
@@ -267,8 +269,11 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   HP-Recovery, z. B. Bomben) verletzen Gegner, **Verteidigen halbiert** den
   Schaden bis zur nächsten eigenen Aktion. Oben im Bild steht während des
   ganzen Kampfes die **Statusanzeige** (Gegner-Zeile mit HP, darunter die
-  Gruppe mit HP/MP und K.O.-Markierung). Die Akteure kämpfen mit ihren
-  **echten Werten aus der Datenbank** (Level-Kurve + Waffen-/Rüstungs-Bonus),
+  Gruppe mit HP/MP und K.O.-Markierung) und die **Gegner-Grafiken** – bis zu
+  4 Battler-Bilder aus `<Projekt>/Graphics/Battlers/` (Dateiname = Feld
+  „Battler-Grafik" im Gegner-Tab, besiegte Gegner verschwinden sofort). Die
+  Akteure kämpfen mit ihren **echten Werten aus der Datenbank**
+  (Level-Kurve + Waffen-/Rüstungs-Bonus),
   HP/MP bleiben nach dem Kampf erhalten, und der Sieg schreibt EXP gut –
   inklusive **Level-Aufstiegen mit Meldung** (EXP-Kurve der Klasse, Formel
   wie in RPG Maker VX Ace). Auch der Event-Befehl „EXP ändern“ (315) nutzt
