@@ -2,6 +2,7 @@
 #include "rpgmaker3d/Game.h"
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/EventSystem.h"
+#include "rpgmaker3d/BattleSystem.h" // XP-Kampfmenue (Battler/BattleAction)
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
@@ -273,26 +274,9 @@ void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial
 // ============================================================================
 
 namespace {
-// --- XP-Helfer: provisorische Max-Kurven ----------------------------------
-// Die Datenbank hat initialStats (Stufe 1); bis ein Kurven-Editor existiert,
-// gilt +5% der Basis pro Level (XP-typische Groessenordnung), aber mindestens
-// der aktuelle Wert (kein Absenken unter den Ist-Stand).
-int MaxHpFor(const GameActor& a) {
-    if (const auto* ad = Database::Get().GetActor(a.actorId)) {
-        const int base = std::max(1, ad->initialStats.mhp);
-        return std::max(a.hp, base + (a.level - 1) * std::max(1, base / 20));
-    }
-    return std::max(a.hp, 100);
-}
-int MaxMpFor(const GameActor& a) {
-    if (const auto* ad = Database::Get().GetActor(a.actorId)) {
-        const int base = std::max(1, ad->initialStats.mmp);
-        return std::max(a.mp, base + (a.level - 1) * std::max(1, base / 20));
-    }
-    return std::max(a.mp, 30);
-}
-
 // --- Ausruestungs-Helfer --------------------------------------------------
+// (Max-HP/MP/-Kurven sind inzwischen GameActor-Methoden in Game.cpp -
+// dieselbe Formel nutzt auch das Kampfsystem.)
 const char* kArmorSlotNames[4] = {"Schild", "Helm", "Körper", "Accessoire"};
 
 const ArmorData* FindArmorDef(int id) {
@@ -419,8 +403,8 @@ void GameUI::OpenItemTargetMenu(int itemId) {
         if (it2 && idx >= 0 && idx < (int)party.Members().size()) {
             auto& a = party.Members()[(size_t)idx];
             // Heil-Obergrenzen aus den Datenbank-Werten (initialStats + Kurve)
-            a.hp = std::min(a.hp + it2->hpRecovery, MaxHpFor(a));
-            a.mp = std::min(a.mp + it2->mpRecovery, MaxMpFor(a));
+            a.hp = std::min(a.hp + it2->hpRecovery, a.MaxHp());
+            a.mp = std::min(a.mp + it2->mpRecovery, a.MaxMp());
             party.GainItem(itemId, -1);
             EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
             ShowMessage(a.name + " erholt sich:  +" + std::to_string(it2->hpRecovery) +
@@ -442,8 +426,8 @@ void GameUI::OpenStatusMenu() {
         if (idx < 0 || idx >= (int)members.size()) return;
         const auto& a = members[(size_t)idx];
         ShowMessage(a.name + "  –  Level " + std::to_string(a.level) +
-                    "\nHP " + std::to_string(a.hp) + " / " + std::to_string(MaxHpFor(a)) +
-                    " | MP " + std::to_string(a.mp) + " / " + std::to_string(MaxMpFor(a)) +
+                    "\nHP " + std::to_string(a.hp) + " / " + std::to_string(a.MaxHp()) +
+                    " | MP " + std::to_string(a.mp) + " / " + std::to_string(a.MaxMp()) +
                     "\nEXP " + std::to_string(a.exp));
     });
     mMenu.onCancel = [this]() { OpenGameMenu(); };
@@ -462,7 +446,7 @@ void GameUI::OpenSkillsMenu() {
     std::vector<MenuWindow::Entry> mem;
     for (const auto& a : party.Members())
         mem.push_back({a.name + "   MP " + std::to_string(a.mp) +
-                       " / " + std::to_string(MaxMpFor(a)), true});
+                       " / " + std::to_string(a.MaxMp()), true});
     mMenu.Show("Fertigkeiten: Mitglied wählen", mem,
         [this](int mi) { OpenSkillListMenu(mi); });
     mMenu.onCancel = [this]() { OpenGameMenu(); };
@@ -490,7 +474,7 @@ void GameUI::OpenSkillListMenu(int memberIndex) {
     if (items.empty()) items.push_back({"(keine Fertigkeiten)", false});
 
     mMenu.Show(actor.name + ": Fertigkeiten   (MP " + std::to_string(actor.mp) +
-               " / " + std::to_string(MaxMpFor(actor)) + ")", items,
+               " / " + std::to_string(actor.MaxMp()) + ")", items,
         [this, memberIndex, skillIds](int idx) {
             if (idx >= 0 && idx < (int)skillIds.size())
                 OpenSkillTargetMenu(memberIndex, skillIds[(size_t)idx]);
@@ -505,7 +489,7 @@ void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId) {
     auto& members = Game::Get().Party().Members();
     for (const auto& a : members)
         items.push_back({a.name + "   HP " + std::to_string(a.hp) +
-                         " / " + std::to_string(MaxHpFor(a)), a.hp > 0});
+                         " / " + std::to_string(a.MaxHp()), a.hp > 0});
     if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
 
     mMenu.Show(sk->name + ": Ziel wählen", items,
@@ -518,7 +502,7 @@ void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId) {
                 auto& target = party.Members()[(size_t)ti];
                 if (caster.mp >= sk2->mpCost) {
                     caster.mp -= sk2->mpCost;
-                    target.hp = std::min(target.hp + sk2->power, MaxHpFor(target));
+                    target.hp = std::min(target.hp + sk2->power, target.MaxHp());
                     EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
                     ShowMessage(target.name + " erholt sich um " +
                                 std::to_string(sk2->power) + " HP.  (-" +
@@ -710,7 +694,15 @@ void GameUI::ShowSaveScreen(bool saveMode, std::function<void()> onClosed) {
 }
 
 void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onClosed) {
-    mShopGoods = itemIds;
+    // Kompatibilitaets-Variante: nur Items -> ShopGood{Item, id}
+    std::vector<ShopGood> goods;
+    goods.reserve(itemIds.size());
+    for (int id : itemIds) goods.push_back({ShopGood::Kind::Item, id});
+    ShowShopGoods(goods, std::move(onClosed));
+}
+
+void GameUI::ShowShopGoods(const std::vector<ShopGood>& goods, std::function<void()> onClosed) {
+    mShopGoods = goods;
     mShopOnClosed = std::move(onClosed);
     mShopActive = true;
 
@@ -720,6 +712,29 @@ void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onC
         auto cb = std::move(mShopOnClosed);
         mShopOnClosed = nullptr;
         if (cb) cb();
+    };
+
+    // Ware aufloesen: Name/Preis je nach Art (Item/Waffe/Ruestung)
+    auto goodInfo = [](const ShopGood& g, std::string& name, int& price) -> bool {
+        switch (g.kind) {
+            case ShopGood::Kind::Item:
+                if (const auto* d = Database::Get().GetItem(g.id)) {
+                    name = d->name; price = d->price; return true;
+                }
+                break;
+            case ShopGood::Kind::Weapon:
+                if (const auto* d = FindWeaponDef(g.id)) {
+                    name = "[Waffe] " + d->name; price = d->price; return true;
+                }
+                break;
+            case ShopGood::Kind::Armor:
+                if (const auto* d = FindArmorDef(g.id)) {
+                    name = "[Rüstung] " + d->name; price = d->price; return true;
+                }
+                break;
+        }
+        name = "Ware #" + std::to_string(g.id); price = 0;
+        return false;
     };
 
     // 3 Phasen (Hauptauswahl / Kaufen / Verkaufen) als shared-Functions,
@@ -742,25 +757,29 @@ void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onC
         mMenu.onCancel = closeShop;
     };
 
-    *phaseBuy = [this, phaseMain, phaseBuy]() {
+    *phaseBuy = [this, phaseMain, phaseBuy, goodInfo]() {
         std::vector<MenuWindow::Entry> items;
-        for (int id : mShopGoods) {
-            const auto* it = Database::Get().GetItem(id);
-            const std::string name = it ? it->name : ("Gegenstand #" + std::to_string(id));
-            const int price = it ? it->price : 0;
-            items.push_back({name + "   –   " + std::to_string(price) + " G", it != nullptr});
+        for (const auto& g : mShopGoods) {
+            std::string name; int price = 0;
+            const bool ok = goodInfo(g, name, price);
+            items.push_back({name + "   –   " + std::to_string(price) + " G", ok});
         }
         if (items.empty()) items.push_back({"(leer)", false});
         mMenu.Show("Kaufen   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
-            items, [this, phaseBuy](int idx) {
+            items, [this, phaseBuy, goodInfo](int idx) {
                 if (idx < 0 || idx >= (int)mShopGoods.size()) return;
-                const auto* it = Database::Get().GetItem(mShopGoods[idx]);
-                if (!it) return;
+                const ShopGood& g = mShopGoods[(size_t)idx];
+                std::string name; int price = 0;
+                if (!goodInfo(g, name, price)) return;
                 auto& party = Game::Get().Party();
                 const auto& sys = Database::Get().System();
-                if (party.GetGold() >= it->price) {
-                    party.GainGold(-it->price);
-                    party.GainItem(it->id, 1);
+                if (party.GetGold() >= price) {
+                    party.GainGold(-price);
+                    switch (g.kind) {
+                        case ShopGood::Kind::Item:   party.GainItem(g.id, 1); break;
+                        case ShopGood::Kind::Weapon: party.GainWeapon(g.id, 1); break;
+                        case ShopGood::Kind::Armor:  party.GainArmor(g.id, 1); break;
+                    }
                     EventSystem_PlayAudio(sys.shopSe, 3, false);
                 } else {
                     EventSystem_PlayAudio(sys.buzzerSe, 3, false);
@@ -770,27 +789,42 @@ void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onC
         mMenu.onCancel = [phaseMain]() { (*phaseMain)(); };
     };
 
-    *phaseSell = [this, phaseMain, phaseSell]() {
-        std::vector<std::pair<int,int>> bag(
-            Game::Get().Party().Items().begin(), Game::Get().Party().Items().end());
-        std::sort(bag.begin(), bag.end());
+    *phaseSell = [this, phaseMain, phaseSell, goodInfo]() {
+        // Alles Verkaeufliche: Items + Waffen + Ruestungen (mit Anzahl)
+        struct SellEntry { ShopGood good; int count; };
+        std::vector<SellEntry> bag;
+        for (const auto& kv : Game::Get().Party().Items())
+            if (kv.second > 0) bag.push_back({{ShopGood::Kind::Item, kv.first}, kv.second});
+        for (const auto& kv : Game::Get().Party().Weapons())
+            if (kv.second > 0) bag.push_back({{ShopGood::Kind::Weapon, kv.first}, kv.second});
+        for (const auto& kv : Game::Get().Party().Armors())
+            if (kv.second > 0) bag.push_back({{ShopGood::Kind::Armor, kv.first}, kv.second});
+        std::sort(bag.begin(), bag.end(), [](const SellEntry& a, const SellEntry& b) {
+            if (a.good.kind != b.good.kind) return a.good.kind < b.good.kind;
+            return a.good.id < b.good.id;
+        });
         std::vector<MenuWindow::Entry> items;
-        for (const auto& kv : bag) {
-            const auto* it = Database::Get().GetItem(kv.first);
-            const std::string name = it ? it->name : ("Gegenstand #" + std::to_string(kv.first));
-            const int price = it ? it->price / 2 : 0; // XP: Verkauf = halber Preis
-            items.push_back({name + " x " + std::to_string(kv.second) +
-                "   –   " + std::to_string(price) + " G", it != nullptr && price > 0});
+        for (const auto& e : bag) {
+            std::string name; int price = 0;
+            const bool ok = goodInfo(e.good, name, price);
+            const int sell = price / 2; // XP: Verkauf = halber Preis
+            items.push_back({name + " x " + std::to_string(e.count) +
+                "   –   " + std::to_string(sell) + " G", ok && sell > 0});
         }
         if (items.empty()) items.push_back({"(leer)", false});
         mMenu.Show("Verkaufen   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
-            items, [this, bag, phaseSell](int idx) {
+            items, [this, bag, phaseSell, goodInfo](int idx) {
                 if (idx < 0 || idx >= (int)bag.size()) return;
-                const auto* it = Database::Get().GetItem(bag[idx].first);
-                if (!it || it->price <= 0) return;
+                const ShopGood& g = bag[(size_t)idx].good;
+                std::string name; int price = 0;
+                if (!goodInfo(g, name, price) || price <= 0) return;
                 auto& party = Game::Get().Party();
-                party.GainItem(it->id, -1);
-                party.GainGold(it->price / 2);
+                switch (g.kind) {
+                    case ShopGood::Kind::Item:   party.GainItem(g.id, -1); break;
+                    case ShopGood::Kind::Weapon: party.GainWeapon(g.id, -1); break;
+                    case ShopGood::Kind::Armor:  party.GainArmor(g.id, -1); break;
+                }
+                party.GainGold(price / 2);
                 EventSystem_PlayAudio(Database::Get().System().shopSe, 3, false);
                 (*phaseSell)(); // Neuaufbau (Anzahl/Gold)
             });
@@ -798,6 +832,220 @@ void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onC
     };
 
     (*phaseMain)();
+}
+
+// ============================================================================
+// XP-Kampfmenue: Aktionswahl ueber MenuWindow (ersetzt die Zifferntasten 1-4)
+// Ablauf: Befehle -> (Skill/Item-Liste) -> Zielwahl. Esc geht einen Schritt
+// zurueck; das Befehlsmenue selbst ist - wie in XP - nicht abbrechbar.
+// ============================================================================
+bool GameUI::IsBattleMenuOpen() const { return mMenu.IsVisible(); }
+
+void GameUI::ConfirmBattleAction(int actorIndex, BattleActionType type, int id,
+                                 int targetIndex, bool targetIsActor) {
+    BattleAction act;
+    act.type = type;
+    act.subjectIndex = actorIndex;
+    act.skillId = (type == BattleActionType::Skill) ? id : 0;
+    act.itemId = (type == BattleActionType::Item) ? id : 0;
+    act.targetIndex = targetIndex;
+    act.targetIsActor = targetIsActor;
+    mMenu.onCancel = nullptr; // ab jetzt ist die Aktion entschieden
+    mMenu.Hide();
+    BattleSystem::Get().SetAction(act);
+}
+
+void GameUI::OpenBattleCommands() {
+    auto& bs = BattleSystem::Get();
+    if (bs.Actors().empty()) return;
+    int ai = bs.GetInputActorIndex();
+    if (ai < 0 || ai >= (int)bs.Actors().size()) ai = 0;
+    const Battler& actor = bs.Actors()[(size_t)ai];
+
+    // Fertigkeiten des zugehoerigen Party-Mitglieds (per actorId abgesichert)
+    bool hasSkills = false;
+    for (const auto& m : Game::Get().Party().Members())
+        if (m.actorId == actor.id) { hasSkills = !m.skills.empty(); break; }
+    // Im Kampf benutzbare Gegenstaende (Heil- oder Schadens-Items)?
+    bool hasItems = false;
+    for (const auto& kv : Game::Get().Party().Items()) {
+        if (kv.second <= 0) continue;
+        if (const auto* it = Database::Get().GetItem(kv.first))
+            if (it->hpRecovery != 0 || it->mpRecovery > 0) { hasItems = true; break; }
+    }
+
+    std::vector<MenuWindow::Entry> items;
+    items.push_back({"Angriff", true});
+    items.push_back({"Fertigkeit", hasSkills});
+    items.push_back({"Gegenstand", hasItems});
+    items.push_back({"Verteidigen", true});
+    items.push_back({"Flucht", bs.CanEscape()});
+
+    const std::string title = actor.name +
+        "   HP " + std::to_string(actor.hp) + " / " + std::to_string(actor.maxHp) +
+        "   MP " + std::to_string(actor.mp) + " / " + std::to_string(actor.maxMp);
+    mMenu.Show(title, items, [this, ai](int idx) {
+        switch (idx) {
+            case 0: { // Angriff -> Ziel (bei nur einem Gegner direkt)
+                int alive = 0, last = 0;
+                auto& bs2 = BattleSystem::Get();
+                for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                    if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(ai, BattleActionType::Attack, 0, last, false);
+                else
+                    OpenBattleTargetMenu(ai, 0, 0);
+                break;
+            }
+            case 1: OpenBattleSkillMenu(ai); break;
+            case 2: OpenBattleItemMenu(ai); break;
+            case 3: ConfirmBattleAction(ai, BattleActionType::Guard, 0, 0, false); break;
+            case 4: ConfirmBattleAction(ai, BattleActionType::Escape, 0, 0, false); break;
+            default: break;
+        }
+    }, false); // nicht abbrechbar - in XP waehlt jeder Kaempfer zwingend
+}
+
+void GameUI::OpenBattleSkillMenu(int actorIndex) {
+    auto& bs = BattleSystem::Get();
+    if (actorIndex < 0 || actorIndex >= (int)bs.Actors().size()) {
+        OpenBattleCommands();
+        return;
+    }
+    const Battler& battler = bs.Actors()[(size_t)actorIndex];
+    const GameActor* member = nullptr;
+    for (const auto& m : Game::Get().Party().Members())
+        if (m.actorId == battler.id) { member = &m; break; }
+
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> skillIds;
+    if (member) {
+        for (int sid : member->skills) {
+            const auto* sk = Database::Get().GetSkill(sid);
+            const std::string name = sk ? sk->name : ("Fertigkeit #" + std::to_string(sid));
+            const int cost = sk ? sk->mpCost : 0;
+            items.push_back({name + "   " + std::to_string(cost) + " MP",
+                             battler.mp >= cost});
+            skillIds.push_back(sid);
+        }
+    }
+    if (items.empty()) items.push_back({"(keine Fertigkeiten)", false});
+
+    mMenu.Show(battler.name + ": Welche Fertigkeit?", items,
+        [this, actorIndex, skillIds](int idx) {
+            if (idx < 0 || idx >= (int)skillIds.size()) return;
+            const int sid = skillIds[(size_t)idx];
+            const auto* sk = Database::Get().GetSkill(sid);
+            const bool allyScope = sk && sk->scope >= 3; // XP: zielt auf eigene Seite
+            if (allyScope) {
+                OpenBattleAllyMenu(actorIndex, 1, sid);
+            } else {
+                int alive = 0, last = 0;
+                auto& bs2 = BattleSystem::Get();
+                for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                    if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, last, false);
+                else
+                    OpenBattleTargetMenu(actorIndex, 1, sid);
+            }
+        });
+    mMenu.onCancel = [this]() { OpenBattleCommands(); };
+}
+
+void GameUI::OpenBattleItemMenu(int actorIndex) {
+    // Im Kampf benutzbar: Heil-Items (HP/MP) und Schadens-Items (Bombe etc.)
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> itemIds;
+    for (const auto& kv : Game::Get().Party().Items()) {
+        if (kv.second <= 0) continue;
+        const auto* it = Database::Get().GetItem(kv.first);
+        if (!it) continue;
+        const bool usable = (it->hpRecovery != 0 || it->mpRecovery > 0);
+        items.push_back({it->name + "   x" + std::to_string(kv.second), usable});
+        itemIds.push_back(kv.first);
+    }
+    if (items.empty()) items.push_back({"(keine Gegenstände)", false});
+
+    mMenu.Show("Welchen Gegenstand?", items, [this, actorIndex, itemIds](int idx) {
+        if (idx < 0 || idx >= (int)itemIds.size()) return;
+        const int iid = itemIds[(size_t)idx];
+        const auto* it = Database::Get().GetItem(iid);
+        if (it && it->hpRecovery < 0) {
+            // Schadens-Item -> Gegner waehlen
+            int alive = 0, last = 0;
+            auto& bs2 = BattleSystem::Get();
+            for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+            if (alive <= 1)
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, false);
+            else
+                OpenBattleTargetMenu(actorIndex, 2, iid);
+        } else {
+            // Heil-Item -> Verbuendeten waehlen (direkt, wenn nur einer lebt)
+            int alive = 0, last = 0;
+            auto& bs2 = BattleSystem::Get();
+            for (size_t i = 0; i < bs2.Actors().size(); ++i)
+                if (!bs2.Actors()[i].isDead) { ++alive; last = (int)i; }
+            if (alive <= 1)
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, true);
+            else
+                OpenBattleAllyMenu(actorIndex, 2, iid);
+        }
+    });
+    mMenu.onCancel = [this]() { OpenBattleCommands(); };
+}
+
+void GameUI::OpenBattleTargetMenu(int actorIndex, int mode, int id) {
+    // Gegner-Zielwahl (mode: 0=Angriff, 1=Skill, 2=Item)
+    auto& bs = BattleSystem::Get();
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> targets;
+    for (size_t i = 0; i < bs.Enemies().size(); ++i) {
+        const auto& e = bs.Enemies()[i];
+        items.push_back({e.name + "   HP " + std::to_string(e.hp) + " / " +
+                         std::to_string(e.maxHp), !e.isDead});
+        targets.push_back((int)i);
+    }
+    if (items.empty()) items.push_back({"(keine Gegner)", false});
+
+    mMenu.Show("Welchen Gegner?", items, [this, actorIndex, mode, id, targets](int idx) {
+        if (idx < 0 || idx >= (int)targets.size()) return;
+        const BattleActionType t = (mode == 1) ? BattleActionType::Skill
+                                 : (mode == 2) ? BattleActionType::Item
+                                               : BattleActionType::Attack;
+        ConfirmBattleAction(actorIndex, t, id, targets[(size_t)idx], false);
+    });
+    mMenu.onCancel = [this, actorIndex, mode]() {
+        if (mode == 1) OpenBattleSkillMenu(actorIndex);
+        else if (mode == 2) OpenBattleItemMenu(actorIndex);
+        else OpenBattleCommands();
+    };
+}
+
+void GameUI::OpenBattleAllyMenu(int actorIndex, int mode, int id) {
+    // Verbuendeten-Zielwahl fuer Heilungen (mode: 1=Skill, 2=Item)
+    auto& bs = BattleSystem::Get();
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> targets;
+    for (size_t i = 0; i < bs.Actors().size(); ++i) {
+        const auto& a = bs.Actors()[i];
+        items.push_back({a.name + "   HP " + std::to_string(a.hp) + " / " +
+                         std::to_string(a.maxHp), !a.isDead});
+        targets.push_back((int)i);
+    }
+    if (items.empty()) items.push_back({"(keine Mitglieder)", false});
+
+    mMenu.Show("Auf wen?", items, [this, actorIndex, mode, id, targets](int idx) {
+        if (idx < 0 || idx >= (int)targets.size()) return;
+        const BattleActionType t = (mode == 1) ? BattleActionType::Skill
+                                               : BattleActionType::Item;
+        ConfirmBattleAction(actorIndex, t, id, targets[(size_t)idx], true);
+    });
+    mMenu.onCancel = [this, actorIndex, mode]() {
+        if (mode == 1) OpenBattleSkillMenu(actorIndex);
+        else OpenBattleItemMenu(actorIndex);
+    };
 }
 
 void GameUI::UpdateModalInput(Input& input) {
@@ -986,6 +1234,11 @@ int GameUI::AddWorldText(const std::string& text, Vec3 worldPos, Color color, fl
 void GameUI::RemoveScreenText(int id) {
     mScreenTexts.erase(std::remove_if(mScreenTexts.begin(), mScreenTexts.end(),
         [id](const ScreenText& s){ return s.id == id; }), mScreenTexts.end());
+}
+
+void GameUI::SetScreenText(int id, const std::string& text) {
+    for (auto& t : mScreenTexts)
+        if (t.id == id) { t.text = text; return; }
 }
 
 void GameUI::ClearScreenTexts() {

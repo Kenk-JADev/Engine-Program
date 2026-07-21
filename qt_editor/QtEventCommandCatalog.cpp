@@ -328,8 +328,8 @@ std::vector<CommandSpec> BuildCatalog() {
          A(QStringLiteral("a0"), QStringLiteral("Flucht erlaubt"), ArgSpec::Type::Bool, 1, 0, 1),
          A(QStringLiteral("a1"), QStringLiteral("Niederlage möglich (kein Game Over)"), ArgSpec::Type::Bool, 1, 0, 1)});
     add(CC::ShopProcessing, QStringLiteral("Laden verarbeiten..."), 3,
-        QStringLiteral("Öffnet einen Laden mit den angegebenen Gegenständen (IDs, Komma-getrennt)."),
-        {Txt(QStringLiteral("text"), QStringLiteral("Gegenstands-IDs"), QStringLiteral("1,2"))});
+        QStringLiteral("Öffnet einen Laden mit den angegebenen Waren. Waren-Text: Zahl = Gegenstand, w<ID> = Waffe, a<ID> = Rüstung (z. B. '1,2,w1,a3')."),
+        {Txt(QStringLiteral("text"), QStringLiteral("Waren (Items, w<Waffe>, a<Rüstung>)"), QStringLiteral("1,2,w1"))});
     add(CC::NameInputProcessing, QStringLiteral("Namenseingabe..."), 3,
         QStringLiteral("Öffnet die Namenseingabe für einen Akteur."),
         {A(QStringLiteral("param1"), QStringLiteral("Akteur"), ArgSpec::Type::ActorId, 1, 1, 9999),

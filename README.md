@@ -246,14 +246,33 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   System-Tab der Datenbank.
 - **Laden/Shop (Event-Befehl 302)**: XP-Ablauf **Kaufen / Verkaufen /
   Abbrechen** – Preise kommen aus der Datenbank, Verkauf bringt den halben
-  Preis, Käufe ziehen das Gold sofort ab und legen den Gegenstand ins
-  Inventar. Bei zu wenig Gold ertönt der Buzzer-SE.
+  Preis, Käufe ziehen das Gold sofort ab und legen die Ware ins Inventar.
+  Bei zu wenig Gold ertönt der Buzzer-SE. Der Laden kennt jetzt **Gegenstände,
+  Waffen und Rüstungen**: Waren-Text `1,2,w1,a3` (Zahl = Item, `w<ID>` =
+  Waffe, `a<ID>` = Rüstung); beim Verkaufen landen alle drei Arten mit
+  Anzahl in der Liste.
 - **Sichtbar gemacht**: Auch **Auswahl (102)**, **Zahleneingabe (103)** und
   **Namenseingabe (303)** zeigen jetzt ein eigenes XP-Fenster im Player
   (vorher nur Tastatursteuerung ohne Anzeige). **Bilder** (231,
   `UI.show_picture`) werden ebenfalls im Player dargestellt; gesucht wird in
   `<Projekt>/Graphics/Pictures|Titles/` (XP-Struktur), `assets/pictures/`
   u. a. (png/jpg/jpeg/bmp/tga).
+- **Kampfsystem im XP-Stil**: Sobald ein Akteur an der Reihe ist, öffnet sich
+  das **Befehlsmenü** – **Angriff / Fertigkeit / Gegenstand / Verteidigen /
+  Flucht** (Flucht gesperrt bei „Kann nicht fliehen“, Menüaufruf im Kampf
+  gesperrt). Fertigkeiten zeigen MP-Kosten (zu wenig MP = ausgegraut),
+  Gegenstände ihre Anzahl; danach folgt die **Zielwahl** mit HP-Anzeige
+  (Gegner- oder Verbuendeten-Liste, Esc = ein Schritt zurück). Heil-Skills
+  (Scope auf die eigene Gruppe) heilen Verbündete, Schadens-Items (negative
+  HP-Recovery, z. B. Bomben) verletzen Gegner, **Verteidigen halbiert** den
+  Schaden bis zur nächsten eigenen Aktion. Oben im Bild steht während des
+  ganzen Kampfes die **Statusanzeige** (Gegner-Zeile mit HP, darunter die
+  Gruppe mit HP/MP und K.O.-Markierung). Die Akteure kämpfen mit ihren
+  **echten Werten aus der Datenbank** (Level-Kurve + Waffen-/Rüstungs-Bonus),
+  HP/MP bleiben nach dem Kampf erhalten, und der Sieg schreibt EXP gut –
+  inklusive **Level-Aufstiegen mit Meldung** (EXP-Kurve der Klasse, Formel
+  wie in RPG Maker VX Ace). Auch der Event-Befehl „EXP ändern“ (315) nutzt
+  diese Kurve und meldet Level-Aufstiege.
 - **Kampftest** wie im XP-Datenbank-Dialog: Button **„Kampftest"** im
   Trupps-Tab der Datenbank (startet die Player-exe, vorher die übliche
   Speicherfrage) oder per Kommandozeile:
@@ -306,6 +325,7 @@ Kartenname im Spiel-Fenster):
 | `UI.hud_visible = false`, `UI.hud_visible?` | **HUD ein-/ausblenden** (z. B. für Zwischensequenzen) |
 | `UI.open_menu` | XP-Spielmenü öffnen (Gegenstände/Speichern/Beenden) |
 | `UI.open_save_screen(true)` | XP-Speicherbildschirm (4 Slots; `false` = Laden-Ansicht) |
+| `UI.open_load_screen` | XP-Ladebildschirm (Alias für `UI.open_save_screen(false)`) |
 | `UI.gold`, `UI.add_gold(n)` | Gold-Anzeige lesen/ändern |
 
 ### Weitere Module

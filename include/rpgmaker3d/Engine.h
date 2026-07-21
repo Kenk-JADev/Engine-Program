@@ -162,6 +162,11 @@ private:
     int mFPS = 0;
     float mFPSTimer = 0.0f;
     int mFrameCount = 0;
+
+    // XP-Kampfstatus-Anzeige (Gegner-/Gruppenzeile oben, Screen-Text-Ids)
+    int mBattleStatusEnemiesId = -1;
+    int mBattleStatusPartyId = -1;
+    float mBattleStatusTimer = 0.0f;
 };
 
 } // namespace rpg

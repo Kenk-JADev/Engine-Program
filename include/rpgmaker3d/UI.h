@@ -9,6 +9,16 @@
 
 namespace rpg {
 
+enum class BattleActionType; // BattleSystem.h (Fwd-Dekl, UI.h bleibt leicht)
+
+// Ware im Laden (Event-Befehl 302, ShowShopGoods):
+// text-Kodierung "1,2,w3,a1" - Zahl = Item, w<ID> = Waffe, a<ID> = Ruestung
+struct ShopGood {
+    enum class Kind { Item = 0, Weapon = 1, Armor = 2 };
+    Kind kind = Kind::Item;
+    int id = 0;
+};
+
 struct ChoiceOption {
     std::string text;
     int value = 0;
@@ -236,8 +246,20 @@ public:
 
     // === XP-Laden (Event-Befehl 302) ===
     // Kaufen/Verkaufen/Abbrechen, Preise aus der Datenbank; Enter kauft 1x.
+    // ShowShopGoods verkauft Items, Waffen UND Ruestungen (Kauf wie Verkauf).
+    // ShowShop(vector<int>) bleibt als Kompatibilitaets-Variante (nur Items).
     void ShowShop(const std::vector<int>& itemIds, std::function<void()> onClosed = nullptr);
+    void ShowShopGoods(const std::vector<ShopGood>& goods, std::function<void()> onClosed = nullptr);
     bool IsShopActive() const { return mShopActive; }
+
+    // === XP-Kampfmenue (Aktionswahl statt Zifferntasten) ===
+    // Wird von der Engine geoeffnet, sobald BattleSystem::NeedsInput() true
+    // ist. Angriff/Fertigkeit/Gegenstand/Verteidigen/Flucht mit Ziel- und
+    // Listen-Untermenues (Esc = zurueck zur vorherigen Auswahl).
+    void OpenBattleCommands();
+    /// true, solange eine Kampf-Auswahl (Befehle/Skill/Item/Ziel) offen ist
+    /// (alles laeuft ueber Menu(); der Getter existiert der Lesbarkeit wegen)
+    bool IsBattleMenuOpen() const;
 
     void Update(float dt);
     void Draw();
@@ -276,6 +298,8 @@ public:
     int AddWorldText(const std::string& text, Vec3 worldPos, Color color = Color(1,1,0,1), float duration = 2.5f, float scale = 1.0f);
     void RemoveScreenText(int id);
     void ClearScreenTexts();
+    /// Text eines bestehenden Screen-Texts aktualisieren (z. B. Kampfstatus)
+    void SetScreenText(int id, const std::string& text);
     const std::vector<ScreenText>& GetScreenTexts() const { return mScreenTexts; }
     // Tween for ScreenText
     void MoveScreenText(int id, Vec2 targetPos, float duration = 0.8f, int easing = 2);
@@ -313,6 +337,13 @@ private:
     void OpenSkillTargetMenu(int memberIndex, int skillId);
     void OpenEquipSlotMenu(int memberIndex, int slotKind); // -1 Uebersicht, -2 Waffe, 0..3 Ruestungstyp
 
+    // Interne Kampf-Untermenues
+    void OpenBattleSkillMenu(int actorIndex);
+    void OpenBattleItemMenu(int actorIndex);
+    void OpenBattleTargetMenu(int actorIndex, int mode, int id); // Gegner: mode 0=Angriff, 1=Skill, 2=Item
+    void OpenBattleAllyMenu(int actorIndex, int mode, int id);   // Verbuendete: mode 1=Skill, 2=Item
+    void ConfirmBattleAction(int actorIndex, BattleActionType type, int id, int targetIndex, bool targetIsActor);
+
     void UpdateScreenTexts(float dt);
     void DrawScreenTexts();
     void UpdatePictures(float dt);
@@ -325,9 +356,9 @@ private:
     PauseMenu mPause;
     MenuWindow mMenu;
 
-    // Shop-State (ShowShop)
+    // Shop-State (ShowShop / ShowShopGoods)
     bool mShopActive = false;
-    std::vector<int> mShopGoods;
+    std::vector<ShopGood> mShopGoods;
     std::function<void()> mShopOnClosed;
 
     // Choices: Abbruch per Escape erlaubt? (XP: "Abbruch nicht erlaubt")

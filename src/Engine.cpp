@@ -862,12 +862,15 @@ void Engine::Update(float dt) {
                                  GameUI::Get().Menu().IsVisible();
         // XP: Esc oeffnet das Spielmenue; Schliessen laeuft ueber
         // MenuWindow::Cancel in UpdateModalInput (Teil von modalActive).
+        // Im Kampf ist der Menueaufruf gesperrt (XP-Verhalten).
         if (!modalActive && mInput->IsKeyPressed(Key::Escape) &&
-            !GameUI::Get().Message().IsBusy()) {
+            !GameUI::Get().Message().IsBusy() &&
+            !BattleSystem::Get().IsInBattle()) {
             GameUI::Get().Pause().Show();
         }
         // Interact with nearby events (E or Enter) when not in dialog
-        if (!modalActive && !GameUI::Get().Message().IsBusy() && !GameUI::Get().Menu().IsVisible()) {
+        if (!modalActive && !GameUI::Get().Message().IsBusy() &&
+            !GameUI::Get().Menu().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             if (mInput->IsKeyPressed(Key::E) || mInput->IsKeyPressed(Key::Enter)) {
                 EventSystem::Get().TryInteract(Game::Get().Player().GetPosition());
             }
@@ -886,24 +889,54 @@ void Engine::Update(float dt) {
         if (!GameUI::Get().Menu().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);
         }
-        // Battle commands: 1/A Attack, 2/S Skill, 3/I Item, 4 Escape
-        if (BattleSystem::Get().NeedsInput()) {
-            BattleAction act;
-            act.subjectIndex = 0;
-            act.targetIndex = 0;
-            bool set = false;
-            if (mInput->IsKeyPressed(Key::Num1) || mInput->IsKeyPressed(Key::A)) {
-                act.type = BattleActionType::Attack; set = true;
-            } else if (mInput->IsKeyPressed(Key::Num2) || mInput->IsKeyPressed(Key::S)) {
-                act.type = BattleActionType::Skill; act.skillId = 1; set = true;
-            } else if (mInput->IsKeyPressed(Key::Num3) || mInput->IsKeyPressed(Key::I)) {
-                act.type = BattleActionType::Item; act.itemId = 1; set = true;
-            } else if (mInput->IsKeyPressed(Key::Num4)) {
-                act.type = BattleActionType::Escape; set = true;
-            }
-            if (set) BattleSystem::Get().SetAction(act);
+        // XP-Kampfmenue: Sobald ein Akteur eine Aktion waehlen darf, oeffnet
+        // sich das Befehlsmenue (Angriff/Fertigkeit/Gegenstand/Verteidigen/
+        // Flucht) mit Ziel- und Listen-Untermenues. Solange ein Menue offen
+        // ist, wird nicht erneut geoeffnet; die Eingabe laeuft ueber
+        // UpdateModalInput (MenuWindow hat oberste Prioritaet).
+        if (BattleSystem::Get().NeedsInput() && !GameUI::Get().Menu().IsVisible() &&
+            !GameUI::Get().Message().IsBusy()) {
+            GameUI::Get().OpenBattleCommands();
         }
         BattleSystem::Get().Update(dt);
+
+        // XP-Kampfstatus: Gegner- und Gruppen-Zeile oben im Bild, solange der
+        // Kampf laeuft (wird nach dem Kampfende automatisch entfernt).
+        if (BattleSystem::Get().IsInBattle()) {
+            auto& bs = BattleSystem::Get();
+            if (mBattleStatusEnemiesId < 0) {
+                mBattleStatusEnemiesId = GameUI::Get().AddScreenText(
+                    "", Vec2(0.5f, 0.03f), Color(1.0f, 0.85f, 0.6f, 1.0f), 0.0f, true, 1.0f);
+                mBattleStatusPartyId = GameUI::Get().AddScreenText(
+                    "", Vec2(0.5f, 0.10f), Color(0.75f, 1.0f, 0.75f, 1.0f), 0.0f, true, 1.0f);
+            }
+            mBattleStatusTimer -= dt;
+            if (mBattleStatusTimer <= 0.0f) {
+                mBattleStatusTimer = 0.25f;
+                std::string enemies;
+                for (const auto& e : bs.Enemies()) {
+                    if (!enemies.empty()) enemies += "     ";
+                    enemies += e.isDead
+                        ? ("[" + e.name + " besiegt]")
+                        : (e.name + "  " + std::to_string(e.hp) + "/" + std::to_string(e.maxHp));
+                }
+                std::string party;
+                for (const auto& a : bs.Actors()) {
+                    if (!party.empty()) party += "    |    ";
+                    party += a.name + "  " + std::to_string(a.hp) + "/" + std::to_string(a.maxHp) +
+                             " HP, " + std::to_string(a.mp) + "/" + std::to_string(a.maxMp) + " MP";
+                    if (a.isDead) party += " (K.O.)";
+                }
+                GameUI::Get().SetScreenText(mBattleStatusEnemiesId, enemies);
+                GameUI::Get().SetScreenText(mBattleStatusPartyId, party);
+            }
+        } else if (mBattleStatusEnemiesId >= 0) {
+            GameUI::Get().RemoveScreenText(mBattleStatusEnemiesId);
+            GameUI::Get().RemoveScreenText(mBattleStatusPartyId);
+            mBattleStatusEnemiesId = -1;
+            mBattleStatusPartyId = -1;
+            mBattleStatusTimer = 0.0f;
+        }
         if (mRubyVM) mRubyVM->Update(dt);
     }
 

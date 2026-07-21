@@ -76,7 +76,7 @@ Schalter/Variablen-Änderung.
 |---|---|---|
 | 301 | Kampf verarbeiten | `param1` = Truppe, `param2` = Flags (1 Flucht, 2 Niederlage) |
 | 601/602/603 | Wenn Sieg/Flucht/Niederlage | gleicher `indent` wie 301 |
-| 302 | Laden | `text` = `"1,2,3"` Item-Ids |
+| 302 | Laden | `text` = Waren-Text: `"1,2,w3,a1"` – Zahl = Item-ID, `w<ID>` = Waffe, `a<ID>` = Rüstung (Kauf & Verkauf) |
 | 303 | Namenseingabe | `param1` = Akteur, `param2` = max. Zeichen |
 | 311–322 | Akteur ändern | `param1` = Akteur (0 = Gruppe), je Befehl `param2/param3/text` |
 | 331–340 | Gegner / Kampfablauf | im Kampfzustand |

@@ -127,6 +127,20 @@ struct GameActor {
     void Setup(int id);
     void RecoverAll();
     bool IsDead() const { return hp <= 0; }
+
+    // --- Provisorische Kurven (initialStats + ~5%/Level, bis der
+    // Kurven-Editor existiert). Steigen nie unter den aktuellen Ist-Wert. ---
+    int MaxHp() const;
+    int MaxMp() const;
+    int Atk() const;  // Basis-Kurve + Waffen-Bonus
+    int Def() const;  // Basis-Kurve + Ruestungs-Bonus (alle Slots)
+    int Agi() const;
+    /// Benoetigte Gesamt-EXP fuer (level+1) nach der Klassen-Kurve
+    /// (ClassData: expBase/expExtra/expAccA/expAccB, Formel wie VX Ace).
+    /// -1 wenn das Max-Level erreicht ist.
+    int ExpForNextLevel() const;
+    /// EXP gutschreiben; gibt die Anzahl der Level-Aufstiege zurueck.
+    int AddExp(int amount);
 };
 
 // == Game Party ==

@@ -27,7 +27,7 @@ void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool 
     mCanLose = canLose;
     mLastOutcome = 0; // Ergebnis fuer IfWin/IfEscape/IfLose zuruecksetzen
 
-    // Actors from Party
+    // Actors from Party - echte Werte aus der Datenbank (Kurven + Ausruestung)
     auto& party = Game::Get().Party().Members();
     mActors.clear();
     for (size_t i=0;i<party.size();++i) {
@@ -35,11 +35,15 @@ void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool 
         b.isActor = true;
         b.id = party[i].actorId;
         b.index = (int)i;
-        b.hp = party[i].hp;
-        b.maxHp = 100;
-        b.maxMp = 30;
+        b.maxHp = party[i].MaxHp();
+        b.maxMp = party[i].MaxMp();
+        b.hp = std::max(0, std::min(party[i].hp, b.maxHp));
+        b.mp = std::max(0, std::min(party[i].mp, b.maxMp));
+        b.isDead = (b.hp <= 0);
         b.name = party[i].name;
-        b.atk = 20; b.def = 10; b.agi = 12;
+        b.atk = party[i].Atk();
+        b.def = party[i].Def();
+        b.agi = party[i].Agi();
         mActors.push_back(b);
     }
     if (mActors.empty()) {
@@ -59,6 +63,8 @@ void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool 
             b.name = data->name;
             b.hp = data->maxHp;
             b.maxHp = data->maxHp;
+            b.mp = data->maxMp;
+            b.maxMp = data->maxMp;
             b.atk = data->atk;
             b.def = data->def;
             b.agi = data->agi;
@@ -124,6 +130,7 @@ void BattleSystem::Update(float dt) {
             if (mTimer > 2.0f) {
                 mState = BattleState::End;
                 mLastOutcome = 1;
+                SyncBackToParty();
                 if (onVictory) onVictory();
             }
             break;
@@ -131,6 +138,7 @@ void BattleSystem::Update(float dt) {
             if (mTimer > 2.0f) {
                 mState = BattleState::End;
                 mLastOutcome = 3;
+                SyncBackToParty();
                 if (onDefeat) onDefeat();
             }
             break;
@@ -167,65 +175,112 @@ void BattleSystem::ProcessTurn() {
     // Execute action
     BattleAction action = mNextAction;
     if (!isActorTurn) {
-        // Enemy AI: attack random actor
+        // Enemy AI: einen zufaelligen LEBENDEN Akteur angreifen
         action.type = BattleActionType::Attack;
-        std::random_device rd; std::mt19937 gen(rd());
-        std::uniform_int_distribution<> dist(0, (int)mActors.size()-1);
-        action.targetIndex = dist(gen);
+        action.targetIsActor = true;
+        std::vector<int> alive;
+        for (size_t i=0;i<mActors.size();++i)
+            if (!mActors[i].isDead) alive.push_back((int)i);
+        if (!alive.empty()) {
+            std::random_device rd; std::mt19937 gen(rd());
+            std::uniform_int_distribution<> dist(0, (int)alive.size()-1);
+            action.targetIndex = alive[(size_t)dist(gen)];
+        }
     }
 
+    // Verteidigen endet, sobald der Kaempfer wieder handelt
+    subject->isGuarding = false;
+
+    // Zielauflösung: targetIsActor entscheidet ueber die Seite
+    auto targetOf = [&](const BattleAction& a) -> Battler* {
+        auto& side = a.targetIsActor ? mActors : mEnemies;
+        if (a.targetIndex >= 0 && a.targetIndex < (int)side.size())
+            return &side[(size_t)a.targetIndex];
+        return nullptr;
+    };
+
     if (action.type==BattleActionType::Attack) {
-        Battler* target = nullptr;
-        if (isActorTurn) {
-            if (action.targetIndex >=0 && action.targetIndex < (int)mEnemies.size())
-                target = &mEnemies[action.targetIndex];
-        } else {
-            if (action.targetIndex >=0 && action.targetIndex < (int)mActors.size())
-                target = &mActors[action.targetIndex];
-        }
+        Battler* target = targetOf(action);
         if (target && !target->isDead) {
             int dmg = std::max(1, subject->atk - target->def/2);
+            if (target->isGuarding) dmg = std::max(1, dmg/2);
             target->ApplyDamage(dmg);
-            if (onMessage) onMessage(subject->name + " attacks " + target->name + " for " + std::to_string(dmg) + " damage!");
+            std::string msg = subject->name + " greift " + target->name + " an: " +
+                              std::to_string(dmg) + " Schaden!";
+            if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+            if (onMessage) onMessage(msg);
             if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
-        }
+        } else if (onMessage) onMessage(subject->name + " greift an... aber da ist niemand!");
     } else if (action.type==BattleActionType::Skill) {
-        Battler* target = nullptr;
-        if (isActorTurn && action.targetIndex >= 0 && action.targetIndex < (int)mEnemies.size())
-            target = &mEnemies[action.targetIndex];
-        int power = 40;
-        std::string sname = "Skill";
-        if (const auto* sk = Database::Get().GetSkill(action.skillId)) {
-            power = sk->power; sname = sk->name;
-            subject->mp = std::max(0, subject->mp - sk->mpCost);
-        }
-        if (target && !target->isDead) {
-            if (power >= 0) {
+        // XP-Semantik: scope>=3 = eigene Seite (Heilung um |power|),
+        // sonst Schaden am Gegner (power + atk/2 - def/2).
+        const SkillData* sk = Database::Get().GetSkill(action.skillId);
+        const int power = sk ? (sk->power < 0 ? -sk->power : sk->power) : 40;
+        const bool allyScope = sk && sk->scope >= 3;
+        const std::string sname = sk ? sk->name : "Fertigkeit";
+        if (sk) subject->mp = std::max(0, subject->mp - sk->mpCost);
+        if (!allyScope) {
+            // Schadens-Skill - Zielseite steht in action.targetIsActor
+            Battler* target = targetOf(action);
+            if (target && !target->isDead) {
                 int dmg = std::max(1, power + subject->atk/2 - target->def/2);
+                if (target->isGuarding) dmg = std::max(1, dmg/2);
                 target->ApplyDamage(dmg);
-                if (onMessage) onMessage(subject->name + " uses " + sname + " for " + std::to_string(dmg) + "!");
-            } else {
-                // heal
-                int heal = -power;
-                subject->Recover(heal, 0);
-                if (onMessage) onMessage(subject->name + " uses " + sname + " +" + std::to_string(heal) + " HP");
+                std::string msg = subject->name + " setzt " + sname + " ein: " +
+                                  std::to_string(dmg) + " Schaden!";
+                if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                if (onMessage) onMessage(msg);
+                if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
             }
+        } else {
+            // Heil-Skill: Ziel = Verbuendeter (Standard: Anwender selbst)
+            Battler* target = subject;
+            if (action.targetIsActor) {
+                if (Battler* t = targetOf(action)) target = t;
+            }
+            target->Recover(power, 0);
+            if (onMessage) onMessage(subject->name + " setzt " + sname + " ein: " +
+                                     target->name + " +" + std::to_string(power) + " HP");
         }
     } else if (action.type==BattleActionType::Item) {
         if (const auto* it = Database::Get().GetItem(action.itemId)) {
-            subject->Recover(it->hpRecovery, it->mpRecovery);
+            if (it->hpRecovery < 0) {
+                // Schadens-Item (z. B. Bombe) - Zielseite aus der Aktion
+                Battler* target = targetOf(action);
+                if (target && !target->isDead) {
+                    const int dmg = -it->hpRecovery;
+                    target->ApplyDamage(dmg);
+                    std::string msg = subject->name + " benutzt " + it->name + ": " +
+                                      std::to_string(dmg) + " Schaden!";
+                    if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                    if (onMessage) onMessage(msg);
+                    if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                }
+            } else {
+                // Heil-Item auf Verbuendeten (Standard: Anwender selbst)
+                Battler* target = subject;
+                if (action.targetIsActor) {
+                    if (Battler* t = targetOf(action)) target = t;
+                }
+                target->Recover(it->hpRecovery, it->mpRecovery);
+                if (onMessage) onMessage(subject->name + " benutzt " + it->name +
+                                         " auf " + target->name + " (+" +
+                                         std::to_string(it->hpRecovery) + " HP)");
+            }
             Game::Get().Party().GainItem(it->id, -1);
-            if (onMessage) onMessage(subject->name + " uses " + it->name);
         }
     } else if (action.type==BattleActionType::Guard) {
-        if (onMessage) onMessage(subject->name + " guards!");
+        subject->isGuarding = true;
+        if (onMessage) onMessage(subject->name + " verteidigt sich!");
     } else if (action.type==BattleActionType::Escape) {
         if (mCanEscape) {
             mState = BattleState::End;
             mLastOutcome = 2; // Flucht (Event-Bedingung IfEscape)
-            if (onMessage) onMessage("Escaped!");
+            SyncBackToParty();
+            if (onMessage) onMessage("Die Flucht ist gelungen!");
             return;
         }
+        if (onMessage) onMessage("Flucht nicht moeglich!");
     }
 
     mNextAction.type = BattleActionType::None;
@@ -234,9 +289,15 @@ void BattleSystem::ProcessTurn() {
 }
 
 void BattleSystem::CheckVictory() {
+    // Wiedereintritt verhindern (wird aus mehreren Pfaden aufgerufen):
+    // EXP/Gold duerfen nur genau einmal gutgeschrieben werden.
+    if (mState == BattleState::Victory || mState == BattleState::Defeat ||
+        mState == BattleState::End || mState == BattleState::None)
+        return;
+
     bool allEnemiesDead = true;
     for (auto& e : mEnemies) if (!e.isDead) { allEnemiesDead = false; break; }
-    if (allEnemiesDead) {
+    if (allEnemiesDead && !mEnemies.empty()) {
         mState = BattleState::Victory;
         mTimer = 0;
         mLastExp = 0; mLastGold = 0;
@@ -249,9 +310,16 @@ void BattleSystem::CheckVictory() {
             }
         }
         Game::Get().Party().GainGold(mLastGold);
-        for (auto& a : Game::Get().Party().Members()) a.exp += mLastExp;
-        if (onMessage) onMessage("Victory! EXP +" + std::to_string(mLastExp) +
-                                 " Gold +" + std::to_string(mLastGold));
+        // EXP nur an lebende Mitglieder (XP-Verhalten) + Level-Aufstiege
+        std::string msg = "Sieg! +" + std::to_string(mLastExp) + " EXP, +" +
+                          std::to_string(mLastGold) + " G";
+        for (auto& a : Game::Get().Party().Members()) {
+            if (a.IsDead()) continue;
+            const int ups = a.AddExp(mLastExp);
+            if (ups > 0)
+                msg += "\n" + a.name + " erreicht Level " + std::to_string(a.level) + "!";
+        }
+        if (onMessage) onMessage(msg);
         return;
     }
     bool allActorsDead = true;
@@ -259,7 +327,22 @@ void BattleSystem::CheckVictory() {
     if (allActorsDead) {
         mState = BattleState::Defeat;
         mTimer = 0;
-        if (onMessage) onMessage("Defeat...");
+        if (onMessage) onMessage("Die Gruppe wurde besiegt...");
+    }
+}
+
+void BattleSystem::SyncBackToParty() {
+    // HP/MP der Akteur-Battler zurueck in die Party schreiben, damit
+    // Kampfschaeden/Heilung und MP-Kosten nach dem Kampf bestehen bleiben.
+    auto& members = Game::Get().Party().Members();
+    for (size_t i = 0; i < mActors.size(); ++i) {
+        for (auto& m : members) {
+            if (m.actorId == mActors[i].id) {
+                m.hp = mActors[i].hp;
+                m.mp = mActors[i].mp;
+                break;
+            }
+        }
     }
 }
 
@@ -269,6 +352,7 @@ void BattleSystem::CheckVictory() {
 void BattleSystem::Abort() {
     if (IsInBattle()) {
         mState = BattleState::End;
+        SyncBackToParty();
         if (onMessage) onMessage("Kampf abgebrochen.");
     }
 }

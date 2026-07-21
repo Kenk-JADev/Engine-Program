@@ -38,6 +38,9 @@ struct BattleAction {
     int targetIndex = 0; // who receives
     int skillId = 0;
     int itemId = 0;
+    // true = Ziel ist ein Akteur (Heil-Skills/Items auf Verbuendete),
+    // false = Ziel ist ein Gegner (Angriff/Schadens-Skills)
+    bool targetIsActor = false;
 };
 
 struct Battler {
@@ -52,6 +55,7 @@ struct Battler {
     int def = 10;
     int agi = 10;
     bool isDead = false;
+    bool isGuarding = false; // Verteidigen: halbiert Schaden bis zur naechsten eigenen Aktion
     Vec3 position{0,0,0};
     std::string name;
 
@@ -72,6 +76,11 @@ public:
 
     void SetAction(const BattleAction& action) { mNextAction = action; }
     bool NeedsInput() const { return mState == BattleState::Input; }
+    /// Index des Akteur-Battlers, der gerade eine Aktion waehlen darf
+    /// (gueltig wenn NeedsInput() == true; entspricht dem Party-Index).
+    int GetInputActorIndex() const { return mTurn; }
+    /// false = "Kann nicht fliehen" (Battle Processing: Flucht verboten)
+    bool CanEscape() const { return mCanEscape; }
     int GetTurn() const { return mTurn; }
     std::vector<Battler>& Actors() { return mActors; }
     std::vector<Battler>& Enemies() { return mEnemies; }
@@ -96,6 +105,8 @@ private:
     BattleSystem() = default;
     void ProcessTurn();
     void CheckVictory();
+    /// HP/MP der Akteur-Battler zurueck in die Party schreiben (Kampfende)
+    void SyncBackToParty();
 
     BattleState mState = BattleState::None;
     std::vector<Battler> mActors;

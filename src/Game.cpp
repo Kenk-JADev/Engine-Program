@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cstdlib>
+#include <algorithm>
 
 namespace rpg {
 
@@ -76,6 +77,93 @@ void GameActor::RecoverAll() {
     } else {
         hp = 100; mp = 30;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Provisorische Stat-Kurven (initialStats + ~5%/Level bis Kurven-Editor)
+// ---------------------------------------------------------------------------
+namespace {
+int CurveFor(int base, int level, int current) {
+    base = std::max(1, base);
+    return std::max(current, base + (level - 1) * std::max(1, base / 20));
+}
+} // namespace
+
+int GameActor::MaxHp() const {
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        return CurveFor(ad->initialStats.mhp, level, hp);
+    return std::max(hp, 100);
+}
+int GameActor::MaxMp() const {
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        return CurveFor(ad->initialStats.mmp, level, mp);
+    return std::max(mp, 30);
+}
+int GameActor::Atk() const {
+    int v = 10;
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        v = CurveFor(ad->initialStats.atk, level, 0);
+    // Waffen-Bonus
+    if (weaponId > 0)
+        for (const auto& w : Database::Get().Weapons())
+            if (w.id == weaponId) { v += w.atk; break; }
+    return v;
+}
+int GameActor::Def() const {
+    int v = 10;
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        v = CurveFor(ad->initialStats.def, level, 0);
+    // Ruestungs-Bonus aller angelegten Slots
+    for (int armorId : armors)
+        for (const auto& a : Database::Get().Armors())
+            if (a.id == armorId) { v += a.def; break; }
+    return v;
+}
+int GameActor::Agi() const {
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        return CurveFor(ad->initialStats.agi, level, 0);
+    return 10;
+}
+
+// ---------------------------------------------------------------------------
+// EXP-Kurve aus ClassData (Formel wie RPG Maker VX Ace)
+// ---------------------------------------------------------------------------
+int GameActor::ExpForNextLevel() const {
+    int maxLv = 99;
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        maxLv = std::max(1, ad->maxLevel);
+    if (level >= maxLv) return -1;
+    int basis = 30, extra = 20;
+    double accA = 30.0, accB = 20.0;
+    for (const auto& c : Database::Get().Classes()) {
+        if (c.id == classId) {
+            basis = c.expBase; extra = c.expExtra;
+            accA = c.expAccA; accB = c.expAccB;
+            break;
+        }
+    }
+    const double lv = (double)(level + 1);
+    double result = basis * std::pow(lv - 1.0, 0.9 + accA / 250.0) * lv * (lv + 1.0);
+    result /= (6.0 + lv * lv) / 50.0 / (accB * accB);
+    result += extra * (lv - 1.0);
+    return (int)std::llround(result);
+}
+
+int GameActor::AddExp(int amount) {
+    if (amount <= 0) return 0;
+    int maxLv = 99;
+    if (const auto* ad = Database::Get().GetActor(actorId))
+        maxLv = std::max(1, ad->maxLevel);
+    if (level >= maxLv) return 0;
+    exp += amount;
+    int ups = 0;
+    while (level < maxLv) {
+        const int need = ExpForNextLevel();
+        if (need < 0 || exp < need) break;
+        ++level;
+        ++ups;
+    }
+    return ups;
 }
 
 // --- GameParty ---
@@ -506,8 +594,8 @@ void Game::StartBattleByTroop(int troopId, bool canEscape) {
     BattleSystem::Get().onMessage = [](const std::string& msg) {
         GameUI::Get().ShowMessage(msg);
     };
-    BattleAction act; act.type = BattleActionType::Attack;
-    BattleSystem::Get().SetAction(act);
+    // Keine vorbelegte Aktion mehr: Die Engine oeffnet bei NeedsInput() das
+    // XP-Kampfmenue (Angriff/Fertigkeit/Gegenstand/Verteidigen/Flucht).
     GameUI::Get().ShowMessage("Kampf!");
     RPG_LOG_INFO("Kampf gestartet: Trupp " + std::to_string(troopId));
 }
@@ -856,11 +944,7 @@ void Game::Update(float dt) {
                     BattleSystem::Get().onVictory = []() {
                         GameUI::Get().ShowMessage("Sieg! Enemies besiegt.");
                     };
-                    BattleAction act;
-                    act.type = BattleActionType::Attack;
-                    act.subjectIndex = 0;
-                    act.targetIndex = 0;
-                    BattleSystem::Get().SetAction(act);
+                    // Aktionswahl laeuft ueber das XP-Kampfmenue (Engine).
                     GameUI::Get().ShowMessage("Ein Kampf beginnt!");
                     RPG_LOG_INFO("Random encounter troop=" + std::to_string(troopId));
                     s_stepsToEncounter = 0;

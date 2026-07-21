@@ -814,24 +814,42 @@ bool EventInterpreter::ExecuteCommand() {
         return CommandSkip();
     }
     case CC::ShopProcessing: {
-        std::vector<int> items;
+        // Waren-Text: "1,2,w3,a1" - Zahl = Item, w<ID> = Waffe, a<ID> = Ruestung
+        std::vector<ShopGood> goods;
         if (!cmd.text.empty()) {
             std::stringstream ss(cmd.text);
-            std::string item;
-            while (std::getline(ss, item, ',')) { try { items.push_back(std::stoi(item)); } catch (...) {} }
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                // Leerzeichen trimmen
+                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+                while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+                if (tok.empty()) continue;
+                try {
+                    if (tok[0] == 'w' || tok[0] == 'W')
+                        goods.push_back({ShopGood::Kind::Weapon, std::stoi(tok.substr(1))});
+                    else if (tok[0] == 'a' || tok[0] == 'A')
+                        goods.push_back({ShopGood::Kind::Armor, std::stoi(tok.substr(1))});
+                    else
+                        goods.push_back({ShopGood::Kind::Item, std::stoi(tok)});
+                } catch (...) {}
+            }
         }
-        if (items.empty()) {
-            if (cmd.param1 > 0) items.push_back(cmd.param1);
-            if (cmd.param2 > 0) items.push_back(cmd.param2);
-            if (cmd.param3 > 0) items.push_back(cmd.param3);
+        if (goods.empty()) {
+            if (cmd.param1 > 0) goods.push_back({ShopGood::Kind::Item, cmd.param1});
+            if (cmd.param2 > 0) goods.push_back({ShopGood::Kind::Item, cmd.param2});
+            if (cmd.param3 > 0) goods.push_back({ShopGood::Kind::Item, cmd.param3});
         }
-        if (items.empty()) items = {1, 2};
+        if (goods.empty()) goods = {{ShopGood::Kind::Item, 1}, {ShopGood::Kind::Item, 2}};
         if (onShopProcessing) {
-            onShopProcessing(items); // externer Override (kein eingebauter Screen)
+            // Externer Override bekommt weiterhin nur die Item-IDs (Kompat.)
+            std::vector<int> items;
+            for (const auto& g : goods)
+                if (g.kind == ShopGood::Kind::Item) items.push_back(g.id);
+            onShopProcessing(items);
         } else {
             // XP-Shopfenster (RmlUi): Interpreter wartet bis zum Schliessen
             mShopWaiting = true;
-            GameUI::Get().ShowShop(items, [this]() { mShopWaiting = false; });
+            GameUI::Get().ShowShopGoods(goods, [this]() { mShopWaiting = false; });
         }
         return true;
     }
@@ -1197,18 +1215,23 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     };
     interp.onChangeExp = [](int actorId, int exp) {
         ApplyToActorOrParty(actorId, [&](GameActor& a) {
-            a.exp += exp;
-            // einfacher Levelaufstieg: 100 EXP pro Level
-            while (a.exp >= a.level * 100) {
-                a.exp -= a.level * 100;
-                a.level++;
-                GameUI::Get().ShowMessage(a.name + " erreicht Level " + std::to_string(a.level) + "!");
+            if (exp >= 0) {
+                // EXP-Kurve der Klasse (GameActor::AddExp), Level-Up-Meldung
+                if (a.AddExp(exp) > 0)
+                    GameUI::Get().ShowMessage(a.name + " erreicht Level " +
+                                              std::to_string(a.level) + "!");
+            } else {
+                // Reduzieren senkt nicht das Level (XP-Verhalten)
+                a.exp = std::max(0, a.exp + exp);
             }
         });
     };
     interp.onChangeLevel = [](int actorId, int level) {
         ApplyToActorOrParty(actorId, [&](GameActor& a) {
-            a.level = std::max(1, level);
+            int maxLv = 99;
+            if (const auto* ad = Database::Get().GetActor(a.actorId))
+                maxLv = std::max(1, ad->maxLevel);
+            a.level = std::max(1, std::min(level, maxLv));
         });
     };
     // Hinweis: "Speicherbildschirm aufrufen" (352) oeffnet INTERNE

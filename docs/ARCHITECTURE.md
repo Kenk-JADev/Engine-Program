@@ -126,13 +126,17 @@ Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht 
 
 Hotkeys im Default-Script: **F1** Save, **F2** Load, **F3** Testkampf.
 
-### Battle-Input (Playtest/Player)
-| Taste | Aktion |
-|-------|--------|
-| **1** / **A** | Angriff |
-| **2** / **S** | Skill (ID 1) |
-| **3** / **I** | Item (ID 1) |
-| **4** | Flucht |
+### Battle-Input (Playtest/Player) - XP-Kampfmenue
+Sobald ein Akteur an der Reihe ist (`BattleSystem::NeedsInput()`), oeffnet
+die Engine `GameUI::OpenBattleCommands()` – ein MenuWindow mit
+**Angriff / Fertigkeit / Gegenstand / Verteidigen / Flucht**
+(Flucht deaktiviert bei „Kann nicht fliehen“). Fertigkeit/Gegenstand
+oeffnen Listen (MP-Kosten, Anzahl); danach folgt die Zielwahl
+(Gegner- oder Verbuendeten-Liste mit HP). Esc geht einen Schritt zurueck.
+Verteidigen halbiert Schaden bis zur naechsten eigenen Aktion.
+HP/MP werden am Kampfende zurueck in die Party synchronisiert; Sieg
+schreibt EXP via `GameActor::AddExp` gut (Level-Ups mit Meldung,
+Klassen-EXP-Kurve wie VX Ace).
 
 ### Map-Kollision
 Tile-Flag **solid** (Map-Dock: Button „Solid“) → `TilesetData.flags` → `GameMap::IsPassable`.
@@ -150,7 +154,7 @@ Button **Common+** im Event-Dock.
 | Message Name/Pos | `MessageWindow` Speaker + Position → RmlUi |
 | Self-Switch | Event-Befehl + Seiten-Condition im Event-Dock |
 | Move Route | `UDLR W T A X` Text-Format, Runtime-Update |
-| Battle-UI | Tasten 1-4 im Engine-Update |
+| Battle-UI | XP-Kampfmenue ueber `GameUI::OpenBattleCommands()` (MenuWindow) |
 | Undo-Batch | `BatchTileCommand` fuer Pinsel/Rechteck |
 | Gizmo-Undo | `MoveEntityCommand` bei Loslassen |
 | Plugins | `scripts/plugins/*.rb` |

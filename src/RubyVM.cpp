@@ -1391,6 +1391,12 @@ static mrb_value rb_ui_open_save_screen(mrb_state* mrb, mrb_value self) {
     GameUI::Get().ShowSaveScreen(saveMode != 0);
     return mrb_nil_value();
 }
+// Bequemlichkeits-Alias: UI.open_load_screen = UI.open_save_screen(false)
+static mrb_value rb_ui_open_load_screen(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    GameUI::Get().ShowSaveScreen(false);
+    return mrb_nil_value();
+}
 
 // ---------- HUD an/aus aus Ruby (UI.hud_visible = true/false) ----------
 static mrb_value rb_ui_hud_set_visible(mrb_state* mrb, mrb_value self) {
@@ -1428,6 +1434,7 @@ void RubyVM::BindUI() {
     // XP-Bildschirme: Menue + Speicherbildschirm (4 Slots)
     mrb_define_module_function(mMrb, uiModule, "open_menu", rb_ui_open_menu, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "open_save_screen", rb_ui_open_save_screen, MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, uiModule, "open_load_screen", rb_ui_open_load_screen, MRB_ARGS_NONE());
 
     // Game module extensions for convenience.
     // WICHTIG: als KLASSE definieren (nicht Modul), damit die Spiellogik in
