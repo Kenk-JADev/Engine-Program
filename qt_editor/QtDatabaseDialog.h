@@ -28,6 +28,10 @@ public:
     /// Modal öffnen; true = Änderungen wurden übernommen
     static bool EditDatabase(QWidget* parent, rpg::Engine* engine);
 
+signals:
+    /// Trupps-Tab: „Kampftest" - Editor startet den Player mit --battletest
+    void battleTestRequested(int troopId);
+
 private slots:
     void onApply();
     void onOk();

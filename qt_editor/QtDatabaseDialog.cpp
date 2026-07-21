@@ -1,4 +1,5 @@
 #include "QtDatabaseDialog.h"
+#include "QtEditorWindow.h" // qobject_cast fuer battleTestRequested-Verdrahtung
 
 #include "QtEventEditorDialog.h"
 
@@ -705,6 +706,18 @@ void QtDatabaseDialog::buildTroopsTab() {
     form->addRow(QL("Mitglieder"), memberList);
     form->addRow(addRow);
 
+    // XP: „Kampftest"-Knopf im Trupps-Tab - startet den Player direkt im
+    // Kampf gegen den aktuell gewaehlten Trupp (--battletest=<id>).
+    auto* battleTestBtn = new QPushButton(QL("Kampftest"), formHost);
+    battleTestBtn->setToolTip(QL("Startet die Player-exe direkt im Kampf gegen diesen Trupp.\n"
+                                 "Die Anfangsgruppe kommt aus dem System-Tab."));
+    form->addRow(battleTestBtn);
+    connect(battleTestBtn, &QPushButton::clicked, formHost, [this, tp]() {
+        const int troopId = (tp->list && tp->list->currentRow() >= 0)
+            ? tp->list->currentRow() + 1 : 1;
+        emit battleTestRequested(troopId);
+    });
+
     tp->count = [this]() { return (int)mTroops.size(); };
     tp->nameAt = [this](int i) {
         return IdName(i + 1, QString::fromStdString(mTroops[(size_t)i].name));
@@ -1306,6 +1319,14 @@ void QtDatabaseDialog::onOk() {
 
 bool QtDatabaseDialog::EditDatabase(QWidget* parent, rpg::Engine* engine) {
     QtDatabaseDialog dlg(engine, parent);
+    // „Kampftest"-Knopf im Trupps-Tab -> Editor startet Player-exe.
+    // (bewusst hier verdrahtet: Der Dialog kennt das Fenster nicht direkt;
+    // der Cast schlaegt fehl = Knopf meldet einfach nichts)
+    QObject::connect(&dlg, &QtDatabaseDialog::battleTestRequested, parent,
+        [parent](int troopId) {
+            if (auto* w = qobject_cast<QtEditorWindow*>(parent))
+                w->StartBattleTest(troopId);
+        });
     return dlg.exec() == QDialog::Accepted;
 }
 

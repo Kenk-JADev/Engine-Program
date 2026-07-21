@@ -43,6 +43,17 @@ void EventSystem_PlayAudio(const std::string& name, int kind, bool loop) {
     if (s_audioPlayer) s_audioPlayer(name, kind, loop);
 }
 
+// Map-Wechsel-Bruecke (Engine injiziert in Initialize).
+static std::function<void(int)> s_mapChangeHandler;
+
+void EventSystem_SetMapChangeHandler(std::function<void(int)> fn) {
+    s_mapChangeHandler = std::move(fn);
+}
+
+void EventSystem_NotifyMapChanged(int mapId) {
+    if (s_mapChangeHandler) s_mapChangeHandler(mapId);
+}
+
 // ============================================================================
 // Screen Effects (223 / 224 / 225)
 // ============================================================================
@@ -1119,7 +1130,8 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     };
     interp.onTransferPlayer = [](int x, int y, int z, int mapId) {
         Game::Get().Player().SetPosition(Vec3((float)x, (float)y + 0.05f, (float)z));
-        if (mapId > 0) Game::Get().Map().Setup(mapId);
+        // XP: Karte wirklich wechseln (Visual + Events + BGM via Engine-Hook)
+        if (mapId > 0) EventSystem_NotifyMapChanged(mapId);
         RPG_LOG_INFO("[Event] Transfer: Map " + std::to_string(mapId) +
                      " (" + std::to_string(x) + "," + std::to_string(z) + ")");
     };

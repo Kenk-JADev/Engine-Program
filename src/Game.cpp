@@ -778,6 +778,9 @@ bool Game::Load(int slot) {
         }
 
         mGameStarted = true;
+        // Welt nachziehen: Karte (Visual) + Events der geladenen Karten-ID
+        // laden (Engine-Hook; no-op, wenn keine Engine injiziert hat).
+        EventSystem_NotifyMapChanged(mMap.GetMapId());
         RPG_LOG_INFO("Game loaded from " + path);
         return true;
     } catch (const std::exception& e) {

@@ -213,8 +213,12 @@ public:
     // Gegenstaende / Speichern / Spiel beenden / Zurueck - aufgebaut aus den
     // in Pause() verdrahteten Callbacks. Respektiert Game::System().HasMenuAccess().
     void OpenGameMenu();
-    // Untermenue: Inventarliste (Items, Waffen, Ruestungen mit Anzahl)
+    // Untermenue: Inventarliste (Items mit Anzahl; Enter: benutzen/info)
     void OpenItemsMenu();
+    // Untermenue: Ziel fuer benutzbaren Gegenstand (Heil-Items, XP)
+    void OpenItemTargetMenu(int itemId);
+    // Untermenue: Gruppenmitglieder-Status (Level/HP/MP/EXP)
+    void OpenStatusMenu();
 
     // === XP-Speicherbildschirm (4 Slots mit Infozeile) ===
     // saveMode=true: Enter speichert in den Slot; false: nur belegte Slots ladbar.

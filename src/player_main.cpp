@@ -156,19 +156,16 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Spiel ab der in der Datenbank definierten Startposition
-    rpg::Game::Get().NewGame();
-    engine.SetPlaying(true); // laedt Map-Events + fuehrt Scripts aus
-
-    // --- Kampftest (--battletest[=Trupp]): sofort in den Kampf gegen den
-    // Trupp aus der Datenbank (wie der XP-Kampftest im Trupps-Tab).
-    {
-        const int battleTestTroop = ParseBattletestTroop(argc, argv);
-        if (battleTestTroop > 0) {
-            std::cout << "Kampftest: Trupp " << battleTestTroop << std::endl;
-            rpg::Game::Get().StartBattleByTroop(battleTestTroop, true);
-            engine.GetWindow().SetTitle(title + "  [Kampftest]");
-        }
+    // --- Start: Kampftest direkt in den Kampf, sonst XP-Titelbildschirm
+    // (Neues Spiel / Weiterspielen / Beenden).
+    if (const int battleTestTroop = ParseBattletestTroop(argc, argv)) {
+        rpg::Game::Get().NewGame();
+        engine.SetPlaying(true); // laedt Map-Events + fuehrt Scripts aus
+        std::cout << "Kampftest: Trupp " << battleTestTroop << std::endl;
+        rpg::Game::Get().StartBattleByTroop(battleTestTroop, true);
+        engine.GetWindow().SetTitle(title + "  [Kampftest]");
+    } else {
+        engine.StartTitleMode();
     }
 
     try {

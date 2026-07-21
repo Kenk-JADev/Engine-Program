@@ -421,6 +421,13 @@ void EventSystem_SetAudioPlayer(
 /// Bequemer Aufruf ueber die Bruecke (no-op, wenn nichts injiziert wurde).
 void EventSystem_PlayAudio(const std::string& name, int kind, bool loop);
 
+/// Map-Wechsel-Bruecke: Die Engine injiziert hier das Nachladen von
+/// Karten-Visualisierung + Events (Transfer-Befehl 201, Savegame laden).
+/// Vorher wechselte nur die GameMap-ID - die alte Karte blieb sichtbar.
+void EventSystem_SetMapChangeHandler(std::function<void(int mapId)> fn);
+/// Loest den injizierten Handler aus (no-op, wenn nichts injiziert wurde).
+void EventSystem_NotifyMapChanged(int mapId);
+
 class EventSystem {
 public:
     static EventSystem& Get();

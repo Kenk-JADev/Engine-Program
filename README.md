@@ -216,11 +216,22 @@ alle XP-Befehle auf drei Seiten.
 Alles ist jetzt **im Player sichtbar und spielbar** (RmlUi-Anzeige,
 Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
 
-- **Spielmenü (Esc)** – wie in XP: **Gegenstände** (Liste mit Anzahl und
-  Beschreibungstext per Enter), **Speichern**, **Spiel beenden** (mit
-  Rückfrage; im Editor-Playtest stoppt der Test, im Player endet das Spiel),
-  **Zurück**. Respektiert die Event-Befehle „Menüaufruf/speichern
-  (nicht) erlauben" (134/135).
+- **Titelbildschirm (Player)** – nach dem Start zeigt der Player den
+  XP-Titel mit dem Spieltitel aus der Datenbank: **Neues Spiel /
+  Weiterspielen / Beenden**. „Weiterspielen" ist nur aktiv, wenn ein
+  Savegame existiert, und öffnet die Lade-Ansicht des Speicherbildschirms;
+  Abbruch führt zurück zum Titel. Das HUD ist auf dem Titel ausgeblendet.
+- **Spielmenü (Esc)** – wie in XP: **Gegenstände** (Liste mit Anzahl;
+  Heil-Items werden per Enter direkt **benutzt** – Ziel wählen, Konsumation,
+  Wirkung sofort; andere zeigen ihren Beschreibungstext), **Status** (Level/
+  HP/MP/EXP der Gruppe), **Speichern**, **Spiel beenden** (mit Rückfrage;
+  im Editor-Playtest stoppt der Test, im Player endet das Spiel), **Zurück**.
+  Respektiert die Event-Befehle „Menüaufruf/speichern (nicht) erlauben"
+  (134/135).
+- **Kartenwechsel funktioniert**: Der Transfer-Befehl (201) und das Laden
+  eines Savegames wechseln jetzt wirklich Karte + Events + BGM (vorher
+  blieb die alte Karte sichtbar). Spiele mit mehreren Karten laufen damit
+  durchgängig wie in XP.
 - **Speicherbildschirm** (Menü, Event-Befehl 352 oder `UI.open_save_screen`):
   **4 Slots** im XP-Stil mit Infozeile aus dem Savegame: Kartenname,
   erstes Gruppenmitglied + Level, Gold und Speicherzähler. Leere Slots sind
@@ -233,7 +244,9 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
 - **Sichtbar gemacht**: Auch **Auswahl (102)**, **Zahleneingabe (103)** und
   **Namenseingabe (303)** zeigen jetzt ein eigenes XP-Fenster im Player
   (vorher nur Tastatursteuerung ohne Anzeige).
-- **Kampftest** wie im XP-Datenbank-Dialog:
+- **Kampftest** wie im XP-Datenbank-Dialog: Button **„Kampftest"** im
+  Trupps-Tab der Datenbank (startet die Player-exe, vorher die übliche
+  Speicherfrage) oder per Kommandozeile:
   `RPGMaker3D_Player --project <Pfad> --battletest=<Trupp-ID>` startet das
   Spiel und geht sofort in den Kampf gegen den Trupp (Anfangsgruppe aus dem
   System-Tab); `--battletest` ohne Zahl nimmt Trupp 1.

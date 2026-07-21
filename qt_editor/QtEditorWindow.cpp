@@ -1047,6 +1047,43 @@ void QtEditorWindow::actionPlaytestPlayer() {
     }
 }
 
+void QtEditorWindow::StartBattleTest(int troopId) {
+    if (!mView->IsEngineReady()) return;
+    const std::string projectPath = mEngine->GetProject().GetProjectPath();
+    if (projectPath.empty()) {
+        QMessageBox::information(this, QStringLiteral("Kampftest"),
+            QStringLiteral("Kein Projekt geladen.\n"
+                           "Bitte zuerst ein Projekt öffnen oder anlegen."));
+        return;
+    }
+    // Wie beim normalen Playtest: Die Player-exe liest alles von der
+    // Festplatte, also vorher speichern (bzw. fragen).
+    if (!confirmPlaytestSave()) {
+        log(QStringLiteral("Kampftest abgebrochen (Speicherfrage)."));
+        return;
+    }
+    const QString exe = findPlayerExecutable();
+    if (exe.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Kampftest"),
+            QStringLiteral("Die Player-exe wurde nicht gefunden.\n"
+                           "Baue das CMake-Target 'RPGMaker3D_Player'."));
+        log(QStringLiteral("Kampftest: Player-exe nicht gefunden."));
+        return;
+    }
+    const QString proj = QString::fromStdString(projectPath);
+    QStringList args;
+    args << QStringLiteral("--project") << proj
+         << (QStringLiteral("--battletest=") + QString::number(troopId > 0 ? troopId : 1));
+    if (QProcess::startDetached(exe, args)) {
+        log(QStringLiteral("Kampftest gestartet: Trupp %1 (%2)").arg(troopId).arg(exe));
+        statusBar()->showMessage(QStringLiteral("Kampftest läuft im eigenen Fenster …"), 5000);
+    } else {
+        QMessageBox::warning(this, QStringLiteral("Kampftest"),
+            QStringLiteral("Der Player konnte nicht gestartet werden:\n%1").arg(exe));
+        log(QStringLiteral("Kampftest FEHLER: Player-exe startete nicht."));
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Datei-Aktionen
 // ---------------------------------------------------------------------------

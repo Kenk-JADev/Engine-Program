@@ -213,6 +213,8 @@ public:
     Rml::String menuTitle = "";
     Rml::String menuText = "";
     bool menuVisible = false;
+    bool menuTitleMode = false;     // Titelbildschirm: Menue zentriert
+    bool hudHiddenForTitle = false; // HUD waehrend des Titels ausgeblendet
     Rml::String scriptLine = "";
     Rml::String stText[6];
     float stX[6] = {};
@@ -623,13 +625,34 @@ void RmlUiSystem::SyncFromGameUI() {
             mtext += "\n(A-Z tippen, Alt+A/O/U = Umlaute, Enter fertig)";
         }
         const bool vis = !mtitle.empty() || !mtext.empty();
-        if (vis != m->menuVisible) {
-            if (auto* box = m->gameDoc ? m->gameDoc->GetElementById("menu_box") : nullptr)
+        const bool titleMode = gui.Title().IsVisible();
+        if (vis != m->menuVisible || titleMode != m->menuTitleMode) {
+            if (auto* box = m->gameDoc ? m->gameDoc->GetElementById("menu_box") : nullptr) {
                 box->SetProperty("display", vis ? "block" : "none");
+                // Auf dem Titelbildschirm sitzt das Menue mittig (XP),
+                // im Spiel rechts oben.
+                if (titleMode) {
+                    box->SetProperty("left", "27%");
+                    box->SetProperty("right", "auto");
+                    box->SetProperty("top", "30%");
+                } else {
+                    box->SetProperty("left", "auto");
+                    box->SetProperty("right", "4%");
+                    box->SetProperty("top", "12%");
+                }
+            }
         }
         m->menuVisible = vis;
+        m->menuTitleMode = titleMode;
         m->menuTitle = mtitle;
         m->menuText = mtext;
+
+        // Waehrend des Titels das HUD ausblenden (XP zeigt dort nichts)
+        if (titleMode != m->hudHiddenForTitle) {
+            if (auto* hud = m->gameDoc ? m->gameDoc->GetElementById("hud_root") : nullptr)
+                hud->SetProperty("display", titleMode ? "none" : "block");
+            m->hudHiddenForTitle = titleMode;
+        }
     }
 
     // ScreenTexts aus Ruby -> RmlUi Overlays + script_line

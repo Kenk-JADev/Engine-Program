@@ -66,6 +66,8 @@ private slots:
 
     // Playtest
     void actionPlaytestPlayer();     // externe Player-exe (F5)
+    /// Kampftest aus dem Datenbank-Trupps-Tab: Player mit --battletest=<id>
+    void StartBattleTest(int troopId);
 
     // Erstellen / Bearbeiten
     void actionCreateCube();

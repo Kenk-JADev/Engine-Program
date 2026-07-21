@@ -123,34 +123,36 @@ void MessageWindow::Draw() {
 #endif
 }
 
-// --- TitleScreen ---
-void TitleScreen::Show() { mVisible = true; }
+// --- TitleScreen (XP: Neues Spiel / Weiterspielen / Beenden) ---
+void TitleScreen::Show() {
+    mVisible = true;
+    // "Weiterspielen" nur aktiv, wenn mindestens ein Slot belegt ist (XP)
+    bool anySave = false;
+    for (int slot = 1; slot <= 4; ++slot) {
+        Game::SaveSlotInfo info;
+        if (Game::Get().GetSaveSlotInfo(slot, info) && info.exists) {
+            anySave = true;
+            break;
+        }
+    }
+    std::vector<MenuWindow::Entry> items = {
+        {"Neues Spiel", true},
+        {"Weiterspielen", anySave},
+        {"Beenden", true}};
+    const std::string titleText = Database::Get().System().gameTitle.empty()
+        ? "RPG Maker 3D" : Database::Get().System().gameTitle;
+    auto& menu = GameUI::Get().Menu();
+    menu.Show(titleText, items, [this](int idx) {
+        std::function<void()> cb;
+        if (idx == 0) cb = onNewGame;
+        else if (idx == 1) cb = onContinue;
+        else cb = onExit;
+        if (cb) cb();
+    }, false); // kein Esc-Abbrechen auf dem Titel
+}
 void TitleScreen::Update(float dt) { (void)dt; }
 void TitleScreen::Draw() {
-    if (!mVisible) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGui::SetNextWindowPos(ImVec2(0,0));
-    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    ImGui::Begin("Title", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 100, ImGui::GetWindowSize().y*0.3f));
-    ImGui::Text("RPG Maker 3D");
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 50, ImGui::GetWindowSize().y*0.5f));
-    if (ImGui::Button("New Game", ImVec2(100,30))) {
-        if (onNewGame) onNewGame();
-        mVisible=false;
-    }
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 50, ImGui::GetWindowSize().y*0.5f + 40));
-    if (ImGui::Button("Continue", ImVec2(100,30))) {
-        if (onContinue) onContinue();
-    }
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 50, ImGui::GetWindowSize().y*0.5f + 80));
-    if (ImGui::Button("Exit", ImVec2(100,30))) {
-        if (onExit) onExit();
-    }
-    ImGui::End();
-#else
-    // Title-Overlay ohne ImGui: RmlUi / Playtest uebernimmt UI.
-#endif
+    // Anzeige laeuft ueber RmlUi (#menu_box, zentriert) - kein ImGui noetig.
 }
 
 // --- PauseMenu (delegiert an das XP-Spielmenue) ---
@@ -276,6 +278,7 @@ void GameUI::OpenGameMenu() {
 
     std::vector<MenuWindow::Entry> items;
     items.push_back({"Gegenstände", true});
+    items.push_back({"Status", true});
     items.push_back({"Speichern", Game::Get().System().HasSaveAccess()});
     items.push_back({"Spiel beenden", true});
     items.push_back({"Zurück", true});
@@ -283,11 +286,12 @@ void GameUI::OpenGameMenu() {
     mMenu.Show("Menü", items, [this](int idx) {
         switch (idx) {
             case 0: OpenItemsMenu(); break;
-            case 1:
+            case 1: OpenStatusMenu(); break;
+            case 2:
                 // Nach dem Speichern/Abbruch wieder ins Menue (XP-Verhalten)
                 ShowSaveScreen(true, [this]() { OpenGameMenu(); });
                 break;
-            case 2: {
+            case 3: {
                 // XP: Sicherheitsfrage vor dem Beenden
                 std::vector<MenuWindow::Entry> q = {
                     {"Ja, beenden", true}, {"Nein, zurück", true}};
@@ -335,9 +339,64 @@ void GameUI::OpenItemsMenu() {
         items, [this, itemIds](int idx) {
             if (idx < 0 || idx >= (int)itemIds.size()) return;
             const auto* it = Database::Get().GetItem(itemIds[idx]);
-            // XP zeigt die Beschreibung unter der Liste - wir als Nachricht:
-            if (it && !it->description.empty()) ShowMessage(it->description);
+            if (!it) return;
+            // XP: Verbrauchsgueter mit Heilwirkung werden BENUTZT (Ziel waehlen),
+            // alle anderen zeigen ihren Beschreibungstext.
+            if (it->consumable && (it->hpRecovery > 0 || it->mpRecovery > 0)) {
+                OpenItemTargetMenu(it->id);
+            } else if (!it->description.empty()) {
+                ShowMessage(it->description);
+            }
         });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::OpenItemTargetMenu(int itemId) {
+    const auto* it = Database::Get().GetItem(itemId);
+    if (!it) { OpenItemsMenu(); return; }
+
+    std::vector<MenuWindow::Entry> items;
+    auto& members = Game::Get().Party().Members();
+    for (const auto& a : members) {
+        // XP: Tote Mitglieder koennen nicht das Ziel von Heil-Items sein
+        items.push_back({a.name + "   HP " + std::to_string(a.hp) +
+                         " | MP " + std::to_string(a.mp), a.hp > 0});
+    }
+    if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
+
+    mMenu.Show(it->name + " benutzen: Ziel wählen", items, [this, itemId](int idx) {
+        const auto* it2 = Database::Get().GetItem(itemId);
+        auto& party = Game::Get().Party();
+        if (it2 && idx >= 0 && idx < (int)party.Members().size()) {
+            auto& a = party.Members()[(size_t)idx];
+            // Heil-Obergrenze: XP-Standard 999 (bis Klassen-Kurven existieren)
+            a.hp = std::min(a.hp + it2->hpRecovery, 999);
+            a.mp = std::min(a.mp + it2->mpRecovery, 999);
+            party.GainItem(itemId, -1);
+            EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+            ShowMessage(a.name + " erholt sich:  +" + std::to_string(it2->hpRecovery) +
+                        " HP, +" + std::to_string(it2->mpRecovery) + " MP");
+        }
+        OpenItemsMenu(); // zurueck zur Liste (Anzahl wird aktualisiert)
+    });
+    mMenu.onCancel = [this]() { OpenItemsMenu(); };
+}
+
+void GameUI::OpenStatusMenu() {
+    std::vector<MenuWindow::Entry> items;
+    const auto members = Game::Get().Party().Members(); // Snapshot
+    for (const auto& a : members)
+        items.push_back({a.name + "   Lv " + std::to_string(a.level), true});
+    if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
+
+    mMenu.Show("Status", items, [this, members](int idx) {
+        if (idx < 0 || idx >= (int)members.size()) return;
+        const auto& a = members[(size_t)idx];
+        ShowMessage(a.name + "  –  Level " + std::to_string(a.level) +
+                    "\nHP " + std::to_string(a.hp) +
+                    " | MP " + std::to_string(a.mp) +
+                    " | EXP " + std::to_string(a.exp));
+    });
     mMenu.onCancel = [this]() { OpenGameMenu(); };
 }
 

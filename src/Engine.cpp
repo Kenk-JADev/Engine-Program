@@ -167,6 +167,36 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         PlayEventAudio(name, kind, loop);
     });
 
+    // Map-Wechsel-Bruecke: Transfer-Befehl (201) und Savegame-Laden wechseln
+    // jetzt wirklich die Karte (Visual + Events + BGM) - vorher blieb die
+    // alte Karte sichtbar und nur die interne ID wechselte.
+    EventSystem_SetMapChangeHandler([this](int mapId) {
+        if (mapId <= 0) return;
+        if (mMap && mProject) {
+            const std::string p = mProject->GetMapPath(mapId);
+            if (std::filesystem::exists(p)) mMap->Load(p);
+        }
+        // Setup (ID + Karten-BGM/-BGS) nur wenn die ID wirklich neu ist;
+        // Game::Load hat sie bereits gesetzt (vermeidet doppelten BGM-Start).
+        if (Game::Get().Map().GetMapId() != mapId)
+            Game::Get().Map().Setup(mapId);
+        if (mProject)
+            EventSystem::Get().LoadMapEvents(mapId, mProject->GetProjectPath());
+        RPG_LOG_INFO("Map-Wechsel auf Karte " + std::to_string(mapId));
+    });
+
+    // Spielmenue-Callbacks (XP) EINMAL zentral verdrahten - sie gelten fuer
+    // Editor-Playtest UND Player gleichermassen (vorher nur im Editor-Zweig
+    // von SetPlaying: im Player tat "Spiel beenden" deshalb nichts).
+    GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
+    // "Speichern" oeffnet den XP-Speicherbildschirm (4 Slots)
+    GameUI::Get().Pause().onSave = []() { GameUI::Get().ShowSaveScreen(true); };
+    // "Spiel beenden": Editor-Playtest stoppt, Player beendet das Spiel
+    GameUI::Get().Pause().onExitToTitle = [this]() {
+        if (mEditorMode) this->SetPlaying(false);
+        else this->RequestQuit();
+    };
+
     mScene = std::make_unique<Scene>();
     mProject = std::make_unique<Project>();
     mMap = std::make_unique<Map>();
@@ -370,14 +400,8 @@ void Engine::SetPlaying(bool playing) {
 
             // Hide title during playtest; show a short intro message
             GameUI::Get().Title().Hide();
-            GameUI::Get().Pause().onResume = []() { GameUI::Get().Pause().Hide(); };
-            // XP: "Speichern" im Menue oeffnet den Speicherbildschirm (4 Slots)
-            GameUI::Get().Pause().onSave = []() { GameUI::Get().ShowSaveScreen(true); };
-            // "Spiel beenden": Editor-Playtest stoppt, Player beendet das Spiel
-            GameUI::Get().Pause().onExitToTitle = [this]() {
-                if (mEditorMode) this->SetPlaying(false);
-                else this->RequestQuit();
-            };
+            // Menue-Callbacks (Speichern/Beenden) sind bereits zentral in
+            // InitializeInternal verdrahtet (gelten auch fuer den Player).
 #ifdef RPGMAKER3D_ENABLE_RMLUI
             if (mRmlUi) mRmlUi->SetVisible(true); // HUD im Playtest zeigen
 #endif
@@ -416,6 +440,37 @@ void Engine::SetPlaying(bool playing) {
             if (mScriptManager) mScriptManager->ExecuteAllScripts();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// XP-Titelbildschirm (Player): Neues Spiel / Weiterspielen / Beenden
+// ---------------------------------------------------------------------------
+void Engine::StartTitleMode() {
+    auto& title = GameUI::Get().Title();
+    title.onNewGame = [this]() {
+        GameUI::Get().Title().Hide();
+        GameUI::Get().Menu().Hide(); // Titelmenue schliessen
+        Game::Get().NewGame();
+        SetPlaying(true); // Player-Zweig: laedt Events + fuehrt Skripte aus
+    };
+    title.onContinue = [this]() {
+        // Lade-Ansicht des Speicherbildschirms; danach: entweder Spiel
+        // weiterfuehren (Slot geladen) oder Abbruch -> zurueck zum Titel.
+        GameUI::Get().ShowSaveScreen(false, [this]() {
+            if (Game::Get().IsGameStarted()) {
+                GameUI::Get().Title().Hide();
+                GameUI::Get().Menu().Hide(); // Lade-Ansicht schliessen
+                // Karte/Events/BGM kamen bereits per Game::Load-
+                // Map-Wechsel-Hook; SetPlaying startet Logik + Skripte.
+                SetPlaying(true);
+            } else {
+                GameUI::Get().Title().Show();
+            }
+        });
+    };
+    title.onExit = [this]() { RequestQuit(); };
+    title.Show();
+    RPG_LOG_INFO("Titelbildschirm aktiv (Neues Spiel / Weiterspielen / Beenden)");
 }
 
 // ---------------------------------------------------------------------------
@@ -726,6 +781,10 @@ void Engine::Update(float dt) {
     if (mMap) {
         Game::Get().Map().BindMap(mMap.get());
     }
+
+    // Titelbildschirm braucht Menue-Eingabe auch ohne laufendes Spiel.
+    if (!mPlayMode && GameUI::Get().Title().IsVisible())
+        GameUI::Get().UpdateModalInput(*mInput);
 
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {

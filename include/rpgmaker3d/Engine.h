@@ -90,6 +90,9 @@ public:
 
     bool IsPlaying() const { return mPlayMode; }
     void SetPlaying(bool playing);
+    /// XP-Titelbildschirm (Player): Neues Spiel / Weiterspielen / Beenden.
+    /// Verdrahtet die TitleScreen-Callbacks und zeigt den Titel an.
+    void StartTitleMode();
     bool IsPlayModeFollowPlayer() const { return mPlayModeFollowPlayer; }
     void SetPlayModeFollowPlayer(bool follow) { mPlayModeFollowPlayer = follow; }
 
