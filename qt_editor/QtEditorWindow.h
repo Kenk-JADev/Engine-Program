@@ -45,6 +45,10 @@ public:
     explicit QtEditorWindow(QWidget* parent = nullptr);
     ~QtEditorWindow() override;
 
+    /// Kampftest aus dem Datenbank-Trupps-Tab: Player mit --battletest=<id>
+    /// (public: wird direkt aus QtDatabaseDialog::EditDatabase aufgerufen)
+    void StartBattleTest(int troopId);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 
@@ -66,8 +70,6 @@ private slots:
 
     // Playtest
     void actionPlaytestPlayer();     // externe Player-exe (F5)
-    /// Kampftest aus dem Datenbank-Trupps-Tab: Player mit --battletest=<id>
-    void StartBattleTest(int troopId);
 
     // Erstellen / Bearbeiten
     void actionCreateCube();
