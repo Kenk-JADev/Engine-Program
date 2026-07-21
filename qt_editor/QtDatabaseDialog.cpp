@@ -252,6 +252,20 @@ void QtDatabaseDialog::buildActorsTab() {
     auto* mdf = makeSpin(0, 999, 5, formHost);
     auto* agi = makeSpin(0, 999, 10, formHost);
     auto* luk = makeSpin(0, 999, 10, formHost);
+    // Endwerte (bei Max-Level) + Wachstumskurven A..E (XP-Stil)
+    auto* fmhp = makeSpin(1, 999999, 100, formHost);
+    auto* fmmp = makeSpin(1, 999999, 30, formHost);
+    auto* fatk = makeSpin(1, 9999, 10, formHost);
+    auto* fdef = makeSpin(1, 9999, 10, formHost);
+    auto* fagi = makeSpin(1, 9999, 10, formHost);
+    const QStringList kCurves = {QL("A (sehr schnell)"), QL("B (schnell)"),
+                                 QL("C (mittel)"), QL("D (langsam)"),
+                                 QL("E (sehr langsam)")};
+    auto* cvHp = makeCombo(formHost, kCurves, 2);
+    auto* cvMp = makeCombo(formHost, kCurves, 2);
+    auto* cvAtk = makeCombo(formHost, kCurves, 2);
+    auto* cvDef = makeCombo(formHost, kCurves, 2);
+    auto* cvAgi = makeCombo(formHost, kCurves, 2);
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Klasse"), klass);
@@ -268,6 +282,16 @@ void QtDatabaseDialog::buildActorsTab() {
     form->addRow(QL("Magieabwehr"), mdf);
     form->addRow(QL("Agilität"), agi);
     form->addRow(QL("Glück"), luk);
+    form->addRow(QL("Endwert Max. HP"), fmhp);
+    form->addRow(QL("Endwert Max. MP"), fmmp);
+    form->addRow(QL("Endwert Angriff"), fatk);
+    form->addRow(QL("Endwert Abwehr"), fdef);
+    form->addRow(QL("Endwert Agilität"), fagi);
+    form->addRow(QL("Kurve Max. HP"), cvHp);
+    form->addRow(QL("Kurve Max. MP"), cvMp);
+    form->addRow(QL("Kurve Angriff"), cvAtk);
+    form->addRow(QL("Kurve Abwehr"), cvDef);
+    form->addRow(QL("Kurve Agilität"), cvAgi);
 
     tp->count = [this]() { return (int)mActors.size(); };
     tp->nameAt = [this](int i) {
@@ -278,7 +302,9 @@ void QtDatabaseDialog::buildActorsTab() {
         for (size_t i = 0; i < mActors.size(); ++i) mActors[i].id = (int)i + 1;
     };
     tp->loadForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                    battlerName, mhp, mmp, atk, def, mat, mdf, agi, luk](int i) {
+                    battlerName, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                    fmhp, fmmp, fatk, fdef, fagi,
+                    cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         auto& a = mActors[(size_t)i];
         name->setText(QString::fromStdString(a.name));
         klass->clear();
@@ -299,9 +325,22 @@ void QtDatabaseDialog::buildActorsTab() {
         mdf->setValue(a.initialStats.mdf);
         agi->setValue(a.initialStats.agi);
         luk->setValue(a.initialStats.luk);
+        fmhp->setValue(a.finalStats.mhp > 0 ? a.finalStats.mhp : 100);
+        fmmp->setValue(a.finalStats.mmp > 0 ? a.finalStats.mmp : 30);
+        fatk->setValue(a.finalStats.atk > 0 ? a.finalStats.atk : 10);
+        fdef->setValue(a.finalStats.def > 0 ? a.finalStats.def : 10);
+        fagi->setValue(a.finalStats.agi > 0 ? a.finalStats.agi : 10);
+        const auto curveIdx = [](char c) { return (c >= 'A' && c <= 'E') ? c - 'A' : 2; };
+        cvHp->setCurrentIndex(curveIdx(a.curveHp));
+        cvMp->setCurrentIndex(curveIdx(a.curveMp));
+        cvAtk->setCurrentIndex(curveIdx(a.curveAtk));
+        cvDef->setCurrentIndex(curveIdx(a.curveDef));
+        cvAgi->setCurrentIndex(curveIdx(a.curveAgi));
     };
     tp->storeForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                     battlerName, mhp, mmp, atk, def, mat, mdf, agi, luk](int i) {
+                     battlerName, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                     fmhp, fmmp, fatk, fdef, fagi,
+                     cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         if ((size_t)i >= mActors.size()) return;
         auto& a = mActors[(size_t)i];
         a.name = name->text().toStdString();
@@ -319,6 +358,17 @@ void QtDatabaseDialog::buildActorsTab() {
         a.initialStats.mdf = mdf->value();
         a.initialStats.agi = agi->value();
         a.initialStats.luk = luk->value();
+        a.finalStats.mhp = fmhp->value();
+        a.finalStats.mmp = fmmp->value();
+        a.finalStats.atk = fatk->value();
+        a.finalStats.def = fdef->value();
+        a.finalStats.agi = fagi->value();
+        const auto curveChar = [](int i) { return char('A' + std::max(0, std::min(4, i))); };
+        a.curveHp = curveChar(cvHp->currentIndex());
+        a.curveMp = curveChar(cvMp->currentIndex());
+        a.curveAtk = curveChar(cvAtk->currentIndex());
+        a.curveDef = curveChar(cvDef->currentIndex());
+        a.curveAgi = curveChar(cvAgi->currentIndex());
         // Listenzeile aktualisieren falls Namens-Edit
         if (!tp->loading && tp->list)
             tp->list->item(i)->setText(tp->nameAt(i));

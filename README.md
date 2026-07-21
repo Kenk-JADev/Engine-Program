@@ -232,8 +232,12 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   läuft über das Inventar, Equip-SE), **Status** (Level, HP/MP mit
   Maximalwerten, EXP), **Speichern**, **Spiel beenden**
   (**Zum Titelbildschirm** / **Spiel verlassen** / Abbrechen), **Zurück**.
-  Max-HP/MP werden aus den Datenbank-Startwerten hochgerechnet
-  (+5 %/Level, bis ein Kurven-Editor existiert). Respektiert die
+  Max-HP/MP (und Angriff/Abwehr/Agilität) werden aus der
+  **Parameter-Kurve** des Akteurs berechnet: Im Akteure-Tab legst du
+  Startwert (Lv 1), **Endwert** (bei Max-Level) und die
+  **Wachstumskurve A–E** fest (A = sehr schnelles, E = sehr langsames
+  Wachstum, C = linear – wie beim XP, nur als Auswahl statt Grafik).
+  Respektiert die
   Event-Befehle „Menüaufruf/speichern (nicht) erlauben" (134/135).
 - **Kartenwechsel funktioniert**: Der Transfer-Befehl (201) und das Laden
   eines Savegames wechseln jetzt wirklich Karte + Events + BGM (vorher
@@ -273,7 +277,7 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   4 Battler-Bilder aus `<Projekt>/Graphics/Battlers/` (Dateiname = Feld
   „Battler-Grafik" im Gegner-Tab, besiegte Gegner verschwinden sofort). Die
   Akteure kämpfen mit ihren **echten Werten aus der Datenbank**
-  (Level-Kurve + Waffen-/Rüstungs-Bonus),
+  (Parameter-Kurve A–E aus dem Akteure-Tab + Waffen-/Rüstungs-Bonus),
   HP/MP bleiben nach dem Kampf erhalten, und der Sieg schreibt EXP gut –
   inklusive **Level-Aufstiegen mit Meldung** (EXP-Kurve der Klasse, Formel
   wie in RPG Maker VX Ace). Auch der Event-Befehl „EXP ändern“ (315) nutzt

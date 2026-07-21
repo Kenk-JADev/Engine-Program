@@ -80,29 +80,51 @@ void GameActor::RecoverAll() {
 }
 
 // ---------------------------------------------------------------------------
-// Provisorische Stat-Kurven (initialStats + ~5%/Level bis Kurven-Editor)
+// Parameter-Kurven A..E (XP-Stil): Interpolation initialStats -> finalStats
+// ueber t = (level-1)/(maxLevel-1) mit Kurven-Exponent. finalStats-Wert <= 0
+// bedeutet: alte lineare Ersatzkurve (Abwaertskompatibilitaet alter Projekte).
 // ---------------------------------------------------------------------------
 namespace {
-int CurveFor(int base, int level, int current) {
-    base = std::max(1, base);
-    return std::max(current, base + (level - 1) * std::max(1, base / 20));
+double CurveExponent(char curve) {
+    switch (curve) {
+        case 'A': return 0.55; // sehr schnelles Wachstum (fruehe Level stark)
+        case 'B': return 0.75; // schnell
+        case 'C': return 1.0;  // linear
+        case 'D': return 1.3;  // langsam
+        case 'E': return 1.6;  // sehr langsam (spaete Level erst stark)
+        default:  return 1.0;
+    }
+}
+int CurveFor(int initial, int finalValue, char curve, int level, int maxLevel, int current) {
+    initial = std::max(1, initial);
+    if (maxLevel < 2) maxLevel = 99;
+    if (level < 1) level = 1;
+    if (level > maxLevel) level = maxLevel;
+    int v;
+    if (finalValue > 0) {
+        const double t = double(level - 1) / double(maxLevel - 1);
+        v = int(std::lround(double(initial) + double(finalValue - initial) * std::pow(t, CurveExponent(curve))));
+    } else {
+        v = initial + (level - 1) * std::max(1, initial / 20);
+    }
+    return std::max(current, std::max(1, v));
 }
 } // namespace
 
 int GameActor::MaxHp() const {
     if (const auto* ad = Database::Get().GetActor(actorId))
-        return CurveFor(ad->initialStats.mhp, level, hp);
+        return CurveFor(ad->initialStats.mhp, ad->finalStats.mhp, ad->curveHp, level, ad->maxLevel, hp);
     return std::max(hp, 100);
 }
 int GameActor::MaxMp() const {
     if (const auto* ad = Database::Get().GetActor(actorId))
-        return CurveFor(ad->initialStats.mmp, level, mp);
+        return CurveFor(ad->initialStats.mmp, ad->finalStats.mmp, ad->curveMp, level, ad->maxLevel, mp);
     return std::max(mp, 30);
 }
 int GameActor::Atk() const {
     int v = 10;
     if (const auto* ad = Database::Get().GetActor(actorId))
-        v = CurveFor(ad->initialStats.atk, level, 0);
+        v = CurveFor(ad->initialStats.atk, ad->finalStats.atk, ad->curveAtk, level, ad->maxLevel, 0);
     // Waffen-Bonus
     if (weaponId > 0)
         for (const auto& w : Database::Get().Weapons())
@@ -112,7 +134,7 @@ int GameActor::Atk() const {
 int GameActor::Def() const {
     int v = 10;
     if (const auto* ad = Database::Get().GetActor(actorId))
-        v = CurveFor(ad->initialStats.def, level, 0);
+        v = CurveFor(ad->initialStats.def, ad->finalStats.def, ad->curveDef, level, ad->maxLevel, 0);
     // Ruestungs-Bonus aller angelegten Slots
     for (int armorId : armors)
         for (const auto& a : Database::Get().Armors())
@@ -121,7 +143,7 @@ int GameActor::Def() const {
 }
 int GameActor::Agi() const {
     if (const auto* ad = Database::Get().GetActor(actorId))
-        return CurveFor(ad->initialStats.agi, level, 0);
+        return CurveFor(ad->initialStats.agi, ad->finalStats.agi, ad->curveAgi, level, ad->maxLevel, 0);
     return 10;
 }
 

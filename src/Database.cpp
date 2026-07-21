@@ -36,6 +36,7 @@ void Database::CreateDefaults() {
         hero.name = "Hero";
         hero.className = "Warrior";
         hero.initialStats = {100, 30, 15, 10, 5, 5, 12, 8};
+        hero.finalStats   = {1500, 480, 120, 110, 40, 40, 120, 60};
         mActors.push_back(hero);
 
         ActorData mage;
@@ -43,6 +44,7 @@ void Database::CreateDefaults() {
         mage.name = "Mage";
         mage.className = "Mage";
         mage.initialStats = {70, 60, 8, 6, 18, 15, 10, 7};
+        mage.finalStats   = {1050, 950, 60, 65, 170, 160, 95, 50};
         mActors.push_back(mage);
     }
 
@@ -204,6 +206,26 @@ rpg::ActorData ParseActorObject(const std::string& obj) {
     if (TryParseInt(obj, "mdf", 0, v)) a.initialStats.mdf = v;
     if (TryParseInt(obj, "agi", 0, v)) a.initialStats.agi = v;
     if (TryParseInt(obj, "luk", 0, v)) a.initialStats.luk = v;
+    if (TryParseInt(obj, "fmhp", 0, v)) a.finalStats.mhp = v;
+    if (TryParseInt(obj, "fmmp", 0, v)) a.finalStats.mmp = v;
+    if (TryParseInt(obj, "fatk", 0, v)) a.finalStats.atk = v;
+    if (TryParseInt(obj, "fdef", 0, v)) a.finalStats.def = v;
+    if (TryParseInt(obj, "fmat", 0, v)) a.finalStats.mat = v;
+    if (TryParseInt(obj, "fmdf", 0, v)) a.finalStats.mdf = v;
+    if (TryParseInt(obj, "fagi", 0, v)) a.finalStats.agi = v;
+    if (TryParseInt(obj, "fluk", 0, v)) a.finalStats.luk = v;
+    {
+        std::string cr;
+        const auto norm = [](const std::string& s) -> char {
+            const char c = s.empty() ? 'C' : s[0];
+            return (c >= 'A' && c <= 'E') ? c : 'C';
+        };
+        if (TryParseString(obj, "curveHp", 0, cr)) a.curveHp = norm(cr);
+        if (TryParseString(obj, "curveMp", 0, cr)) a.curveMp = norm(cr);
+        if (TryParseString(obj, "curveAtk", 0, cr)) a.curveAtk = norm(cr);
+        if (TryParseString(obj, "curveDef", 0, cr)) a.curveDef = norm(cr);
+        if (TryParseString(obj, "curveAgi", 0, cr)) a.curveAgi = norm(cr);
+    }
 
     if (TryParseString(obj, "characterName", 0, name)) a.characterName = name;
     if (TryParseString(obj, "faceName", 0, name)) a.faceName = name;
@@ -708,6 +730,19 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"mdf\":" << a.initialStats.mdf
                   << ",\"agi\":" << a.initialStats.agi
                   << ",\"luk\":" << a.initialStats.luk
+                  << ",\"fmhp\":" << a.finalStats.mhp
+                  << ",\"fmmp\":" << a.finalStats.mmp
+                  << ",\"fatk\":" << a.finalStats.atk
+                  << ",\"fdef\":" << a.finalStats.def
+                  << ",\"fmat\":" << a.finalStats.mat
+                  << ",\"fmdf\":" << a.finalStats.mdf
+                  << ",\"fagi\":" << a.finalStats.agi
+                  << ",\"fluk\":" << a.finalStats.luk
+                  << ",\"curveHp\":\"" << a.curveHp << "\""
+                  << ",\"curveMp\":\"" << a.curveMp << "\""
+                  << ",\"curveAtk\":\"" << a.curveAtk << "\""
+                  << ",\"curveDef\":\"" << a.curveDef << "\""
+                  << ",\"curveAgi\":\"" << a.curveAgi << "\""
                   << ",\"characterName\":\"" << Escape(a.characterName) << "\""
                   << ",\"characterIndex\":" << a.characterIndex
                   << ",\"faceName\":\"" << Escape(a.faceName) << "\""

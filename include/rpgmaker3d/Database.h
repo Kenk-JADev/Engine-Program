@@ -33,6 +33,13 @@ struct ActorData {
         int luk = 10;
     };
     Stats initialStats;
+    Stats finalStats; // Endwerte bei maxLevel (mhp<=0 => alte lineare Kurve)
+    // XP-Parameterkurven: A = sehr schnelles Wachstum .. E = sehr langsames
+    char curveHp = 'C';
+    char curveMp = 'C';
+    char curveAtk = 'C';
+    char curveDef = 'C';
+    char curveAgi = 'C';
     std::vector<int> equips; // item ids
 };
 
