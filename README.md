@@ -272,7 +272,11 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   HP/MP bleiben nach dem Kampf erhalten, und der Sieg schreibt EXP gut –
   inklusive **Level-Aufstiegen mit Meldung** (EXP-Kurve der Klasse, Formel
   wie in RPG Maker VX Ace). Auch der Event-Befehl „EXP ändern“ (315) nutzt
-  diese Kurve und meldet Level-Aufstiege.
+  diese Kurve und meldet Level-Aufstiege. **Niederlage** (ohne „Niederlage
+  möglich" bei 301) zeigt **GAME OVER** (Grafik aus `Graphics/Gameovers/`
+  + ME aus dem System-Tab) und kehrt nach Bestätigung zum Titelbildschirm
+  zurück (Editor: Playtest-Stopp) – danach startet „Neues Spiel" wieder mit
+  frischen, vollen Werten.
 - **Kampftest** wie im XP-Datenbank-Dialog: Button **„Kampftest"** im
   Trupps-Tab der Datenbank (startet die Player-exe, vorher die übliche
   Speicherfrage) oder per Kommandozeile:

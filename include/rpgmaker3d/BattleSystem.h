@@ -100,6 +100,9 @@ public:
     std::function<void(int enemyId)> onEnemyDefeated;
     std::function<void()> onVictory;
     std::function<void()> onDefeat;
+    /// XP "Game Over": bei Niederlage UND !canLose (nach onDefeat).
+    /// Die Engine zeigt die Anzeige und kehrt zum Titel zurueck.
+    std::function<void()> onGameOver;
 
 private:
     BattleSystem() = default;

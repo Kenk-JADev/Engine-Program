@@ -136,7 +136,9 @@ oeffnen Listen (MP-Kosten, Anzahl); danach folgt die Zielwahl
 Verteidigen halbiert Schaden bis zur naechsten eigenen Aktion.
 HP/MP werden am Kampfende zurueck in die Party synchronisiert; Sieg
 schreibt EXP via `GameActor::AddExp` gut (Level-Ups mit Meldung,
-Klassen-EXP-Kurve wie VX Ace).
+Klassen-EXP-Kurve wie VX Ace). Niederlage ohne „Niederlage moeglich“
+loest `BattleSystem::onGameOver` aus (Engine zeigt GAME OVER +
+Gameover-ME/Grafik und kehrt zum Titel zurueck; Editor: Playtest-Stopp).
 
 ### Map-Kollision
 Tile-Flag **solid** (Map-Dock: Button „Solid“) → `TilesetData.flags` → `GameMap::IsPassable`.

@@ -140,6 +140,8 @@ void BattleSystem::Update(float dt) {
                 mLastOutcome = 3;
                 SyncBackToParty();
                 if (onDefeat) onDefeat();
+                // XP: Game Over nur wenn "Niederlage moeglich" NICHT gesetzt
+                if (!mCanLose && onGameOver) onGameOver();
             }
             break;
         default: break;

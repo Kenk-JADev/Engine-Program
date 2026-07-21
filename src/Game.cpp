@@ -941,9 +941,10 @@ void Game::Update(float dt) {
                     BattleSystem::Get().onMessage = [](const std::string& m) {
                         GameUI::Get().ShowMessage(m);
                     };
-                    BattleSystem::Get().onVictory = []() {
-                        GameUI::Get().ShowMessage("Sieg! Enemies besiegt.");
-                    };
+                    // Siegmeldung kommt aus BattleSystem::CheckVictory
+                    // ("Sieg! +EXP, +G" inkl. Level-Ups) - hier NICHT mehr
+                    // ueberschreiben. Game Over laeuft zentral ueber die
+                    // Engine (onGameOver in InitializeInternal).
                     // Aktionswahl laeuft ueber das XP-Kampfmenue (Engine).
                     GameUI::Get().ShowMessage("Ein Kampf beginnt!");
                     RPG_LOG_INFO("Random encounter troop=" + std::to_string(troopId));

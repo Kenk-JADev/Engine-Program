@@ -167,6 +167,9 @@ private:
     int mBattleStatusEnemiesId = -1;
     int mBattleStatusPartyId = -1;
     float mBattleStatusTimer = 0.0f;
+
+    // Game Over: Anzeige laeuft, wartet auf Bestaetigung -> Titel/Stopp
+    bool mGameOverPending = false;
 };
 
 } // namespace rpg

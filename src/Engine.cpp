@@ -202,6 +202,23 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         else this->RequestQuit();
     };
 
+    // Game Over (XP): Niederlage ohne "Niederlage moeglich" -> Anzeige +
+    // nach Bestaetigung zurueck zum Titel (Editor: Playtest-Stopp).
+    // Wird EINMAL zentral injiziert (Callback-Ueberschreibungen der
+    // Event-/Encounter-Verdrahtung betreffen onGameOver nicht).
+    BattleSystem::Get().onGameOver = [this]() {
+        mGameOverPending = true;
+        // XP: Game-Over-Grafik (Graphics/Gameovers/) wenn vorhanden,
+        // darueber/hinter dem Text-Fallback
+        GameUI::Get().ShowPicture(Database::Get().System().gameoverGraphicName,
+                                  std::string("$gameover"), Vec2(0.5f, 0.5f),
+                                  1.0f, 1.0f, 0.0f);
+        GameUI::Get().AddScreenText("GAME OVER", Vec2(0.5f, 0.42f),
+                                    Color(1.0f, 0.25f, 0.25f, 1.0f), 5.0f, true, 2.2f);
+        GameUI::Get().ShowMessage("GAME OVER");
+        if (mAudio) PlayEventAudio(Database::Get().System().gameoverMe, 2, false);
+    };
+
     // Bild-Pfadaufloeser fuer GameUI (UI.show_picture + Titelgrafik):
     // sucht in den XP-Projektordnern (Graphics/Pictures|Titles) usw.
     GameUI::SetPicturePathResolver([this](const std::string& filename) {
@@ -503,6 +520,8 @@ void Engine::ReturnToTitle() {
     // Spiel sauber anhalten (analog PLAYTEST STOP), dann Titel zeigen
     GameUI::Get().Message().Hide();
     GameUI::Get().Menu().Hide();
+    GameUI::Get().ClearScreenTexts(); // u. a. GAME-OVER-/Kampfstatus-Texte
+    GameUI::Get().ClearPictures();    // u. a. $gameover-Grafik
     EventSystem::Get().Clear();
     if (BattleSystem::Get().IsInBattle()) BattleSystem::Get().Abort();
     Game::Get().SetGameStarted(false);
@@ -518,7 +537,8 @@ std::string Engine::ResolvePicturePathFor(const std::string& filename) const {
     if (filename.empty()) return {};
     const std::string base = mProject ? mProject->GetProjectPath() : std::string();
     static const char* kDirs[] = {
-        "Graphics/Pictures/", "Graphics/Titles/", "Pictures/", "pictures/",
+        "Graphics/Pictures/", "Graphics/Titles/", "Graphics/Gameovers/",
+        "Pictures/", "pictures/",
         "assets/pictures/", "assets/textures/", "assets/", ""
     };
     static const char* kExts[] = {"", ".png", ".jpg", ".jpeg", ".bmp", ".tga"};
@@ -938,6 +958,29 @@ void Engine::Update(float dt) {
             mBattleStatusTimer = 0.0f;
         }
         if (mRubyVM) mRubyVM->Update(dt);
+    }
+
+    // Game Over (XP): Anzeige bestaetigt (oder Playtest manuell gestoppt) ->
+    // zurueck zum Titel (Player) bzw. Playtest-Stopp (Editor). Laeuft
+    // absichtlich ausserhalb des PlayMode-Blocks, damit kein Zustand haengt.
+    if (mGameOverPending) {
+        if (!mPlayMode) {
+            mGameOverPending = false; // Playtest wurde manuell gestoppt
+        } else if (!GameUI::Get().Message().IsBusy()) {
+            mGameOverPending = false;
+            if (mEditorMode) SetPlaying(false);
+            else ReturnToTitle();
+        }
+    }
+
+    // Kampfstatus-Anzeige aufraeumen, wenn kein Kampf (mehr) laeuft -
+    // auch nach Titelwechsel/Playtest-Stopp (laeuft sonst als Geist weiter)
+    if (mBattleStatusEnemiesId >= 0 && !BattleSystem::Get().IsInBattle()) {
+        GameUI::Get().RemoveScreenText(mBattleStatusEnemiesId);
+        GameUI::Get().RemoveScreenText(mBattleStatusPartyId);
+        mBattleStatusEnemiesId = -1;
+        mBattleStatusPartyId = -1;
+        mBattleStatusTimer = 0.0f;
     }
 
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode
