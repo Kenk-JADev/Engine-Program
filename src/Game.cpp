@@ -652,10 +652,13 @@ bool Game::GetSaveSlotInfo(int slot, SaveSlotInfo& out) const {
 // ---------------------------------------------------------------------------
 void Game::StartBattleByTroop(int troopId, bool canEscape) {
     std::vector<int> enemies;
-    if (const auto* tr = Database::Get().GetTroop(troopId))
+    std::vector<TroopPage> pages;
+    if (const auto* tr = Database::Get().GetTroop(troopId)) {
         enemies = tr->members;
+        pages = tr->pages; // XP-Kampfereignis-Seiten
+    }
     if (enemies.empty()) enemies = {1}; // Fallback, damit der Test nie leer ist
-    BattleSystem::Get().Setup(enemies, canEscape, false);
+    BattleSystem::Get().Setup(enemies, canEscape, false, pages);
     BattleSystem::Get().onMessage = [](const std::string& msg) {
         GameUI::Get().ShowMessage(msg);
     };
@@ -999,10 +1002,13 @@ void Game::Update(float dt) {
                         }
                     }
                     std::vector<int> enemies;
-                    if (const auto* tr = Database::Get().GetTroop(troopId))
+                    std::vector<TroopPage> pages;
+                    if (const auto* tr = Database::Get().GetTroop(troopId)) {
                         enemies = tr->members;
+                        pages = tr->pages; // XP-Kampfereignis-Seiten
+                    }
                     if (enemies.empty()) enemies = {1};
-                    BattleSystem::Get().Setup(enemies, true, false);
+                    BattleSystem::Get().Setup(enemies, true, false, pages);
                     BattleSystem::Get().onMessage = [](const std::string& m) {
                         GameUI::Get().ShowMessage(m);
                     };

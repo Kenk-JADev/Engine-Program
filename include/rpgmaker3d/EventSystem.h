@@ -457,6 +457,11 @@ public:
 
     void StartEvent(int eventId);
     bool IsEventRunning(int eventId) const;
+    /// Startet die Befehlsliste eines Gemeinsamen Ereignisses (per ID) als
+    /// eigenen Interpreter mit der uebergebenen Laufzeit-Event-ID (fuer
+    /// IsEventRunning). Rueckgabe: false wenn das CE unbekannt/leer ist.
+    /// Genutzt z. B. von den XP-Kampfereignis-Seiten der Trupps.
+    bool StartCommonEventById(int commonEventId, int runtimeEventId, bool blocking = true);
     bool IsAnyEventRunning() const;
     bool IsWaitingForMessage() const;
     /// Laeuft ein blockierendes Event (Action/Autorun/CE-Autorun)? -> Spieler sperren

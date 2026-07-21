@@ -270,6 +270,14 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   `UI.tween_picture`); gesucht wird in `<Projekt>/Graphics/Pictures|Titles/
   Gameovers|Battlers/` (XP-Struktur), `assets/pictures/` u. a.
   (png/jpg/jpeg/bmp/tga).
+- **Kampf-Ereignisse (XP-Trupps-Seiten)**: Im Trupps-Tab legst du bis zu
+  **12 Seiten** pro Trupp an – jede mit **Spanne** (Kampf = einmal je Kampf,
+  Runde = einmal je Runde, Moment = sofort bei Erfüllung bzw. erneut nach
+  Nicht-Erfüllung), **Bedingungen** (Schalter AN, Runde `a + n×b`,
+  Akteur-HP ≤ x %, Gegner-HP ≤ x % – alle angekreuzten müssen erfüllt sein)
+  und dem auszuführenden **Gemeinsamen Ereignis** (Tab „Gem. Events“ mit
+  vollem Befehlseditor: Texte, Schalter, HP/EXP ändern, alles wie sonst).
+  Feuert eine Seite, **pausiert der Kampf**, bis die Befehlsliste fertig ist.
 - **Kampfsystem im XP-Stil**: Sobald ein Akteur an der Reihe ist, öffnet sich
   das **Befehlsmenü** – **Angriff / Fertigkeit / Gegenstand / Verteidigen /
   Flucht** (Flucht gesperrt bei „Kann nicht fliehen“, Menüaufruf im Kampf

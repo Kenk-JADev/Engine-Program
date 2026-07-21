@@ -124,10 +124,24 @@ struct EnemyData {
 };
 
 // Truppe (Gegner-Gruppe fuer Random Encounters / Battle Processing)
+// Kampf-Ereignis-Seite eines Trupps (XP-Stil). Alle aktivierten Bedingungen
+// muessen erfuellt sein; die Befehle laufen ueber ein Gemeinsames Ereignis
+// (commonEventId, Tab "Gem. Events"), damit der volle Befehlsumfang direkt
+// editierbar ist.
+struct TroopPage {
+    bool switchValid = false; int switchId = 1;                     // Schalter AN
+    bool turnValid = false;   int turnA = 0; int turnB = 0;         // Runde turnA + turnB*x
+    bool actorValid = false;  int actorIndex = 1; int actorHpBelow = 50; // Party-Platz (1-basiert), HP <= x%
+    bool enemyValid = false;  int enemyIndex = 1; int enemyHpBelow = 50; // Trupp-Platz (1-basiert), HP <= x%
+    int span = 0;             // 0=Kampf (1x je Kampf), 1=Runde (1x je Runde), 2=Moment (sofort, neu bei Nicht-Erfuellung)
+    int commonEventId = 0;    // 0 = nichts ausfuehren
+};
+
 struct TroopData {
     int id = 0;
     std::string name = "Troop";
     std::vector<int> members; // enemy ids
+    std::vector<TroopPage> pages; // Kampf-Ereignisse (XP)
 };
 
 // Status-Effekt (Poison, Sleep, ...)

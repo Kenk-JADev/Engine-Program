@@ -442,8 +442,8 @@ rpg::TroopData ParseTroopObject(const std::string& obj) {
     if (TryParseInt(obj, "id", 0, id)) t.id = id;
     std::string name;
     if (TryParseString(obj, "name", 0, name)) t.name = name;
-    // members: Array aus Gegner-IDs
     std::string arr;
+    // members: Array aus Gegner-IDs
     if (FindArrayForKey(obj, "members", 0, arr)) {
         size_t start = arr.find('[');
         size_t end = arr.rfind(']');
@@ -458,6 +458,29 @@ rpg::TroopData ParseTroopObject(const std::string& obj) {
                 while (e > s && std::isspace((unsigned char)token[e - 1])) --e;
                 if (s < e) { try { t.members.push_back(std::stoi(token.substr(s, e - s))); } catch (...) {} }
             }
+        }
+    }
+    // pages: Kampf-Ereignis-Seiten (Array von Sub-Objekten)
+    std::string pagesArr;
+    if (FindArrayForKey(obj, "pages", 0, pagesArr)) {
+        auto pageObjs = ExtractObjectsFromArray(pagesArr);
+        for (const auto& po : pageObjs) {
+            rpg::TroopPage p;
+            int iv = 0; bool bv = false;
+            if (TryParseBool(po, "switchValid", 0, bv)) p.switchValid = bv;
+            if (TryParseInt(po, "switchId", 0, iv)) p.switchId = iv;
+            if (TryParseBool(po, "turnValid", 0, bv)) p.turnValid = bv;
+            if (TryParseInt(po, "turnA", 0, iv)) p.turnA = iv;
+            if (TryParseInt(po, "turnB", 0, iv)) p.turnB = iv;
+            if (TryParseBool(po, "actorValid", 0, bv)) p.actorValid = bv;
+            if (TryParseInt(po, "actorIndex", 0, iv)) p.actorIndex = iv;
+            if (TryParseInt(po, "actorHpBelow", 0, iv)) p.actorHpBelow = iv;
+            if (TryParseBool(po, "enemyValid", 0, bv)) p.enemyValid = bv;
+            if (TryParseInt(po, "enemyIndex", 0, iv)) p.enemyIndex = iv;
+            if (TryParseInt(po, "enemyHpBelow", 0, iv)) p.enemyHpBelow = iv;
+            if (TryParseInt(po, "span", 0, iv)) p.span = iv;
+            if (TryParseInt(po, "commonEventId", 0, iv)) p.commonEventId = iv;
+            t.pages.push_back(p);
         }
     }
     return t;
@@ -914,7 +937,30 @@ bool Database::Save(const std::string& projectPath) const {
                     if (j) f << ",";
                     f << tr.members[j];
                 }
-                f << "]}";
+                f << "]";
+                if (!tr.pages.empty()) {
+                    f << ",\"pages\":[";
+                    for (size_t j=0;j<tr.pages.size();++j) {
+                        const auto& p = tr.pages[j];
+                        if (j) f << ",";
+                        f << "{\"span\":" << p.span
+                          << ",\"switchValid\":" << (p.switchValid ? "true" : "false")
+                          << ",\"switchId\":" << p.switchId
+                          << ",\"turnValid\":" << (p.turnValid ? "true" : "false")
+                          << ",\"turnA\":" << p.turnA
+                          << ",\"turnB\":" << p.turnB
+                          << ",\"actorValid\":" << (p.actorValid ? "true" : "false")
+                          << ",\"actorIndex\":" << p.actorIndex
+                          << ",\"actorHpBelow\":" << p.actorHpBelow
+                          << ",\"enemyValid\":" << (p.enemyValid ? "true" : "false")
+                          << ",\"enemyIndex\":" << p.enemyIndex
+                          << ",\"enemyHpBelow\":" << p.enemyHpBelow
+                          << ",\"commonEventId\":" << p.commonEventId
+                          << "}";
+                    }
+                    f << "]";
+                }
+                f << "}";
                 if (i+1<mTroops.size()) f << ",";
                 f << "\n";
             }

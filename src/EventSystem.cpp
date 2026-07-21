@@ -1187,9 +1187,12 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     };
     interp.onBattleProcessing = [](int troopId, bool canEscape, bool canLose) {
         std::vector<int> enemies;
-        if (const auto* troop = Database::Get().GetTroop(troopId)) enemies = troop->members;
-        else enemies = {1};
-        BattleSystem::Get().Setup(enemies, canEscape, canLose);
+        std::vector<TroopPage> pages;
+        if (const auto* troop = Database::Get().GetTroop(troopId)) {
+            enemies = troop->members;
+            pages = troop->pages; // XP-Kampfereignis-Seiten
+        } else enemies = {1};
+        BattleSystem::Get().Setup(enemies, canEscape, canLose, pages);
         BattleSystem::Get().onMessage = [](const std::string& m) {
             GameUI::Get().ShowMessage(m);
         };
@@ -1464,6 +1467,22 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
         if (dist < best) { best = dist; bestId = ev.id; }
     }
     if (bestId >= 0) StartEvent(bestId);
+}
+
+bool EventSystem::StartCommonEventById(int commonEventId, int runtimeEventId, bool blocking) {
+    const CommonEvent* ce = nullptr;
+    for (const auto& e : mCommonEvents)
+        if (e.id == commonEventId) { ce = &e; break; }
+    if (!ce || ce->list.empty()) return false;
+    // Laeuft diese Runtime-Instanz schon? (Doppelstart verhindern)
+    for (auto& it : mInterpreters)
+        if (it->GetEventId() == runtimeEventId && it->IsRunning()) return true;
+    auto interpreter = std::make_unique<EventInterpreter>();
+    WireInterpreter(*interpreter);
+    interpreter->Setup(ce->list, runtimeEventId, mCurrentMapId);
+    interpreter->SetBlocking(blocking);
+    mInterpreters.push_back(std::move(interpreter));
+    return true;
 }
 
 void EventSystem::StartEvent(int eventId) {

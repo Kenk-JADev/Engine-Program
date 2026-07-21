@@ -67,7 +67,8 @@ class BattleSystem {
 public:
     static BattleSystem& Get();
 
-    void Setup(const std::vector<int>& enemyIds, bool canEscape = true, bool canLose = false);
+    void Setup(const std::vector<int>& enemyIds, bool canEscape = true, bool canLose = false,
+               const std::vector<TroopPage>& pages = {});
     void Update(float dt);
     void Clear();
 
@@ -103,6 +104,12 @@ public:
     /// XP "Game Over": bei Niederlage UND !canLose (nach onDefeat).
     /// Die Engine zeigt die Anzeige und kehrt zum Titel zurueck.
     std::function<void()> onGameOver;
+    /// XP-Kampfereignis-Seiten (Trupps-Tab): Wenn eine Seite feuert, startet
+    /// die Engine das Gemeinsame Ereignis als blockierenden Interpreter mit
+    /// der hier uebergebenen Laufzeit-ID; der Kampf pausiert, bis
+    /// onIsTroopPageRunning(runtimeId) false liefert.
+    std::function<void(int commonEventId, int runtimeEventId)> onRunTroopPage;
+    std::function<bool(int runtimeEventId)> onIsTroopPageRunning;
 
 private:
     BattleSystem() = default;
@@ -110,6 +117,9 @@ private:
     void CheckVictory();
     /// HP/MP der Akteur-Battler zurueck in die Party schreiben (Kampfende)
     void SyncBackToParty();
+    /// XP-Kampfereignis-Seiten auswerten (max. eine Seite pro Aufruf, wie XP)
+    void CheckTroopPages();
+    bool TroopPageConditionMet(const TroopPage& p) const;
 
     BattleState mState = BattleState::None;
     std::vector<Battler> mActors;
@@ -117,6 +127,17 @@ private:
     BattleAction mNextAction;
     float mTimer = 0.0f;
     int mTurn = 0;
+    int mRound = 0; // Kampfrunde (0-basiert, fuer Seiten-Bedingung "Runde")
+    // XP-Kampfereignis-Seiten
+    struct PageState {
+        bool doneOnce = false;   // Spanne "Kampf": schon gefeuert?
+        int lastFiredTurn = -1;  // Spanne "Runde": letzte Runde, in der gefeuert wurde
+        bool momentLatch = false; // Spanne "Moment": neurfeuern erst nach Nicht-Erfuellung
+    };
+    std::vector<TroopPage> mPages;
+    std::vector<PageState> mPageStates;
+    bool mPageWaiting = false;  // Kampf pausiert bis das Seiten-CE fertig ist
+    int mPageRuntimeId = 0;     // positive Laufzeit-ID des laufenden Seiten-Interpreters
     bool mCanEscape = true;
     bool mCanLose = false;
     int mLastExp = 0;

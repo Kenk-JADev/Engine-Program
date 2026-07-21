@@ -21,11 +21,15 @@ void Battler::Recover(int h, int m) {
     if (hp > 0) isDead = false;
 }
 
-void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool canLose) {
+void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool canLose,
+                         const std::vector<TroopPage>& pages) {
     Clear();
     mCanEscape = canEscape;
     mCanLose = canLose;
     mLastOutcome = 0; // Ergebnis fuer IfWin/IfEscape/IfLose zuruecksetzen
+    // XP-Kampfereignis-Seiten des Trupps uebernehmen (Copy, da Runtime-Flags)
+    mPages = pages;
+    mPageStates.assign(mPages.size(), {});
 
     // Actors from Party - echte Werte aus der Datenbank (Kurven + Ausruestung)
     auto& party = Game::Get().Party().Members();
@@ -87,13 +91,30 @@ void BattleSystem::Clear() {
     mActors.clear();
     mEnemies.clear();
     mTurn = 0;
+    mRound = 0;
     mTimer = 0.0f;
     mLastExp = 0;
     mLastGold = 0;
+    mPages.clear();
+    mPageStates.clear();
+    mPageWaiting = false;
 }
 
 void BattleSystem::Update(float dt) {
     if (mState==BattleState::None || mState==BattleState::End) return;
+
+    // XP-Kampfereignis: Solange eine Seiten-Befehlsliste laeuft, pausiert
+    // der komplette Kampffluss (Timer, Zuege, Sieg/Niederlage).
+    if (mPageWaiting) {
+        if (onIsTroopPageRunning && onIsTroopPageRunning(mPageRuntimeId)) return;
+        mPageWaiting = false;
+    }
+    // Seiten auswerten (Kampf-/Runden-/Moment-Spannen). Feuert eine Seite,
+    // wartet der Kampf bis zum naechsten Frame auf die Befehlsliste.
+    if (!mPages.empty()) {
+        CheckTroopPages();
+        if (mPageWaiting) return;
+    }
 
     mTimer += dt;
 
@@ -122,6 +143,7 @@ void BattleSystem::Update(float dt) {
                 mTurn++;
                 if (mTurn >= (int)(mActors.size()+mEnemies.size())) {
                     mTurn = 0;
+                    ++mRound; // neue Kampfrunde (Seiten-Bedingung "Runde")
                     CheckVictory();
                 }
             }
@@ -145,6 +167,67 @@ void BattleSystem::Update(float dt) {
             }
             break;
         default: break;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// XP-Kampfereignis-Seiten (Trupps-Tab)
+// ---------------------------------------------------------------------------
+bool BattleSystem::TroopPageConditionMet(const TroopPage& p) const {
+    if (p.switchValid && !Game::Get().Switches().Get(p.switchId)) return false;
+    if (p.turnValid) {
+        // Runde turnA + turnB*x trifft zu (x >= 0)
+        if (mRound < p.turnA) return false;
+        const int d = mRound - p.turnA;
+        if (p.turnB > 0) { if (d % p.turnB != 0) return false; }
+        else if (d != 0) return false;
+    }
+    if (p.actorValid) {
+        const int i = p.actorIndex - 1; // 1-basiert (Party-Platz)
+        if (i < 0 || i >= (int)mActors.size()) return false;
+        const Battler& a = mActors[(size_t)i];
+        const int pct = (a.maxHp > 0) ? (100 * a.hp / a.maxHp) : 0;
+        if (a.isDead || pct > p.actorHpBelow) return false;
+    }
+    if (p.enemyValid) {
+        const int i = p.enemyIndex - 1; // 1-basiert (Trupp-Platz)
+        if (i < 0 || i >= (int)mEnemies.size()) return false;
+        const Battler& e = mEnemies[(size_t)i];
+        const int pct = (e.maxHp > 0) ? (100 * e.hp / e.maxHp) : 0;
+        if (e.isDead || pct > p.enemyHpBelow) return false;
+    }
+    return true;
+}
+
+void BattleSystem::CheckTroopPages() {
+    for (size_t i = 0; i < mPages.size(); ++i) {
+        const TroopPage& p = mPages[i];
+        PageState& st = (i < mPageStates.size()) ? mPageStates[i] : mPageStates.emplace_back();
+        const bool met = TroopPageConditionMet(p);
+        bool fire = false;
+        if (p.span == 0) {          // Kampf: einmal je Kampf
+            if (met && !st.doneOnce) fire = true;
+        } else if (p.span == 1) {   // Runde: einmal je Runde
+            if (met && st.lastFiredTurn != mRound) fire = true;
+        } else {                    // Moment: sofort; neu erst nach Nicht-Erfuellung
+            if (met && !st.momentLatch) fire = true;
+            if (!met) st.momentLatch = false;
+        }
+        if (!fire) continue;
+        // Flags setzen (auch ohne Callback/CE, damit kein Dauerfeuer)
+        if (p.span == 0) st.doneOnce = true;
+        else if (p.span == 1) st.lastFiredTurn = mRound;
+        else st.momentLatch = true;
+        if (p.commonEventId > 0 && onRunTroopPage) {
+            // Laufzeit-ID pro Seite stabil (blockierender Interpreter pausiert
+            // den Kampf ueber mPageWaiting bis er fertig ist)
+            mPageRuntimeId = 900000 + (int)i + 1;
+            mPageWaiting = true;
+            RPG_LOG_INFO("Kampfereignis-Seite " + std::to_string(i + 1) +
+                         " -> Gem. Event " + std::to_string(p.commonEventId));
+            onRunTroopPage(p.commonEventId, mPageRuntimeId);
+        }
+        return; // XP: max. eine Seite pro Ausloese-Gelegenheit
     }
 }
 

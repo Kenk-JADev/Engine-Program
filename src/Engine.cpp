@@ -208,6 +208,15 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     // nach Bestaetigung zurueck zum Titel (Editor: Playtest-Stopp).
     // Wird EINMAL zentral injiziert (Callback-Ueberschreibungen der
     // Event-/Encounter-Verdrahtung betreffen onGameOver nicht).
+    // XP-Kampfereignis-Seiten (Trupps-Tab): das Gemeinsame Ereignis einer
+    // feuernden Seite als blockierenden Interpreter starten; der Kampf
+    // pausiert ueber diese beiden Hooks bis die Befehlsliste fertig ist.
+    BattleSystem::Get().onRunTroopPage = [](int commonEventId, int runtimeEventId) {
+        EventSystem::Get().StartCommonEventById(commonEventId, runtimeEventId, true);
+    };
+    BattleSystem::Get().onIsTroopPageRunning = [](int runtimeEventId) {
+        return EventSystem::Get().IsEventRunning(runtimeEventId);
+    };
     BattleSystem::Get().onGameOver = [this]() {
         mGameOverPending = true;
         // XP: Game-Over-Grafik (Graphics/Gameovers/) wenn vorhanden,

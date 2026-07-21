@@ -7,6 +7,8 @@
 #include "rpgmaker3d/Project.h"
 
 #include <algorithm>
+#include <functional>
+#include <memory>
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -809,6 +811,178 @@ void QtDatabaseDialog::buildTroopsTab() {
         emit battleTestRequested(troopId);
     });
 
+    // --- XP-Kampfereignisse (Seiten) ---
+    // Pro Trupp bis zu 12 Seiten: Bedingungen (alle muessen erfuellt sein),
+    // Spanne (Kampf/Runde/Moment) und das auszufuehrende Gem. Event.
+    auto* pagesLabel = new QLabel(
+        QL("Kampf-Ereignisse (wie im XP): Die Befehle einer Seite laufen als\n"
+           "Gemeinsames Ereignis (Tab \"Gem. Events\"). Alle angekreuzten\n"
+           "Bedingungen müssen erfüllt sein. Der Kampf pausiert währenddessen."), formHost);
+    pagesLabel->setWordWrap(true);
+    auto* pageList = new QListWidget(formHost);
+    pageList->setMaximumHeight(100);
+    auto* pageBtnRow = new QWidget(formHost);
+    auto* pageBtnLay = new QHBoxLayout(pageBtnRow);
+    pageBtnLay->setContentsMargins(0, 0, 0, 0);
+    auto* pageAddBtn = new QPushButton(QL("Seite hinzufügen"), pageBtnRow);
+    auto* pageRemBtn = new QPushButton(QL("Seite entfernen"), pageBtnRow);
+    pageBtnLay->addWidget(pageAddBtn);
+    pageBtnLay->addWidget(pageRemBtn);
+    auto* span = makeCombo(formHost, {QL("Kampf (einmal je Kampf)"),
+                                      QL("Runde (einmal je Runde)"),
+                                      QL("Moment (sofort bei Erfüllung)")}, 0);
+    auto* ceCombo = new QComboBox(formHost);
+    auto* swCheck = new QCheckBox(QL("Schalter AN"), formHost);
+    auto* swId = makeSpin(1, 9999, 1, formHost);
+    auto* turnCheck = new QCheckBox(QL("Runde erreicht"), formHost);
+    auto* turnA = makeSpin(0, 999, 0, formHost);
+    auto* turnB = makeSpin(0, 999, 0, formHost);
+    auto* actorCheck = new QCheckBox(QL("Akteur HP <="), formHost);
+    auto* actorIdx = makeSpin(1, 8, 1, formHost);
+    auto* actorPct = makeSpin(1, 100, 50, formHost);
+    auto* enemyCheck = new QCheckBox(QL("Gegner HP <="), formHost);
+    auto* enemyIdx = makeSpin(1, 8, 1, formHost);
+    auto* enemyPct = makeSpin(1, 100, 50, formHost);
+
+    form->addRow(pagesLabel);
+    form->addRow(QL("Seiten"), pageList);
+    form->addRow(pageBtnRow);
+    form->addRow(QL("Spanne"), span);
+    form->addRow(QL("Gem. Event"), ceCombo);
+    // Bedingungs-Reihen: Checkbox links, Parameter rechts in einer Zeile
+    const auto rowOf = [formHost](QWidget* a, QWidget* b, const QString& sep) {
+        auto* w = new QWidget(formHost);
+        auto* lay = new QHBoxLayout(w);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->addWidget(a);
+        if (!sep.isEmpty()) lay->addWidget(new QLabel(sep, w));
+        if (b) lay->addWidget(b);
+        lay->addStretch(1);
+        return w;
+    };
+    form->addRow(swCheck, rowOf(swId, nullptr, QString()));
+    form->addRow(turnCheck, rowOf(turnA, turnB, QL("+ n x")));
+    auto* actorPctL = new QWidget(formHost);
+    {
+        auto* lay = new QHBoxLayout(actorPctL);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->addWidget(actorIdx);
+        lay->addWidget(new QLabel(QL("%:"), actorPctL));
+        lay->addWidget(actorPct);
+        lay->addStretch(1);
+    }
+    form->addRow(actorCheck, actorPctL);
+    auto* enemyPctL = new QWidget(formHost);
+    {
+        auto* lay = new QHBoxLayout(enemyPctL);
+        lay->setContentsMargins(0, 0, 0, 0);
+        lay->addWidget(enemyIdx);
+        lay->addWidget(new QLabel(QL("%:"), enemyPctL));
+        lay->addWidget(enemyPct);
+        lay->addStretch(1);
+    }
+    form->addRow(enemyCheck, enemyPctL);
+
+    // gemeinsamer Seiten-Status + Lade-/Speicher-Helfer
+    auto curPage = std::make_shared<int>(-1);
+    std::function<void(int)> loadPage;
+    std::function<void()> storeCurrentPage;
+    storeCurrentPage = [this, tp, curPage, span, ceCombo, swCheck, swId,
+                        turnCheck, turnA, turnB, actorCheck, actorIdx, actorPct,
+                        enemyCheck, enemyIdx, enemyPct]() {
+        if (tp->current < 0 || (size_t)tp->current >= mTroops.size()) return;
+        auto& tr = mTroops[(size_t)tp->current];
+        if (*curPage < 0 || (size_t)*curPage >= tr.pages.size()) return;
+        auto& p = tr.pages[(size_t)*curPage];
+        p.span = span->currentIndex();
+        p.commonEventId = ceCombo->currentData().toInt();
+        p.switchValid = swCheck->isChecked();
+        p.switchId = swId->value();
+        p.turnValid = turnCheck->isChecked();
+        p.turnA = turnA->value();
+        p.turnB = turnB->value();
+        p.actorValid = actorCheck->isChecked();
+        p.actorIndex = actorIdx->value();
+        p.actorHpBelow = actorPct->value();
+        p.enemyValid = enemyCheck->isChecked();
+        p.enemyIndex = enemyIdx->value();
+        p.enemyHpBelow = enemyPct->value();
+    };
+    loadPage = [this, tp, curPage, pageList, span, ceCombo, swCheck, swId,
+                turnCheck, turnA, turnB, actorCheck, actorIdx, actorPct,
+                enemyCheck, enemyIdx, enemyPct](int idx) {
+        *curPage = idx;
+        // Gem.-Events immer aktuell anbieten
+        ceCombo->clear();
+        ceCombo->addItem(QL("(Kein)"), 0);
+        for (const auto& ce : mCEs)
+            ceCombo->addItem(QL("%1: %2").arg(ce.id, 3, 10, QLatin1Char('0'))
+                                 .arg(QString::fromStdString(ce.name)), ce.id);
+        const bool valid = (tp->current >= 0 && (size_t)tp->current < mTroops.size() &&
+                            idx >= 0 && (size_t)idx < mTroops[(size_t)tp->current].pages.size());
+        if (!valid) {
+            swId->setValue(1); turnA->setValue(0); turnB->setValue(0);
+            actorIdx->setValue(1); actorPct->setValue(50);
+            enemyIdx->setValue(1); enemyPct->setValue(50);
+            swCheck->setChecked(false); turnCheck->setChecked(false);
+            actorCheck->setChecked(false); enemyCheck->setChecked(false);
+            span->setCurrentIndex(0);
+            ceCombo->setCurrentIndex(0);
+            return;
+        }
+        const auto& p = mTroops[(size_t)tp->current].pages[(size_t)idx];
+        span->setCurrentIndex(qBound(0, p.span, 2));
+        const int ci = ceCombo->findData(p.commonEventId);
+        ceCombo->setCurrentIndex(ci >= 0 ? ci : 0);
+        swCheck->setChecked(p.switchValid);
+        swId->setValue(qBound(1, p.switchId, 9999));
+        turnCheck->setChecked(p.turnValid);
+        turnA->setValue(qBound(0, p.turnA, 999));
+        turnB->setValue(qBound(0, p.turnB, 999));
+        actorCheck->setChecked(p.actorValid);
+        actorIdx->setValue(qBound(1, p.actorIndex, 8));
+        actorPct->setValue(qBound(1, p.actorHpBelow, 100));
+        enemyCheck->setChecked(p.enemyValid);
+        enemyIdx->setValue(qBound(1, p.enemyIndex, 8));
+        enemyPct->setValue(qBound(1, p.enemyHpBelow, 100));
+    };
+    auto refillPages = [this, tp, curPage, pageList]() {
+        pageList->clear();
+        *curPage = -1;
+        if (tp->current < 0 || (size_t)tp->current >= mTroops.size()) return;
+        const auto& tr = mTroops[(size_t)tp->current];
+        for (size_t k = 0; k < tr.pages.size(); ++k)
+            pageList->addItem(QL("Seite %1").arg((int)k + 1));
+        if (!tr.pages.empty()) pageList->setCurrentRow(0);
+    };
+    connect(pageList, &QListWidget::currentRowChanged, formHost,
+            [storeCurrentPage, loadPage](int row) {
+                storeCurrentPage(); // alte Seite sichern
+                loadPage(row);      // neue Seite laden
+            });
+    connect(pageAddBtn, &QPushButton::clicked, formHost,
+            [this, tp, storeCurrentPage, pageList]() {
+                if (tp->current < 0 || (size_t)tp->current >= mTroops.size()) return;
+                auto& tr = mTroops[(size_t)tp->current];
+                if (tr.pages.size() >= 12) return;
+                storeCurrentPage();
+                tr.pages.push_back({});
+                pageList->addItem(QL("Seite %1").arg((int)tr.pages.size()));
+                pageList->setCurrentRow((int)tr.pages.size() - 1);
+            });
+    connect(pageRemBtn, &QPushButton::clicked, formHost,
+            [this, tp, storeCurrentPage, pageList]() {
+                const int row = pageList->currentRow();
+                if (row < 0 || tp->current < 0 || (size_t)tp->current >= mTroops.size()) return;
+                auto& tr = mTroops[(size_t)tp->current];
+                storeCurrentPage();
+                if ((size_t)row >= tr.pages.size()) return;
+                tr.pages.erase(tr.pages.begin() + (ptrdiff_t)row);
+                delete pageList->takeItem(row);
+                if (!tr.pages.empty())
+                    pageList->setCurrentRow(row < (int)tr.pages.size() ? row : (int)tr.pages.size() - 1);
+            });
+
     tp->count = [this]() { return (int)mTroops.size(); };
     tp->nameAt = [this](int i) {
         return IdName(i + 1, QString::fromStdString(mTroops[(size_t)i].name));
@@ -817,7 +991,7 @@ void QtDatabaseDialog::buildTroopsTab() {
         mTroops.resize((size_t)n);
         for (size_t i = 0; i < mTroops.size(); ++i) mTroops[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, memberList, enemyCombo](int i) {
+    tp->loadForm = [this, name, memberList, enemyCombo, refillPages](int i) {
         auto& tr = mTroops[(size_t)i];
         name->setText(QString::fromStdString(tr.name));
         memberList->clear();
@@ -833,14 +1007,16 @@ void QtDatabaseDialog::buildTroopsTab() {
         for (const auto& e : mEnemies)
             enemyCombo->addItem(QL("%1: %2").arg(e.id, 3, 10, QLatin1Char('0'))
                                     .arg(QString::fromStdString(e.name)), e.id);
+        refillPages(); // Kampfereignis-Seiten des neuen Trupps zeigen
     };
-    tp->storeForm = [this, tp, name, memberList](int i) {
+    tp->storeForm = [this, tp, name, memberList, storeCurrentPage](int i) {
         if ((size_t)i >= mTroops.size()) return;
         auto& tr = mTroops[(size_t)i];
         tr.name = name->text().toStdString();
         tr.members.clear();
         for (int r = 0; r < memberList->count(); ++r)
             tr.members.push_back(memberList->item(r)->data(Qt::UserRole).toInt());
+        storeCurrentPage(); // offene Kampfereignis-Seite mitsichern
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
 
