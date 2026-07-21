@@ -128,8 +128,8 @@ struct GameActor {
     void RecoverAll();
     bool IsDead() const { return hp <= 0; }
 
-    // --- Provisorische Kurven (initialStats + ~5%/Level, bis der
-    // Kurven-Editor existiert). Steigen nie unter den aktuellen Ist-Wert. ---
+    // --- Parameter-Kurven A..E: Interpolation Startwert -> Endwert
+    // (Akteure-Tab der Datenbank). Steigen nie unter den aktuellen Ist-Wert. ---
     int MaxHp() const;
     int MaxMp() const;
     int Atk() const;  // Basis-Kurve + Waffen-Bonus
@@ -140,7 +140,12 @@ struct GameActor {
     /// -1 wenn das Max-Level erreicht ist.
     int ExpForNextLevel() const;
     /// EXP gutschreiben; gibt die Anzahl der Level-Aufstiege zurueck.
-    int AddExp(int amount);
+    /// Bei jedem Aufstieg werden Klassen-Fertigkeiten nachgelernt; die
+    /// Namen neu gelernter Fertigkeiten landen optional in learnedNames.
+    int AddExp(int amount, std::vector<std::string>* learnedNames = nullptr);
+    /// Lernt alle Klassen-Fertigkeiten der Actor-Klasse bis Level 'lvl'
+    /// nach (keine Duplikate). Namen neutgelernter Fertigkeiten optional.
+    void LearnSkillsUpToLevel(int lvl, std::vector<std::string>* learnedNames = nullptr);
 };
 
 // == Game Party ==

@@ -1217,9 +1217,15 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
         ApplyToActorOrParty(actorId, [&](GameActor& a) {
             if (exp >= 0) {
                 // EXP-Kurve der Klasse (GameActor::AddExp), Level-Up-Meldung
-                if (a.AddExp(exp) > 0)
-                    GameUI::Get().ShowMessage(a.name + " erreicht Level " +
-                                              std::to_string(a.level) + "!");
+                // inkl. neu gelernter Klassen-Fertigkeiten
+                std::vector<std::string> learned;
+                if (a.AddExp(exp, &learned) > 0) {
+                    std::string msg = a.name + " erreicht Level " +
+                                      std::to_string(a.level) + "!";
+                    for (const auto& s : learned)
+                        msg += "\n" + a.name + " hat [" + s + "] gelernt!";
+                    GameUI::Get().ShowMessage(msg);
+                }
             } else {
                 // Reduzieren senkt nicht das Level (XP-Verhalten)
                 a.exp = std::max(0, a.exp + exp);
@@ -1232,6 +1238,11 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
             if (const auto* ad = Database::Get().GetActor(a.actorId))
                 maxLv = std::max(1, ad->maxLevel);
             a.level = std::max(1, std::min(level, maxLv));
+            // Fertigkeiten bis zum neuen Level nachlernen (nur Meldung wenn neu)
+            std::vector<std::string> learned;
+            a.LearnSkillsUpToLevel(a.level, &learned);
+            for (const auto& s : learned)
+                GameUI::Get().ShowMessage(a.name + " hat [" + s + "] gelernt!");
         });
     };
     // Hinweis: "Speicherbildschirm aufrufen" (352) oeffnet INTERNE

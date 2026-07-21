@@ -68,14 +68,55 @@ void GameActor::Setup(int id) {
     level = data->initialLevel;
     hp = data->initialStats.mhp;
     mp = data->initialStats.mmp;
+    faceIndex = data->faceIndex;
+    graphicName = data->characterName;
+    // Klasse aufloesen (ClassData wird ueber den Namen referenziert)
+    if (const auto* cls = Database::Get().GetClass(data->className))
+        classId = cls->id;
+    // Start-Fertigkeiten: alle Learnings bis zum Anfangs-Level
+    LearnSkillsUpToLevel(level, nullptr);
+    // Start-Ausruestung aus ActorData.equips (erste Waffe + max. 1
+    // Ruestung pro Typ, wie im Ausruestungs-Menue)
+    for (int eid : data->equips) {
+        bool isWeapon = false;
+        for (const auto& w : Database::Get().Weapons())
+            if (w.id == eid) { if (weaponId == 0) weaponId = eid; isWeapon = true; break; }
+        if (isWeapon) continue;
+        for (const auto& ar : Database::Get().Armors())
+            if (ar.id == eid) {
+                bool haveType = false;
+                for (int aid : armors)
+                    for (const auto& ar2 : Database::Get().Armors())
+                        if (ar2.id == aid && ar2.armorType == ar.armorType) { haveType = true; break; }
+                if (!haveType) armors.push_back(eid);
+                break;
+            }
+    }
 }
 void GameActor::RecoverAll() {
-    const auto* data = Database::Get().GetActor(actorId);
-    if (data) {
-        hp = data->initialStats.mhp;
-        mp = data->initialStats.mmp;
-    } else {
-        hp = 100; mp = 30;
+    // XP-Verhalten: HP/MP auf Maximalwert der Kurve + Status aufloesen
+    hp = MaxHp();
+    mp = MaxMp();
+    states.clear();
+}
+
+void GameActor::LearnSkillsUpToLevel(int lvl, std::vector<std::string>* learnedNames) {
+    const auto* ad = Database::Get().GetActor(actorId);
+    if (!ad) return;
+    const auto* cls = Database::Get().GetClass(ad->className);
+    if (!cls) return;
+    for (const auto& l : cls->learnings) {
+        if (l.level < 1 || l.level > lvl) continue;
+        bool have = false;
+        for (int s : skills) if (s == l.skillId) { have = true; break; }
+        if (have) continue;
+        skills.push_back(l.skillId);
+        if (learnedNames) {
+            if (const auto* sd = Database::Get().GetSkill(l.skillId))
+                learnedNames->push_back(sd->name);
+            else
+                learnedNames->push_back("#" + std::to_string(l.skillId));
+        }
     }
 }
 
@@ -171,7 +212,7 @@ int GameActor::ExpForNextLevel() const {
     return (int)std::llround(result);
 }
 
-int GameActor::AddExp(int amount) {
+int GameActor::AddExp(int amount, std::vector<std::string>* learnedNames) {
     if (amount <= 0) return 0;
     int maxLv = 99;
     if (const auto* ad = Database::Get().GetActor(actorId))
@@ -184,6 +225,8 @@ int GameActor::AddExp(int amount) {
         if (need < 0 || exp < need) break;
         ++level;
         ++ups;
+        // XP: pro Aufstieg neue Klassen-Fertigkeiten lernen
+        LearnSkillsUpToLevel(level, learnedNames);
     }
     return ups;
 }

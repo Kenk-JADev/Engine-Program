@@ -51,6 +51,9 @@ struct ClassData {
     int expExtra = 20;
     float expAccA = 30;
     float expAccB = 20;
+    // Fertigkeiten, die ab einem Level automatisch gelernt werden (XP-Stil)
+    struct Learning { int level = 1; int skillId = 1; };
+    std::vector<Learning> learnings;
 };
 
 struct ItemData {
@@ -281,6 +284,7 @@ public:
     SystemData& System() { return mSystem; }
 
     const ActorData* GetActor(int id) const;
+    const ClassData* GetClass(const std::string& name) const;
     const ItemData* GetItem(int id) const;
     const EnemyData* GetEnemy(int id) const;
     const SkillData* GetSkill(int id) const;

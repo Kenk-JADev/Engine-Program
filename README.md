@@ -237,6 +237,13 @@ Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
   Startwert (Lv 1), **Endwert** (bei Max-Level) und die
   **Wachstumskurve A–E** fest (A = sehr schnelles, E = sehr langsames
   Wachstum, C = linear – wie beim XP, nur als Auswahl statt Grafik).
+  Außerdem pflegt der Akteure-Tab die **Start-Ausrüstung** (Waffen-/
+  Rüstungs-IDs, kommagetrennt) und der Klassen-Tab die
+  **Fertigkeiten ab Level** (Format `Level:Fertigkeits-ID`, kommagetrennt):
+  Die Klassen werden jetzt auch wirklich in `Classes.json` gespeichert
+  (vorher gingen EXP-Werte beim Neuladen verloren), und jeder
+  **Level-Aufstieg** – im Kampf wie über „EXP/Level ändern" –
+  lernt fällige Fertigkeiten automatisch mit Meldung.
   Respektiert die
   Event-Befehle „Menüaufruf/speichern (nicht) erlauben" (134/135).
 - **Kartenwechsel funktioniert**: Der Transfer-Befehl (201) und das Laden

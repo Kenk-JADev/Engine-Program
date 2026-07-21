@@ -6,6 +6,8 @@
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Project.h"
 
+#include <algorithm>
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -244,6 +246,9 @@ void QtDatabaseDialog::buildActorsTab() {
     auto* charName = makeLine(formHost);
     auto* faceName = makeLine(formHost);
     auto* battlerName = makeLine(formHost);
+    auto* equipsEdit = makeLine(formHost);
+    equipsEdit->setToolTip(QL("Start-Ausrüstung als Waffen-/Rüstungs-IDs, kommagetrennt (z. B. 1,2).\n"
+                              "Die erste gefundene Waffe wird angelegt, je Rüstungstyp max. 1 Stück."));
     auto* mhp = makeSpin(1, 99999, 100, formHost);
     auto* mmp = makeSpin(0, 99999, 30, formHost);
     auto* atk = makeSpin(0, 999, 10, formHost);
@@ -274,6 +279,7 @@ void QtDatabaseDialog::buildActorsTab() {
     form->addRow(QL("Charakter-Grafik"), charName);
     form->addRow(QL("Face-Grafik"), faceName);
     form->addRow(QL("Battler-Grafik"), battlerName);
+    form->addRow(QL("Start-Ausrüstung (IDs)"), equipsEdit);
     form->addRow(QL("Max. HP"), mhp);
     form->addRow(QL("Max. MP"), mmp);
     form->addRow(QL("Angriff"), atk);
@@ -302,7 +308,7 @@ void QtDatabaseDialog::buildActorsTab() {
         for (size_t i = 0; i < mActors.size(); ++i) mActors[i].id = (int)i + 1;
     };
     tp->loadForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                    battlerName, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                    battlerName, equipsEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
                     fmhp, fmmp, fatk, fdef, fagi,
                     cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         auto& a = mActors[(size_t)i];
@@ -317,6 +323,9 @@ void QtDatabaseDialog::buildActorsTab() {
         charName->setText(QString::fromStdString(a.characterName));
         faceName->setText(QString::fromStdString(a.faceName));
         battlerName->setText(QString::fromStdString(a.battlerName));
+        QStringList eqs;
+        for (int e : a.equips) eqs << QString::number(e);
+        equipsEdit->setText(eqs.join(QLatin1String(", ")));
         mhp->setValue(a.initialStats.mhp);
         mmp->setValue(a.initialStats.mmp);
         atk->setValue(a.initialStats.atk);
@@ -338,7 +347,7 @@ void QtDatabaseDialog::buildActorsTab() {
         cvAgi->setCurrentIndex(curveIdx(a.curveAgi));
     };
     tp->storeForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                     battlerName, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                     battlerName, equipsEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
                      fmhp, fmmp, fatk, fdef, fagi,
                      cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         if ((size_t)i >= mActors.size()) return;
@@ -350,6 +359,13 @@ void QtDatabaseDialog::buildActorsTab() {
         a.characterName = charName->text().toStdString();
         a.faceName = faceName->text().toStdString();
         a.battlerName = battlerName->text().toStdString();
+        a.equips.clear();
+        const QStringList eqs = equipsEdit->text().split(QLatin1Char(','), Qt::SkipEmptyParts);
+        for (const QString& t : eqs) {
+            bool ok = false;
+            const int v = t.trimmed().toInt(&ok);
+            if (ok && v > 0) a.equips.push_back(v);
+        }
         a.initialStats.mhp = mhp->value();
         a.initialStats.mmp = mmp->value();
         a.initialStats.atk = atk->value();
@@ -389,11 +405,15 @@ void QtDatabaseDialog::buildClassesTab() {
     auto* extra = makeSpin(0, 9999, 20, formHost);
     auto* accA = makeDSpin(0, 999, 30, formHost);
     auto* accB = makeDSpin(0, 999, 20, formHost);
+    auto* learn = makeLine(formHost);
+    learn->setToolTip(QL("Fertigkeiten, die die Klasse automatisch ab einem Level lernt.\n"
+                         "Format: Level:Fertigkeits-ID, kommagetrennt, z. B. 2:2, 4:3"));
     form->addRow(QL("Name"), name);
     form->addRow(QL("EXP-Basis"), base);
     form->addRow(QL("EXP-Zuschlag"), extra);
     form->addRow(QL("EXP-Beschleunigung A"), accA);
     form->addRow(QL("EXP-Beschleunigung B"), accB);
+    form->addRow(QL("Fertigkeiten ab Level"), learn);
 
     tp->count = [this]() { return (int)mClasses.size(); };
     tp->nameAt = [this](int i) {
@@ -403,15 +423,20 @@ void QtDatabaseDialog::buildClassesTab() {
         mClasses.resize((size_t)n);
         for (size_t i = 0; i < mClasses.size(); ++i) mClasses[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, base, extra, accA, accB](int i) {
+    tp->loadForm = [this, name, base, extra, accA, accB, learn](int i) {
         auto& c = mClasses[(size_t)i];
         name->setText(QString::fromStdString(c.name));
         base->setValue(c.expBase);
         extra->setValue(c.expExtra);
         accA->setValue((double)c.expAccA);
         accB->setValue((double)c.expAccB);
+        QStringList toks;
+        for (const auto& lrn : c.learnings)
+            toks << QString::number(lrn.level) + QLatin1Char(':') +
+                        QString::number(lrn.skillId);
+        learn->setText(toks.join(QLatin1String(", ")));
     };
-    tp->storeForm = [this, tp, name, base, extra, accA, accB](int i) {
+    tp->storeForm = [this, tp, name, base, extra, accA, accB, learn](int i) {
         if ((size_t)i >= mClasses.size()) return;
         auto& c = mClasses[(size_t)i];
         c.name = name->text().toStdString();
@@ -419,6 +444,22 @@ void QtDatabaseDialog::buildClassesTab() {
         c.expExtra = extra->value();
         c.expAccA = (float)accA->value();
         c.expAccB = (float)accB->value();
+        // Lern-Liste "Level:Fertigkeits-ID, ..." (robustes Parsen)
+        c.learnings.clear();
+        const QStringList toks = learn->text().split(QLatin1Char(','), Qt::SkipEmptyParts);
+        for (const QString& t : toks) {
+            const QStringList pair = t.trimmed().split(QLatin1Char(':'));
+            if (pair.size() != 2) continue;
+            bool okLv = false, okSk = false;
+            const int lv = pair[0].trimmed().toInt(&okLv);
+            const int sk = pair[1].trimmed().toInt(&okSk);
+            if (okLv && okSk && lv >= 1 && sk > 0)
+                c.learnings.push_back({lv, sk});
+        }
+        std::sort(c.learnings.begin(), c.learnings.end(),
+                  [](const rpg::ClassData::Learning& a, const rpg::ClassData::Learning& b) {
+                      return a.level < b.level;
+                  });
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);

@@ -317,9 +317,13 @@ void BattleSystem::CheckVictory() {
                           std::to_string(mLastGold) + " G";
         for (auto& a : Game::Get().Party().Members()) {
             if (a.IsDead()) continue;
-            const int ups = a.AddExp(mLastExp);
-            if (ups > 0)
+            std::vector<std::string> learned;
+            const int ups = a.AddExp(mLastExp, &learned);
+            if (ups > 0) {
                 msg += "\n" + a.name + " erreicht Level " + std::to_string(a.level) + "!";
+                for (const auto& s : learned)
+                    msg += "\n" + a.name + " hat [" + s + "] gelernt!";
+            }
         }
         if (onMessage) onMessage(msg);
         return;

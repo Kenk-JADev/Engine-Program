@@ -37,6 +37,7 @@ void Database::CreateDefaults() {
         hero.className = "Warrior";
         hero.initialStats = {100, 30, 15, 10, 5, 5, 12, 8};
         hero.finalStats   = {1500, 480, 120, 110, 40, 40, 120, 60};
+        hero.equips       = {1, 1}; // Iron Sword + Wooden Shield
         mActors.push_back(hero);
 
         ActorData mage;
@@ -51,8 +52,10 @@ void Database::CreateDefaults() {
     // Classes
     if (mClasses.empty()) {
         ClassData warrior; warrior.id=1; warrior.name="Warrior";
+        warrior.learnings = {{2, 2}}; // Heal ab Level 2
         mClasses.push_back(warrior);
         ClassData mage; mage.id=2; mage.name="Mage";
+        mage.learnings = {{1, 1}, {4, 2}}; // Fire ab 1, Heal ab 4
         mClasses.push_back(mage);
     }
 
@@ -180,6 +183,23 @@ std::string ReadFileToString(const std::string& path) {
     return ss.str();
 }
 
+// "1, 2,3" -> {1,2,3} (Leerzeichen/unerlaubte Eintrae robust uebersprungen)
+std::vector<int> ParseIntCsv(const std::string& s) {
+    std::vector<int> out;
+    std::stringstream ss(s);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        const size_t b = tok.find_first_not_of(" \t");
+        if (b == std::string::npos) continue;
+        const size_t e = tok.find_last_not_of(" \t");
+        try {
+            const int v = std::stoi(tok.substr(b, e - b + 1));
+            if (v > 0) out.push_back(v);
+        } catch (...) {}
+    }
+    return out;
+}
+
 rpg::ActorData ParseActorObject(const std::string& obj) {
     using namespace rpg::JsonUtils;
     rpg::ActorData a;
@@ -236,7 +256,46 @@ rpg::ActorData ParseActorObject(const std::string& obj) {
     if (TryParseInt(obj, "characterIndex", 0, idx)) a.characterIndex = idx;
     if (TryParseInt(obj, "faceIndex", 0, idx)) a.faceIndex = idx;
 
+    // Start-Ausruestung als CSV-String "1,2" (Waffen-/Ruestungs-IDs)
+    if (TryParseString(obj, "equips", 0, name))
+        a.equips = ParseIntCsv(name);
+
     return a;
+}
+
+// "2:2, 4:3" -> [{2,2},{4,3}] (Level:Fertigkeits-ID Paare, XP-Learnings)
+std::vector<rpg::ClassData::Learning> ParseLearningsCsv(const std::string& s) {
+    std::vector<rpg::ClassData::Learning> out;
+    std::stringstream ss(s);
+    std::string tok;
+    while (std::getline(ss, tok, ',')) {
+        const auto c = tok.find(':');
+        if (c == std::string::npos) continue;
+        try {
+            const int lv = std::stoi(tok.substr(0, c));
+            const int sk = std::stoi(tok.substr(c + 1));
+            if (lv >= 1 && sk > 0) out.push_back({lv, sk});
+        } catch (...) {}
+    }
+    return out;
+}
+
+rpg::ClassData ParseClassObject(const std::string& obj) {
+    using namespace rpg::JsonUtils;
+    rpg::ClassData c;
+    int id = 0;
+    if (TryParseInt(obj, "id", 0, id)) c.id = id;
+    std::string name;
+    if (TryParseString(obj, "name", 0, name)) c.name = name;
+    int v = 0;
+    if (TryParseInt(obj, "expBase", 0, v)) c.expBase = v;
+    if (TryParseInt(obj, "expExtra", 0, v)) c.expExtra = v;
+    float f = 0.f;
+    if (TryParseFloat(obj, "expAccA", 0, f)) c.expAccA = f;
+    if (TryParseFloat(obj, "expAccB", 0, f)) c.expAccB = f;
+    if (TryParseString(obj, "learnings", 0, name))
+        c.learnings = ParseLearningsCsv(name);
+    return c;
 }
 
 rpg::ItemData ParseItemObject(const std::string& obj) {
@@ -540,6 +599,13 @@ bool Database::Load(const std::string& projectPath) {
             if (!tmp.empty()) { mSkills = std::move(tmp); anyLoaded = true; }
         }
     }
+    // Classes
+    {
+        std::vector<ClassData> tmp;
+        if (LoadArrayFile(dbDir + "/Classes.json", tmp, ParseClassObject, "Classes")) {
+            if (!tmp.empty()) { mClasses = std::move(tmp); anyLoaded = true; }
+        }
+    }
     // Tilesets
     {
         std::vector<TilesetData> tmp;
@@ -716,6 +782,11 @@ bool Database::Save(const std::string& projectPath) const {
             f << "[\n";
             for (size_t i=0;i<mActors.size();++i) {
                 const auto& a = mActors[i];
+                std::string eq;
+                for (int e : a.equips) {
+                    if (!eq.empty()) eq += ",";
+                    eq += std::to_string(e);
+                }
                 f << "  {\"id\":" << a.id
                   << ",\"name\":\"" << Escape(a.name) << "\""
                   << ",\"className\":\"" << Escape(a.className) << "\""
@@ -748,8 +819,33 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"faceName\":\"" << Escape(a.faceName) << "\""
                   << ",\"faceIndex\":" << a.faceIndex
                   << ",\"battlerName\":\"" << Escape(a.battlerName) << "\""
+                  << ",\"equips\":\"" << eq << "\""
                   << "}";
                 if (i+1<mActors.size()) f << ",";
+                f << "\n";
+            }
+            f << "]\n";
+        }
+        // Classes.json
+        {
+            std::ofstream f(dbDir + "/Classes.json");
+            f << "[\n";
+            for (size_t i=0;i<mClasses.size();++i) {
+                const auto& c = mClasses[i];
+                std::string ls;
+                for (const auto& lrn : c.learnings) {
+                    if (!ls.empty()) ls += ",";
+                    ls += std::to_string(lrn.level) + ":" + std::to_string(lrn.skillId);
+                }
+                f << "  {\"id\":" << c.id
+                  << ",\"name\":\"" << Escape(c.name) << "\""
+                  << ",\"expBase\":" << c.expBase
+                  << ",\"expExtra\":" << c.expExtra
+                  << ",\"expAccA\":" << c.expAccA
+                  << ",\"expAccB\":" << c.expAccB
+                  << ",\"learnings\":\"" << ls << "\""
+                  << "}";
+                if (i+1<mClasses.size()) f << ",";
                 f << "\n";
             }
             f << "]\n";
@@ -1049,6 +1145,11 @@ const EnemyData* Database::GetEnemy(int id) const {
 
 const SkillData* Database::GetSkill(int id) const {
     for (const auto& e : mSkills) if (e.id==id) return &e;
+    return nullptr;
+}
+
+const ClassData* Database::GetClass(const std::string& name) const {
+    for (const auto& c : mClasses) if (c.name == name) return &c;
     return nullptr;
 }
 
