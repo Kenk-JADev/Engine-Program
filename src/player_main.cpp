@@ -8,6 +8,7 @@
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Window.h"
 #include "rpgmaker3d/Logger.h"
+#include "rpgmaker3d/StartupError.h" // ReportStartupError + InstallStartupTerminateHandler
 #include <iostream>
 #include <string>
 #include <filesystem>
@@ -86,8 +87,15 @@ int ParseBattletestTroop(int argc, char* argv[]) {
 int main(int argc, char* argv[]) {
     rpg::Platform::SetDPIAware();
 
+    // GLOBAL: jede ungefangene Exception beim Start (Initialize, Projekt-Laden,
+    // Titelmodus) oder im Run-Loop soll sichtbar gemeldet + nach engine.log
+    // geschrieben werden, statt das Fenster lautlos zu schliessen.
+    rpg::InstallStartupTerminateHandler();
+
     std::cout << rpg::EngineConfig::NAME << " Player v" << rpg::EngineConfig::VERSION
               << " [" << RPG_PLATFORM_NAME << "]" << std::endl;
+
+    try {
 
     const std::string projectPath = ParseProjectPath(argc, argv);
     std::cout << "Projekt: " << projectPath << std::endl;
@@ -171,8 +179,19 @@ int main(int argc, char* argv[]) {
     try {
         engine.Run();
     } catch (const std::exception& e) {
-        rpg::Platform::ShowMessageBox("Schwerer Fehler", e.what(), true);
+        rpg::ReportStartupError("Laufzeit (engine.Run)", e.what());
         return -2;
+    } catch (...) {
+        rpg::ReportStartupError("Laufzeit (engine.Run)", "Unbekannter Fehler im Spielablauf.");
+        return -2;
+    }
+
+    } catch (const std::exception& e) {
+        rpg::ReportStartupError("Player-Start", e.what());
+        return -3;
+    } catch (...) {
+        rpg::ReportStartupError("Player-Start", "Unbekannter Fehler beim Start des Players.");
+        return -3;
     }
 
     return 0;
