@@ -27,6 +27,7 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/UI.h"
+#include "rpgmaker3d/Custom.h" // Game.ini / "alles custom"-Schalter
 
 #include <SDL.h>
 
@@ -386,6 +387,13 @@ void Engine::SetPlaying(bool playing) {
     if (playing == mPlayMode) return;
     mPlayMode = playing;
 
+    // Playtest-/Spielstopp: Executed-Merker zuruecksetzen, damit der
+    // naechste Start die Skripte wieder frisch ausfuehrt (Neustart-Verhalten).
+    if (!playing && mScriptManager) mScriptManager->InvalidateExecutedScripts();
+
+    // "Alles custom": Game.ini + Projekt-Skins bei jedem Spielstart neu ziehen
+    if (playing) LoadCustomConfigForProject();
+
     if (mEditorMode) {
         if (playing) {
             RPG_LOG_INFO("=== PLAYTEST START ===");
@@ -435,7 +443,7 @@ void Engine::SetPlaying(bool playing) {
 #endif
             GameUI::Get().ShowMessage(std::string("PLAYTEST\nWASD bewegen | E/Enter sprechen | Esc Pause\nGehe zum Dorfältesten (NPC) und drücke E."));
 
-            if (mScriptManager) mScriptManager->ExecuteAllScripts();
+            if (mScriptManager) mScriptManager->ExecuteAllScriptsOnce();
             RPG_LOG_INFO("Playtest spawn at " + std::to_string(spawn.x) + "," +
                          std::to_string(spawn.z) + " | gold=" +
                          std::to_string(Game::Get().Party().GetGold()));
@@ -465,7 +473,7 @@ void Engine::SetPlaying(bool playing) {
             EventSystem::Get().LoadMapEvents(Game::Get().Map().GetMapId(),
                 mProject ? mProject->GetProjectPath() : ".");
             EventSystem::Get().EnsureDemoEvent();
-            if (mScriptManager) mScriptManager->ExecuteAllScripts();
+            if (mScriptManager) mScriptManager->ExecuteAllScriptsOnce();
         }
     }
 }
@@ -473,7 +481,44 @@ void Engine::SetPlaying(bool playing) {
 // ---------------------------------------------------------------------------
 // XP-Titelbildschirm (Player): Neues Spiel / Weiterspielen / Beenden
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// "Alles custom": Game.ini einlesen + Skin/HUD-Startwert anwenden.
+// Laeuft bei jedem Spiel-/Titelstart erneut (billig, kleine Datei) - damit
+// greifen Aenderungen ohne Engine-Neustart (Playtest aus dem Editor).
+// ---------------------------------------------------------------------------
+void Engine::LoadCustomConfigForProject() {
+    const std::string base = mProject ? mProject->GetProjectPath() : std::string();
+    CustomConfig::Get().LoadFromProject(base);
+#ifdef RPGMAKER3D_ENABLE_RMLUI
+    if (mRmlUi) {
+        // HUD-Startwert (UI.hud_visible= kann es danach jederzeit aendern)
+        mRmlUi->SetVisible(CustomConfig::Get().nativeHud);
+        // Projekt-Skins (<Projekt>/UI/Skin.rcss, Game.rml, Editor.rml)
+        mRmlUi->ReloadDocumentsIfChanged(base.empty() ? base : (base + "/UI"));
+    }
+#endif
+}
+
 void Engine::StartTitleMode() {
+    LoadCustomConfigForProject();
+
+    // Custom-Titel: das eingebaute Titelbild ist abgeschaltet -> erst den
+    // Ruby-Hook Game.custom_title probieren; ohne Hook direkt ins Spiel
+    // (XP-Demo-Start ohne Titel). Die Skripte laufen dabei SCHON JETZT
+    // (einmalig), damit der Hook ueberhaupt definiert ist - SetPlaying(true)
+    // fuehrt sie dank ExecuteAllScriptsOnce nicht doppelt aus.
+    if (!CustomConfig::Get().nativeTitle) {
+        if (mScriptManager) mScriptManager->ExecuteAllScriptsOnce();
+        bool hooked = false;
+        if (mRubyVM) hooked = mRubyVM->CallGameHook("custom_title");
+        if (!hooked) {
+            RPG_LOG_INFO("[Custom] NativeTitle=0, kein Game.custom_title -> direkter Spielstart");
+            Game::Get().NewGame();
+            SetPlaying(true);
+        }
+        return;
+    }
+
     auto& title = GameUI::Get().Title();
 
     // Titel-BGM + Titelgrafik aus der Datenbank (System-Tab, XP)
@@ -883,9 +928,12 @@ void Engine::Update(float dt) {
         // XP: Esc oeffnet das Spielmenue; Schliessen laeuft ueber
         // MenuWindow::Cancel in UpdateModalInput (Teil von modalActive).
         // Im Kampf ist der Menueaufruf gesperrt (XP-Verhalten).
+        // NativeGameMenu=0 (Game.ini/UI.native_game_menu=): abgeschaltet -
+        // das Spiel baut sein eigenes Menue (z. B. via Input.key_pressed?).
         if (!modalActive && mInput->IsKeyPressed(Key::Escape) &&
             !GameUI::Get().Message().IsBusy() &&
-            !BattleSystem::Get().IsInBattle()) {
+            !BattleSystem::Get().IsInBattle() &&
+            CustomConfig::Get().nativeGameMenu) {
             GameUI::Get().Pause().Show();
         }
         // Interact with nearby events (E or Enter) when not in dialog
@@ -914,7 +962,10 @@ void Engine::Update(float dt) {
         // Flucht) mit Ziel- und Listen-Untermenues. Solange ein Menue offen
         // ist, wird nicht erneut geoeffnet; die Eingabe laeuft ueber
         // UpdateModalInput (MenuWindow hat oberste Prioritaet).
-        if (BattleSystem::Get().NeedsInput() && !GameUI::Get().Menu().IsVisible() &&
+        // NativeBattleMenu=0: ausgeschaltet - eine Ruby-Szene uebernimmt die
+        // Aktionswahl komplett (Battle.needs_input? / Battle.set_action).
+        if (CustomConfig::Get().nativeBattleMenu &&
+            BattleSystem::Get().NeedsInput() && !GameUI::Get().Menu().IsVisible() &&
             !GameUI::Get().Message().IsBusy()) {
             GameUI::Get().OpenBattleCommands();
         }
@@ -922,7 +973,7 @@ void Engine::Update(float dt) {
 
         // XP-Kampfstatus: Gegner- und Gruppen-Zeile oben im Bild, solange der
         // Kampf laeuft (wird nach dem Kampfende automatisch entfernt).
-        if (BattleSystem::Get().IsInBattle()) {
+        if (CustomConfig::Get().nativeBattleStatus && BattleSystem::Get().IsInBattle()) {
             auto& bs = BattleSystem::Get();
             if (mBattleStatusEnemiesId < 0) {
                 mBattleStatusEnemiesId = GameUI::Get().AddScreenText(

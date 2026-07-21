@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <string>
+#include <fstream>
+#include <sstream>
 
 namespace rpg {
 
@@ -149,11 +151,14 @@ static const char* kEditorBody = R"RML(
 )RML";
 
 // Baut ein komplettes RML-Dokument: RCSS wird inline in <style> injiziert.
-static Rml::String BuildDocument(const char* title, const char* body) {
+// (rcss/body als Parameter, damit Projekt-Skins <Projekt>/UI/* eingesetzt
+// werden koennen - "alles custom", siehe ReloadDocumentsIfChanged.)
+static Rml::String BuildDocument(const char* title, const Rml::String& body,
+                                 const Rml::String& rcss) {
     Rml::String s("<rml><head><title>");
     s += title;
     s += "</title><style>";
-    s += kRc;
+    s += rcss;
     s += "</style></head><body data-model=\"engine\">";
     s += body;
     s += "</body></rml>";
@@ -203,6 +208,7 @@ public:
     Rml::ElementDocument* gameDoc = nullptr;
     bool visible = true;
     bool initialized = false;
+    std::string uiDir; // zuletzt geladenes Projekt-UI-Verzeichnis (Skins)
 
     // Data-model "engine" state (pro Kontext ein Handle)
     Rml::DataModelHandle gameModel{};
@@ -453,9 +459,9 @@ bool RmlUiSystem::Initialize(Engine* engine) {
     if (!m->BindModel(m->editorContext, m->editorModel))
         RPG_LOG_WARN("[RmlUi] DataModel 'engine' (editor) fehlgeschlagen");
 
-    m->gameDoc = m->gameContext->LoadDocumentFromMemory(BuildDocument("RPG Maker 3D - Game HUD", kGameBody));
+    m->gameDoc = m->gameContext->LoadDocumentFromMemory(BuildDocument("RPG Maker 3D - Game HUD", Rml::String(kGameBody), Rml::String(kRc)));
     if (m->gameDoc) m->gameDoc->Show();
-    m->editorDoc = m->editorContext->LoadDocumentFromMemory(BuildDocument("RPG Maker 3D - RmlUi Editor Panel", kEditorBody));
+    m->editorDoc = m->editorContext->LoadDocumentFromMemory(BuildDocument("RPG Maker 3D - RmlUi Editor Panel", Rml::String(kEditorBody), Rml::String(kRc)));
     if (m->editorDoc) m->editorDoc->Show();
 
     if (!m->gameDoc || !m->editorDoc) {
@@ -814,6 +820,65 @@ void RmlUiSystem::Render() {
 bool RmlUiSystem::IsVisible() const { return m ? m->visible : false; }
 void RmlUiSystem::SetVisible(bool v) { if (m) m->visible = v; }
 void RmlUiSystem::ToggleVisible() { if (m) m->visible = !m->visible; }
+
+// ---------------------------------------------------------------------------
+// "Alles custom": Projekt-Skins (<Projekt>/UI/Skin.rcss, Game.rml, Editor.rml)
+// ---------------------------------------------------------------------------
+void RmlUiSystem::ReloadDocumentsIfChanged(const std::string& uiDir) {
+    if (!m || !m->initialized) return;
+    if (uiDir == m->uiDir) return; // No-op bei gleichem Pfad
+    m->uiDir = uiDir;
+
+    // Ausgangspunkt: eingebaute Standards (fehlende Dateien aendern nichts)
+    Rml::String rcss(kRc);
+    Rml::String gameBody(kGameBody);
+    Rml::String editorBody(kEditorBody);
+    bool anyCustom = false;
+
+    if (!uiDir.empty()) {
+        auto readFile = [&anyCustom](const std::string& path, Rml::String& out) {
+            std::ifstream f(path, std::ios::binary);
+            if (!f) return;
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            if (ss.str().empty()) return;
+            out = ss.str();
+            anyCustom = true;
+            RPG_LOG_INFO("[RmlUi] Skin-Datei geladen: " + path);
+        };
+        readFile(uiDir + "/Skin.rcss", rcss);
+        readFile(uiDir + "/Game.rml", gameBody);
+        readFile(uiDir + "/Editor.rml", editorBody);
+    }
+
+    // Dokumente neu laden (Kontexte + Data-Modelle bleiben erhalten); bei
+    // kaputtem Custom-RML/RCSS -> Warnung + Fallback auf den Standard.
+    if (m->gameContext) {
+        if (m->gameDoc) { m->gameContext->UnloadDocument(m->gameDoc); m->gameDoc = nullptr; }
+        m->gameDoc = m->gameContext->LoadDocumentFromMemory(
+            BuildDocument("RPG Maker 3D - Game HUD", gameBody, rcss));
+        if (!m->gameDoc) {
+            RPG_LOG_WARN("[RmlUi] UI/Game.rml bzw. Skin.rcss fehlerhaft - eingebauter Standard wird geladen");
+            m->gameDoc = m->gameContext->LoadDocumentFromMemory(
+                BuildDocument("RPG Maker 3D - Game HUD", Rml::String(kGameBody), Rml::String(kRc)));
+        }
+        if (m->gameDoc) m->gameDoc->Show();
+    }
+    if (m->editorContext) {
+        if (m->editorDoc) { m->editorContext->UnloadDocument(m->editorDoc); m->editorDoc = nullptr; }
+        m->editorDoc = m->editorContext->LoadDocumentFromMemory(
+            BuildDocument("RPG Maker 3D - RmlUi Editor Panel", editorBody, rcss));
+        if (!m->editorDoc) {
+            RPG_LOG_WARN("[RmlUi] UI/Editor.rml bzw. Skin.rcss fehlerhaft - eingebauter Standard wird geladen");
+            m->editorDoc = m->editorContext->LoadDocumentFromMemory(
+                BuildDocument("RPG Maker 3D - RmlUi Editor Panel", Rml::String(kEditorBody), Rml::String(kRc)));
+        }
+        if (m->editorDoc) m->editorDoc->Show();
+    }
+    // Das frische Dokument liest die Modellwerte beim Binden von sich aus;
+    // SyncFromGameUI dirtied laufend ohnehin - nichts weiter noetig.
+    if (anyCustom) RPG_LOG_INFO("[RmlUi] Projekt-UI-Skins aktiv aus " + uiDir);
+}
 
 // ---------------------------------------------------------------------------
 // Qt-Editor Input-Bruecke

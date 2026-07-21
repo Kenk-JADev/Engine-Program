@@ -38,6 +38,15 @@ public:
     // (NoMemoryError bei vielen Playtest-Durchlaeufen).
     void CollectGarbage();
 
+    // ---------- Custom-Hooks ("alles custom") ----------
+    /// Ruft die (Modul-)Methode Game.<name> auf, falls das Spiel sie definiert
+    /// hat (z. B. "custom_title" fuer einen eigenen Titelbildschirm).
+    /// Rueckgabe: true wenn die Methode existiert und aufgerufen wurde.
+    bool CallGameHook(const std::string& name);
+    /// Interne Bruecke fuer UI.open_list_menu: ruft den per Block
+    /// uebergebenen Ruby-Callback mit dem gewaehlten Index (-1 = Abbruch).
+    void CallListMenuBlock(int index);
+
     mrb_state* GetState() { return mMrb; }
 
     // Letzter Ruby-Fehler (leer wenn ok)

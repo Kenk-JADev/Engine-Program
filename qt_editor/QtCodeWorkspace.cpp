@@ -92,6 +92,45 @@ const char* kRubySnippets[][2] = {
      "UI.open_save_screen(true)  # 4 Slots mit Info, wie in XP\n"},
     {"Spielmenue oeffnen (XP)",
      "UI.open_menu()  # Gegenstaende / Speichern / Beenden\n"},
+    // --- "Alles custom": eigene Oberflaechen / Szenen statt der eingebauten ---
+    {"Eigenes Menue (custom)",
+     "# Beliebiges Listenmenue mit Block (Index oder -1 bei Esc)\n"
+     "UI.open_list_menu(\"Lager\", [\"Trank\", \"Elixier\", [\"Schluessel\", false], \"Zurueck\"]) do |i|\n"
+     "  if i == 0\n"
+     "    UI.show_message(\"Trank benutzt!\")\n"
+     "  elsif i == 3 || i == -1\n"
+     "    # zurueck / abgebrochen\n"
+     "  end\n"
+     "end\n"},
+    {"Eigene Kampfszene (custom)",
+     "# In Game.ini: NativeBattleMenu=0 (eingebautes Menue aus), dann z. B. in\n"
+     "# $game.update(dt) oder einer eigenen Scene die Eingabe selbst machen:\n"
+     "if Battle.needs_input? && !@battle_menu_open\n"
+     "  @battle_menu_open = true\n"
+     "  UI.open_list_menu(\"Was tun?\", [\"Angriff\", \"Verteidigen\", \"Flucht\"]) do |i|\n"
+     "    @battle_menu_open = false\n"
+     "    Battle.set_action(Battle::ATTACK, 0, 0, 0, false) if i == 0\n"
+     "    Battle.set_action(Battle::GUARD, 0, 0, 0, false)  if i == 1\n"
+     "    if i == 2 && Battle.can_escape?\n"
+     "      Battle.set_action(Battle::ESCAPE, 0, 0, 0, false)\n"
+     "    end\n"
+     "  end\n"
+     "end\n"},
+    {"Kampf mit eigener Gegnerliste (Battle-API)",
+     "# Startet einen Kampf OHNE Trupp (freie Gegnerliste aus dem Skript):\n"
+     "Battle.setup([1, 1, 2], true, false)  # 2x Gegner 1, 1x Gegner 2\n"
+     "# Status auslesen: Battle.enemies -> [{\"hp\"=>.., \"dead\"=>..}, ...]\n"},
+    {"Eigener Titel (custom)",
+     "# In Game.ini: NativeTitle=0 -> die Engine ruft diesen Hook statt dem\n"
+     "# eingebauten Titelbildschirm auf:\n"
+     "class Game\n"
+     "  def self.custom_title\n"
+     "    UI.hud_visible = false\n"
+     "    UI.open_list_menu(\"MEIN SPIEL\", [\"Start\", \"Beenden\"]) do |i|\n"
+     "      Game.start_game if i == 0   # NewGame + Spielmodus an\n"
+     "    end\n"
+     "  end\n"
+     "end\n"},
 };
 
 const char* kCppSnippets[][2] = {

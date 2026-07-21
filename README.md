@@ -336,9 +336,12 @@ Kartenname im Spiel-Fenster):
 
 - **Game** (Komfort-API): `Game.save(slot)` / `Game.load(slot)` – Datei
   `<Projekt>/saves/save<N>.json`; `Game.start_battle(trupp_id)`,
-  `Game.in_battle?`, `Game.map_id`, `Game.setup_map(id)`.
+  `Game.in_battle?`, `Game.map_id`, `Game.setup_map(id)`,
+  `Game.new_game`, `Game.start_game` (NewGame + Spielmodus – für Custom-Titel).
 - **Audio**: `Audio.bgm_play("name.ogg")` sowie BGS/ME/SE und Fades.
-- **Input**: `Input.key_down?(:return)` & Co.
+- **Input**: `Input.key_down?(:return)` (gehalten) und
+  `Input.key_pressed?(:return)` (genau einmal beim Drücken – für eigene
+  Menü-Navigation).
 - **Engine / Map / Camera / Actor**: Fenster, Kartenmaße, Kamera, Akteurswerte.
 
 ### Regeln für eigene Skripte
@@ -351,6 +354,69 @@ Kartenname im Spiel-Fenster):
    Karten-BGM läuft automatisch über die Karteneigenschaften.
 4. **Fehlersuche**: erst „Alle .rb jetzt prüfen" im Spiel-Tab (Syntax), dann
    Playtest – Laufzeitfehler zeigen Datei/Zeile + Aufrufkette im Konsole-Log.
+
+## Alles custom (eigene Titel, Menüs, Kämpfe, Skins)
+
+Wie in RPG Maker XP ist **jede eingebaute Oberfläche ersetzbar**. Drei Hebel:
+
+### 1. `Game.ini` (Projektordner) – eingebaute Oberflächen abschalten
+
+Beim Anlegen eines Projekts legt der Editor eine kommentierte `Game.ini` an:
+
+```ini
+[RPG Maker 3D]
+NativeTitle=1        ; 0 = kein eingebauter Titel -> Ruby-Hook Game.custom_title
+NativeHud=1          ; 0 = HUD beim Start aus (UI.hud_visible= steuert)
+NativeGameMenu=1     ; 0 = Esc öffnet NICHT das eingebaute Spielmenü
+NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenü (Battle-API nutzen)
+NativeBattleStatus=1 ; 0 = keine Gegner-/Gruppenzeile oben im Kampf
+```
+
+Wird bei jedem Spielstart/Playtest neu gelesen (ändern ohne Engine-Neustart).
+Alle fünf Schalter gibt es auch als Ruby-Setter, z. B.
+`UI.native_battle_menu = false` (plus `...?`-Getter).
+
+### 2. Ruby-APIs für eigene Oberflächen
+
+- **Eigene Menüs in einer Zeile** –
+  `UI.open_list_menu("Titel", ["A", ["B", false], "C"]) { |i| ... }`:
+  Listenmenü mit Block; der Block bekommt den Index (`-1` bei Esc);
+  `[text, false]` sperrt einen Eintrag.
+- **Custom-Titelbildschirm**: `NativeTitle=0` → die Engine ruft
+  `Game.custom_title` auf (dort eigene Menüs/Szenen aufbauen; mit
+  `Game.start_game` startet „Neues Spiel"). Ohne Hook startet das Spiel direkt.
+- **Custom-Kampfszene** (`Battle`-Modul – der nativer Kampfkern bleibt):
+  `Battle.setup([1,1,2], flucht, niederlage_moeglich)` (freie Gegnerliste!),
+  `Battle.needs_input?`, `Battle.input_actor_index` / `input_actor_id`,
+  `Battle.actors` / `Battle.enemies` (Arrays von Hashes mit den Schlüsseln
+  `id, index, name, hp, max_hp, mp, max_mp, atk, def, agi, dead`),
+  `Battle.set_action(Battle::ATTACK | GUARD | SKILL | ITEM | ESCAPE,
+  ziel_index, skill_id, item_id, ziel_ist_akteur)`,
+  `Battle.can_escape?`, `Battle.abort`, `Battle.last_outcome / last_exp /
+  last_gold`, `Battle.damage_actor / damage_enemy(i, n)`,
+  `Battle.heal_actor / heal_enemy(i, hp, mp)`, `Battle.message("text")`.
+  Reihenfolge, Schaden, Sieg/Niederlage, EXP und Level-Ups macht weiter der
+  C++-Kern – die Ruby-Szene ersetzt nur Auswahl & Darstellung.
+- **Pro Frame laufen** weiterhin `SceneManager.update` und `$game.update(dt)` –
+  dort eigene Szenen aktualisieren (mit `Input.key_pressed?` navigieren).
+
+### 3. UI-Skins (`<Projekt>/UI/`) – komplettes Redesign ohne C++
+
+Die gesamte RmlUi-Oberfläche (HUD, Menü-Fenster) besteht aus HTML-ähnlichem
+RML + RCSS und lässt sich dateibasiert ersetzen:
+
+- `<Projekt>/UI/Skin.rcss` – ersetzt das komplette Stylesheet
+- `<Projekt>/UI/Game.rml` – ersetzt das HUD-/Menü-Layout (Body-Fragment;
+  Datenbindung `{{hp}}`, `{{gold}}`, `{{menu_title}}` … bleibt gleich)
+- `<Projekt>/UI/Editor.rml` – Editor-Panel-Layout
+
+Fehlt eine Datei, gilt der eingebaute Standard; ist eine Custom-Datei
+fehlerhaft, fällt die Engine mit Warnung auf den Standard zurück (das Spiel
+startet immer). Skins werden beim Spielstart geladen.
+
+Der Skript-Editor enthält fertige Vorlagen: Snippets **„Eigenes Menue
+(custom)"**, **„Eigene Kampfszene (custom)"**, **„Kampf mit eigener
+Gegnerliste"** und **„Eigener Titel (custom)"**.
 
 ## Datenbank (XP-Dialog)
 

@@ -1111,6 +1111,30 @@ void QtEditorWindow::onAboutToQuit() {
     if (mView) mView->doneCurrent();
 }
 
+// "Alles custom": Game.ini-Vorlage mit erklaerten Schaltern anlegen
+// (nie ueberschreiben - nur wenn keine existiert).
+static void ensureGameIniTemplate(const QString& projectPath) {
+    const QString iniPath = projectPath + QStringLiteral("/Game.ini");
+    if (QFile::exists(iniPath)) return;
+    QFile ini(iniPath);
+    if (ini.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        ini.write(QStringLiteral(
+            "; RPG Maker 3D ---- Alles custom ----------------------------------\n"
+            "; Eingebaute Oberflaechen abschalten (0) und durch eigene\n"
+            "; Ruby-Szenen / RmlUi-Skins ersetzen. Standard ist 1 (an).\n"
+            "[RPG Maker 3D]\n"
+            "NativeTitle=1        ; 0 = kein eingebauter Titel -> Ruby-Hook Game.custom_title\n"
+            "NativeHud=1          ; 0 = HUD beim Start aus (UI.hud_visible= steuert)\n"
+            "NativeGameMenu=1     ; 0 = Esc oeffnet NICHT das eingebaute Spielmenue\n"
+            "NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenue (Battle-API nutzen)\n"
+            "NativeBattleStatus=1 ; 0 = keine eingebaute Gegner-/Gruppenzeile im Kampf\n"
+            "\n"
+            "; UI-Skins: optional eigene Oberflaechen-Dateien in <Projekt>/UI/\n"
+            ";   Skin.rcss = komplettes Stylesheet, Game.rml = HUD-Layout\n"
+            ";   siehe README Abschnitt 'Alles custom'.\n").toUtf8());
+    }
+}
+
 void QtEditorWindow::actionNewProject() {
     if (!mView->IsEngineReady()) return;
     bool ok = false;
@@ -1131,6 +1155,7 @@ void QtEditorWindow::actionNewProject() {
     }
     mEngine->GetScriptManager().CreateDefaultScripts(path.toStdString());
     mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
+    ensureGameIniTemplate(path); // "Alles custom": Schalter direkt sichtbar
     log(QStringLiteral("Neues Projekt angelegt: ") + path);
     addRecentProject(path);
     afterProjectChanged();
@@ -1173,6 +1198,7 @@ void QtEditorWindow::openProjectPath(const QString& path) {
         mEngine->GetScriptManager().CreateDefaultScripts(path.toStdString());
         mEngine->GetScriptManager().LoadProjectScripts(path.toStdString());
     }
+    ensureGameIniTemplate(path); // "Alles custom": Schalter nachruesten
     QSettings().setValue(QStringLiteral("ui/lastProjectDir"), path);
     log(QStringLiteral("Projekt geladen: ") + path);
     addRecentProject(path);

@@ -35,6 +35,7 @@ void ScriptManager::LoadProjectScripts(const std::string& projectPath) {
     mScriptsDirectory = projectPath + "/scripts";
     std::filesystem::create_directories(mScriptsDirectory);
     ReloadFromDisk();
+    mAllScriptsExecuted = false; // neuer Satz Skripte -> Once-Lauefe wieder aktiv
     RPG_LOG_INFO("Loaded project scripts from: " + mScriptsDirectory);
 }
 
@@ -563,6 +564,16 @@ void ScriptManager::ExecuteAllScripts() {
             }
         }
     }
+    mAllScriptsExecuted = true;
+}
+
+void ScriptManager::ExecuteAllScriptsOnce() {
+    if (mAllScriptsExecuted) return;
+    ExecuteAllScripts();
+}
+
+void ScriptManager::InvalidateExecutedScripts() {
+    mAllScriptsExecuted = false;
 }
 
 std::string ScriptManager::GetScriptsDirectory() const {

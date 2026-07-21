@@ -92,7 +92,12 @@ public:
     void SetPlaying(bool playing);
     /// XP-Titelbildschirm (Player): Neues Spiel / Weiterspielen / Beenden.
     /// Verdrahtet die TitleScreen-Callbacks und zeigt den Titel an.
+    /// Respektiert Game.ini: bei NativeTitle=0 -> Ruby-Hook Game.custom_title
+    /// (eigener Titelbildschirm) bzw. direkter Spielstart.
     void StartTitleMode();
+    /// "Alles custom": liest <Projekt>/Game.ini und wendet Skins/HUD-Startwert
+    /// an. Laeuft automatisch bei Titel-/Spielstart (idempotent, billig).
+    void LoadCustomConfigForProject();
     bool IsPlayModeFollowPlayer() const { return mPlayModeFollowPlayer; }
     void SetPlayModeFollowPlayer(bool follow) { mPlayModeFollowPlayer = follow; }
 

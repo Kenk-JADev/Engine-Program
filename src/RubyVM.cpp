@@ -13,6 +13,7 @@
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/RmlUiSystem.h"
+#include "rpgmaker3d/Custom.h" // "alles custom"-Schalter (UI.native_*)
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -268,6 +269,40 @@ bool RubyVM::Update(float deltaTime) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Custom-Hooks: die Engine ruft ins Spiel, wenn eingebaute Oberflaechen
+// abgeschaltet sind (Game.ini) - z. B. "custom_title" (eigener Titel).
+// ---------------------------------------------------------------------------
+bool RubyVM::CallGameHook(const std::string& name) {
+    if (!mMrb) return false;
+    mrb_sym clsSym = mrb_intern_lit(mMrb, "Game");
+    if (!mrb_const_defined(mMrb, mrb_obj_value(mMrb->object_class), clsSym)) return false;
+    mrb_value gameClass = mrb_const_get(mMrb, mrb_obj_value(mMrb->object_class), clsSym);
+    if (mrb_nil_p(gameClass)) return false;
+    mrb_sym hook = mrb_intern(mMrb, name.c_str(), (mrb_int)name.size());
+    if (!mrb_respond_to(mMrb, gameClass, hook)) return false;
+    RPG_LOG_INFO(std::string("[Custom] Ruby-Hook Game.") + name + " wird aufgerufen");
+    mrb_funcall_argv(mMrb, gameClass, hook, 0, nullptr);
+    if (mMrb->exc) {
+        CaptureException("Game." + name);
+        // Exception melden, aber der Hook gilt trotzdem als "gefunden"
+    }
+    return true;
+}
+
+void RubyVM::CallListMenuBlock(int index) {
+    if (!mMrb) return;
+    mrb_sym varSym = mrb_intern_lit(mMrb, "$__rpg3d_menu_block");
+    mrb_value blk = mrb_gv_get(mMrb, varSym);
+    if (mrb_nil_p(blk)) return;
+    mrb_value arg = mrb_int_value(mMrb, index);
+    mrb_funcall_argv(mMrb, blk, mrb_intern_lit(mMrb, "call"), 1, &arg);
+    if (mMrb->exc) {
+        CaptureException("UI.open_list_menu-Block");
+        mMrb->exc = nullptr; // UI darf bei Ruby-Fehler nicht stehen bleiben
+    }
+}
+
 void RubyVM::CollectGarbage() {
     if (mMrb) {
         mrb_full_gc(mMrb);
@@ -347,18 +382,7 @@ void RubyVM::BindGame() {
 
 // ==================== Input Bindings ====================
 
-static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
-    (void)self;
-
-    mrb_sym keySymbol;
-    mrb_get_args(mrb, "n", &keySymbol);
-
-    Engine* engine = static_cast<Engine*>(mrb->ud);
-
-    if (!engine) {
-        return mrb_bool_value(false);
-    }
-
+static Key KeyFromSymbol(mrb_state* mrb, mrb_sym keySymbol) {
     const char* rawKeyName = mrb_sym2name(mrb, keySymbol);
     std::string keyName = rawKeyName ? rawKeyName : "";
 
@@ -403,8 +427,39 @@ static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
     } else if (keyName == "i" || keyName == "I") {
         key = Key::I;
     }
+    return key;
+}
 
-    return mrb_bool_value(engine->GetInput().IsKeyDown(key));
+static mrb_value rb_input_key_down(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_sym keySymbol;
+    mrb_get_args(mrb, "n", &keySymbol);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (!engine) {
+        return mrb_bool_value(false);
+    }
+
+    return mrb_bool_value(engine->GetInput().IsKeyDown(KeyFromSymbol(mrb, keySymbol)));
+}
+
+// Kantenabfrage (genau EINMAL beim Druecken) - fuer Menue-Navigation in
+// Custom-Szenen; key_down? bleibt fuer gehaltene Bewegung (Laufen etc.)
+static mrb_value rb_input_key_pressed(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_sym keySymbol;
+    mrb_get_args(mrb, "n", &keySymbol);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (!engine) {
+        return mrb_bool_value(false);
+    }
+
+    return mrb_bool_value(engine->GetInput().IsKeyPressed(KeyFromSymbol(mrb, keySymbol)));
 }
 
 void RubyVM::BindInput() {
@@ -423,6 +478,15 @@ void RubyVM::BindInput() {
         inputModule,
         "key_down",
         rb_input_key_down,
+        MRB_ARGS_REQ(1)
+    );
+
+    // Kantenabfrage: genau EINMAL true beim Druecken (Menue-Navigation)
+    mrb_define_module_function(
+        mMrb,
+        inputModule,
+        "key_pressed?",
+        rb_input_key_pressed,
         MRB_ARGS_REQ(1)
     );
 }
@@ -1134,6 +1198,173 @@ static mrb_value rb_battle_in_battle(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(BattleSystem::Get().IsInBattle());
 }
 
+// ==================== Battle-Modul (Custom-Kampfszenen) ====================
+// Das eingebaute Kampfmenue laesst sich abschalten (Game.ini NativeBattleMenu=0
+// oder UI.native_battle_menu = false); eine eigene Ruby-Szene liest dann den
+// Zustand ueber Battle.* und gibt Aktionen mit Battle.set_action zurueck.
+// Der C++-Kern (Reihenfolge, Schaden, Sieg/Niederlage, EXP) laeuft weiter.
+
+// Hash-Keys als Strings (e["hp"]) - vermeidet Symbol-API, Ruby-seitig simpel.
+static void hset(mrb_state* mrb, mrb_value h, const char* key, mrb_value v) {
+    mrb_hash_set(mrb, h, mrb_str_new_cstr(mrb, key), v);
+}
+static mrb_value battler_hash(mrb_state* mrb, const Battler& b) {
+    mrb_value h = mrb_hash_new_capa(mrb, 11);
+    hset(mrb, h, "id",     mrb_int_value(mrb, b.id));
+    hset(mrb, h, "index",  mrb_int_value(mrb, b.index));
+    hset(mrb, h, "name",   mrb_str_new(mrb, b.name.data(), (mrb_int)b.name.size()));
+    hset(mrb, h, "hp",     mrb_int_value(mrb, b.hp));
+    hset(mrb, h, "max_hp", mrb_int_value(mrb, b.maxHp));
+    hset(mrb, h, "mp",     mrb_int_value(mrb, b.mp));
+    hset(mrb, h, "max_mp", mrb_int_value(mrb, b.maxMp));
+    hset(mrb, h, "atk",    mrb_int_value(mrb, b.atk));
+    hset(mrb, h, "def",    mrb_int_value(mrb, b.def));
+    hset(mrb, h, "agi",    mrb_int_value(mrb, b.agi));
+    hset(mrb, h, "dead",   mrb_bool_value(b.isDead));
+    return h;
+}
+static mrb_value battlers_array(mrb_state* mrb, std::vector<Battler>& list) {
+    mrb_value arr = mrb_ary_new_capa(mrb, (mrb_int)list.size());
+    for (const auto& b : list) mrb_ary_push(mrb, arr, battler_hash(mrb, b));
+    return arr;
+}
+
+// Battle.setup([enemyIds], can_escape=true, can_lose=false) - eigener Kampf
+// OHNE Trupp (beliebige Gegnerliste, z. B. aus einer Custom-Szene heraus)
+static mrb_value rb_bm_setup(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value ids; mrb_bool canEscape = 1, canLose = 0;
+    mrb_get_args(mrb, "o|bb", &ids, &canEscape, &canLose);
+    std::vector<int> enemyIds;
+    if (mrb_array_p(ids)) {
+        const mrb_int n = RARRAY_LEN(ids);
+        for (mrb_int i = 0; i < n; ++i) {
+            mrb_value v = mrb_ary_ref(mrb, ids, i);
+            if (mrb_integer_p(v)) enemyIds.push_back((int)mrb_integer(v));
+        }
+    } else if (mrb_integer_p(ids)) {
+        enemyIds.push_back((int)mrb_integer(ids));
+    }
+    if (enemyIds.empty()) enemyIds = {1};
+    BattleSystem::Get().Setup(enemyIds, canEscape != 0, canLose != 0);
+    BattleSystem::Get().onMessage = [](const std::string& m) {
+        GameUI::Get().ShowMessage(m);
+    };
+    return mrb_nil_value();
+}
+static mrb_value rb_bm_needs_input(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_bool_value(BattleSystem::Get().NeedsInput());
+}
+static mrb_value rb_bm_input_actor_index(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_int_value(mrb, BattleSystem::Get().NeedsInput()
+        ? BattleSystem::Get().GetInputActorIndex() : -1);
+}
+static mrb_value rb_bm_input_actor_id(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    auto& bs = BattleSystem::Get();
+    if (!bs.NeedsInput()) return mrb_int_value(mrb, 0);
+    const int idx = bs.GetInputActorIndex();
+    if (idx < 0 || idx >= (int)bs.Actors().size()) return mrb_int_value(mrb, 0);
+    return mrb_int_value(mrb, bs.Actors()[(size_t)idx].id);
+}
+static mrb_value rb_bm_can_escape(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_bool_value(BattleSystem::Get().CanEscape());
+}
+static mrb_value rb_bm_turn(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_int_value(mrb, BattleSystem::Get().GetTurn());
+}
+static mrb_value rb_bm_last_outcome(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_int_value(mrb, BattleSystem::Get().GetLastOutcome());
+}
+static mrb_value rb_bm_last_exp(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_int_value(mrb, BattleSystem::Get().LastExp());
+}
+static mrb_value rb_bm_last_gold(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_int_value(mrb, BattleSystem::Get().LastGold());
+}
+static mrb_value rb_bm_actors(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return battlers_array(mrb, BattleSystem::Get().Actors());
+}
+static mrb_value rb_bm_enemies(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return battlers_array(mrb, BattleSystem::Get().Enemies());
+}
+// Battle.set_action(Battle::ATTACK, target_index=0, skill_id=0, item_id=0,
+//                   target_is_actor=false) - Antwort auf needs_input?
+static mrb_value rb_bm_set_action(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int type = 0, targetIndex = 0, skillId = 0, itemId = 0;
+    mrb_bool targetIsActor = 0;
+    mrb_get_args(mrb, "i|iiiib", &type, &targetIndex, &skillId, &itemId, &targetIsActor);
+    BattleAction act;
+    act.type = (BattleActionType)(int)type;
+    act.subjectIndex = BattleSystem::Get().GetInputActorIndex();
+    act.targetIndex = (int)targetIndex;
+    act.skillId = (int)skillId;
+    act.itemId = (int)itemId;
+    act.targetIsActor = (targetIsActor != 0);
+    BattleSystem::Get().SetAction(act);
+    return mrb_nil_value();
+}
+static mrb_value rb_bm_abort(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    BattleSystem::Get().Abort();
+    return mrb_nil_value();
+}
+// Direkte Wert-Aenderung fuer Custom-Aktionen ausserhalb von set_action
+// (Sieg/Niederlage dabei selbst via "dead"-Flags auswerten)
+static mrb_value rb_bm_damage_enemy(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int idx, dmg;
+    mrb_get_args(mrb, "ii", &idx, &dmg);
+    auto& list = BattleSystem::Get().Enemies();
+    if (idx >= 0 && idx < (mrb_int)list.size()) list[(size_t)idx].ApplyDamage((int)dmg);
+    return mrb_nil_value();
+}
+static mrb_value rb_bm_damage_actor(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int idx, dmg;
+    mrb_get_args(mrb, "ii", &idx, &dmg);
+    auto& list = BattleSystem::Get().Actors();
+    if (idx >= 0 && idx < (mrb_int)list.size()) list[(size_t)idx].ApplyDamage((int)dmg);
+    return mrb_nil_value();
+}
+static mrb_value rb_bm_heal_enemy(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int idx, hp, mp = 0;
+    mrb_get_args(mrb, "ii|i", &idx, &hp, &mp);
+    auto& list = BattleSystem::Get().Enemies();
+    if (idx >= 0 && idx < (mrb_int)list.size()) list[(size_t)idx].Recover((int)hp, (int)mp);
+    return mrb_nil_value();
+}
+static mrb_value rb_bm_heal_actor(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int idx, hp, mp = 0;
+    mrb_get_args(mrb, "ii|i", &idx, &hp, &mp);
+    auto& list = BattleSystem::Get().Actors();
+    if (idx >= 0 && idx < (mrb_int)list.size()) list[(size_t)idx].Recover((int)hp, (int)mp);
+    return mrb_nil_value();
+}
+static mrb_value rb_bm_message(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value text;
+    mrb_get_args(mrb, "o", &text);
+    if (mrb_string_p(text)) {
+        const std::string s(RSTRING_PTR(text), (size_t)RSTRING_LEN(text));
+        if (BattleSystem::Get().onMessage) BattleSystem::Get().onMessage(s);
+        else GameUI::Get().ShowMessage(s);
+    }
+    return mrb_nil_value();
+}
+
 // ==================== XP-Spielobjekte (Ruby <-> C++) ====================
 // Damit Skripte wie in RPG Maker XP DIREKT auf die Spiel-Daten zugreifen
 // koennen ($game_switches[3] = true, $game_party.gold, $game_player.x ...),
@@ -1398,6 +1629,87 @@ static mrb_value rb_ui_open_load_screen(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+// ---------- Eigene Menues aus Ruby (XP: eigene Scenes in Minuten) ----------
+// UI.open_list_menu("Titel", ["Eins", ["Zwei", false], ...]) { |index| ... }
+// Der Block bekommt den gewaehlten Index, bei Esc -1. Eintraege koennen als
+// [text, enabled]-Paar einzeln gesperrt werden.
+static mrb_value rb_ui_open_list_menu(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value title, entries, blk;
+    mrb_get_args(mrb, "oo&", &title, &entries, &blk);
+
+    std::string titleStr;
+    if (mrb_string_p(title)) titleStr.assign(RSTRING_PTR(title), (size_t)RSTRING_LEN(title));
+
+    std::vector<MenuWindow::Entry> items;
+    if (mrb_array_p(entries)) {
+        const mrb_int n = RARRAY_LEN(entries);
+        for (mrb_int i = 0; i < n; ++i) {
+            mrb_value e = mrb_ary_ref(mrb, entries, i);
+            if (mrb_string_p(e)) {
+                items.push_back({std::string(RSTRING_PTR(e), (size_t)RSTRING_LEN(e)), true});
+            } else if (mrb_array_p(e)) { // [text, enabled]
+                mrb_value t = mrb_ary_ref(mrb, e, 0);
+                mrb_value en = mrb_ary_ref(mrb, e, 1);
+                std::string ts;
+                if (mrb_string_p(t)) ts.assign(RSTRING_PTR(t), (size_t)RSTRING_LEN(t));
+                items.push_back({ts, mrb_nil_p(en) || mrb_test(en)});
+            }
+        }
+    }
+    if (items.empty()) items.push_back({"(leer)", false});
+
+    // Block global parken (GC-sicher); der C++-Rueckruf holt ihn sich.
+    // (Kein Block = nil -> CallListMenuBlock tut dann nichts.)
+    mrb_gv_set(mrb, mrb_intern_lit(mrb, "$__rpg3d_menu_block"), blk);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    GameUI::Get().Menu().Show(titleStr, items, [e](int idx) {
+        if (e) e->GetRubyVM().CallListMenuBlock(idx);
+    }, true);
+    GameUI::Get().Menu().onCancel = [e]() {
+        if (e) e->GetRubyVM().CallListMenuBlock(-1);
+    };
+    return mrb_nil_value();
+}
+
+// ---------- Native-UI-Schalter aus Ruby (Pendant zu Game.ini) ----------
+#define DEF_NATIVE_FLAG(Name, Field) \
+    static mrb_value rb_ui_native_##Name##_set(mrb_state* mrb, mrb_value self) { \
+        (void)self; mrb_bool v; mrb_get_args(mrb, "b", &v); \
+        CustomConfig::Get().Field = (v != 0); \
+        return mrb_bool_value(v); } \
+    static mrb_value rb_ui_native_##Name##_get(mrb_state* mrb, mrb_value self) { \
+        (void)mrb; (void)self; \
+        return mrb_bool_value(CustomConfig::Get().Field); }
+DEF_NATIVE_FLAG(title, nativeTitle)
+DEF_NATIVE_FLAG(hud, nativeHud)
+DEF_NATIVE_FLAG(game_menu, nativeGameMenu)
+DEF_NATIVE_FLAG(battle_menu, nativeBattleMenu)
+DEF_NATIVE_FLAG(battle_status, nativeBattleStatus)
+#undef DEF_NATIVE_FLAG
+// native_hud= schaltet zusaetzlich LIVE die RmlUi-Sichtbarkeit um
+static mrb_value rb_ui_native_hud_set_live(mrb_state* mrb, mrb_value self) {
+    mrb_value v = rb_ui_native_hud_set(mrb, self);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (e && e->GetRmlUi()) e->GetRmlUi()->SetVisible(CustomConfig::Get().nativeHud);
+    return v;
+}
+
+// ---------- Game.new_game / Game.start_game (fuer Custom-Titel) ----------
+static mrb_value rb_game_new_game(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    Game::Get().NewGame();
+    return mrb_nil_value();
+}
+// Komplettstart aus einem Custom-Titel: NewGame + Spielmodus an
+static mrb_value rb_game_start_game(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Game::Get().NewGame();
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (e) e->SetPlaying(true);
+    return mrb_nil_value();
+}
+
 // ---------- HUD an/aus aus Ruby (UI.hud_visible = true/false) ----------
 static mrb_value rb_ui_hud_set_visible(mrb_state* mrb, mrb_value self) {
     (void)self;
@@ -1435,6 +1747,55 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, uiModule, "open_menu", rb_ui_open_menu, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "open_save_screen", rb_ui_open_save_screen, MRB_ARGS_OPT(1));
     mrb_define_module_function(mMrb, uiModule, "open_load_screen", rb_ui_open_load_screen, MRB_ARGS_NONE());
+    // "Alles custom": eigene Menues per Block + Abschalten der Native-UIs
+    mrb_define_module_function(mMrb, uiModule, "open_list_menu", rb_ui_open_list_menu, MRB_ARGS_REQ(2) | MRB_ARGS_BLOCK());
+    mrb_define_module_function(mMrb, uiModule, "native_title=", rb_ui_native_title_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "native_title?", rb_ui_native_title_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "native_hud=", rb_ui_native_hud_set_live, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "native_hud?", rb_ui_native_hud_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "native_game_menu=", rb_ui_native_game_menu_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "native_game_menu?", rb_ui_native_game_menu_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "native_battle_menu=", rb_ui_native_battle_menu_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "native_battle_menu?", rb_ui_native_battle_menu_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "native_battle_status=", rb_ui_native_battle_status_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "native_battle_status?", rb_ui_native_battle_status_get, MRB_ARGS_NONE());
+
+    // Custom-Start (eigener Titel ruft das auf "Neues Spiel" auf)
+    {
+        struct RClass* gm = mrb_define_class(mMrb, "Game", mMrb->object_class);
+        mrb_define_module_function(mMrb, gm, "new_game", rb_game_new_game, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, gm, "start_game", rb_game_start_game, MRB_ARGS_NONE());
+    }
+
+    // ---------- Battle-Modul: Custom-Kampfszenen auf dem nativen Kern ----------
+    {
+        struct RClass* bm = mrb_define_module(mMrb, "Battle");
+        mrb_define_const(mMrb, bm, "NONE",   mrb_int_value(mMrb, 0));
+        mrb_define_const(mMrb, bm, "ATTACK", mrb_int_value(mMrb, 1));
+        mrb_define_const(mMrb, bm, "GUARD",  mrb_int_value(mMrb, 2));
+        mrb_define_const(mMrb, bm, "SKILL",  mrb_int_value(mMrb, 3));
+        mrb_define_const(mMrb, bm, "ITEM",   mrb_int_value(mMrb, 4));
+        mrb_define_const(mMrb, bm, "ESCAPE", mrb_int_value(mMrb, 5));
+        mrb_define_module_function(mMrb, bm, "setup", rb_bm_setup, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2));
+        mrb_define_module_function(mMrb, bm, "in_battle?", rb_battle_in_battle, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "needs_input?", rb_bm_needs_input, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "input_actor_index", rb_bm_input_actor_index, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "input_actor_id", rb_bm_input_actor_id, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "can_escape?", rb_bm_can_escape, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "turn", rb_bm_turn, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "last_outcome", rb_bm_last_outcome, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "last_exp", rb_bm_last_exp, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "last_gold", rb_bm_last_gold, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "actors", rb_bm_actors, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "enemies", rb_bm_enemies, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "set_action", rb_bm_set_action, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(4));
+        mrb_define_module_function(mMrb, bm, "abort", rb_bm_abort, MRB_ARGS_NONE());
+        mrb_define_module_function(mMrb, bm, "damage_enemy", rb_bm_damage_enemy, MRB_ARGS_REQ(2));
+        mrb_define_module_function(mMrb, bm, "damage_actor", rb_bm_damage_actor, MRB_ARGS_REQ(2));
+        mrb_define_module_function(mMrb, bm, "heal_enemy", rb_bm_heal_enemy, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
+        mrb_define_module_function(mMrb, bm, "heal_actor", rb_bm_heal_actor, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
+        mrb_define_module_function(mMrb, bm, "message", rb_bm_message, MRB_ARGS_REQ(1));
+    }
 
     // Game module extensions for convenience.
     // WICHTIG: als KLASSE definieren (nicht Modul), damit die Spiellogik in
@@ -1975,6 +2336,9 @@ bool RubyVM::CheckSyntax(const std::string& code, const std::string& sourceName,
 }
 
 void RubyVM::CollectGarbage() {} // ScriptManager ruft das ungeschuetzt
+
+bool RubyVM::CallGameHook(const std::string& name) { (void)name; return false; }
+void RubyVM::CallListMenuBlock(int index) { (void)index; }
 
 bool RubyVM::CaptureException(const std::string&) { return false; }
 

@@ -36,6 +36,13 @@ public:
     void SaveAllScripts();
     void ReloadFromDisk();
     void ExecuteAllScripts();
+    /// Fuehrt alle Skripte aus, falls seit dem letzten Laden/
+    /// Invalidate noch nicht geschehen (Custom-Titel: Skripte laufen schon
+    /// vor SetPlaying(true), damit Game.custom_title definiert ist).
+    void ExecuteAllScriptsOnce();
+    /// Setzt den Executed-Merker zurueck (Playtest-Stopp -> naechster Start
+    /// fuehrt die Skripte erneut aus).
+    void InvalidateExecutedScripts();
 
     /// Prueft ALLE .rb-Dateien einmal per Ruby-Parser auf Syntaxfehler,
     /// ohne sie auszufuehren (Start-Pruefung vor dem Spielstart).
@@ -49,6 +56,7 @@ private:
     std::vector<std::shared_ptr<Script>> mScripts;
     std::string mScriptsDirectory;
     RubyVM* mRubyVM = nullptr;
+    bool mAllScriptsExecuted = false; // ExecuteAllScriptsOnce-Guard
 };
 
 } // namespace rpg
