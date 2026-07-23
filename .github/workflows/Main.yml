@@ -10,9 +10,11 @@
 # kopieren und mit einem normalen User-Account committen+pushen
 # (oder im GitHub-Web-Editor einfuegen).
 # Letzte inhaltliche Aenderung (2026-07-23): Qt-Download gehaertet -
-# aqtinstall==3.1.* gepinnt, Archivliste reduziert (kein qtdeclarative mehr,
-# das war das korrupte Bad7zFile-Archiv 2026-07-23), 1 Retry bei Spiegel-
-# Fehlern. Details: TODO_XP_PARITY.md, PAKET 7 Punkt 7.
+# aqtinstall==3.1.* gepinnt, Download reduziert auf --modules qttools +
+# --archives qtbase qttools opengl32sw d3dcompiler (kein qtdeclarative mehr,
+# das war das korrupte Bad7zFile-Archiv 2026-07-23; qtbase ist KEIN gueltiger
+# --modules-Name -> aqt "packages not found"), 1 Retry bei Spiegel-Fehlern.
+# Details: TODO_XP_PARITY.md, PAKET 7 Punkt 7.
 # ============================================================================
 name: Build Windows EXE
 
@@ -64,13 +66,15 @@ jobs:
             if ($attempt -gt 1 -and (Test-Path "$env:GITHUB_WORKSPACE/qt")) {
               Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE/qt" -ErrorAction SilentlyContinue
             }
-            # --modules: Metadaten/Doku dieser Module; --archives: nur diese
-            # 7z-Bibliotheksarchive herunterladen & entpacken. qtbase/qtsvg/
-            # qttools/qttranslations = der Satz, den Build & Deployment brauchen
-            # (windeployqt liegt in qttools, Plattform-Plugins in qtbase);
-            # opengl32sw/d3dcompiler bleiben dabei, damit windeployqt weiter
-            # den Software-GL-Fallback mit ausliefern kann.
-            aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --modules qtbase qtsvg qttools qttranslations --archives qtbase qtsvg qttools qttranslations opengl32sw d3dcompiler
+            # --modules: nur ERWEITERUNGSmodule (qtbase ist kein gueltiger
+            # Modulname dort - aqt 3.1.x meldet sonst "packages not found"!),
+            # qttools reicht: windeployqt liegt darin. --archives: Filter fuer
+            # die 7z-Archive: qtbase (Basis, enthaelt Widgets/OpenGL/Plugins),
+            # qttools (windeployqt), opengl32sw/d3dcompiler (Software-GL-
+            # Fallback im Deployment). Nicht benoetigt: qtdeclarative (war das
+            # korrupte Archiv), qtsvg, qttranslations (windeployqt laeuft mit
+            # --no-translations).
+            aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --modules qttools --archives qtbase qttools opengl32sw d3dcompiler
             if ($LASTEXITCODE -eq 0) { break }
             Write-Host "aqt attempt $attempt failed (exit $LASTEXITCODE)"
           }
