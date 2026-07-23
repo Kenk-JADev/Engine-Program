@@ -371,6 +371,9 @@ grün — alles Windows-spezifische Fallen). Fixes:
    **`ci/Main.yml.template`**; Maintainer muss ihn nach
    `.github/workflows/Main.yml` kopieren (oder im Web-Editor einfügen),
    sonst läuft der CI weiter mit der alten Qt-Installationsroutine.
+   Nachschlag (CI-Lauf 5): `qtbase` ist KEIN gültiger `--modules`-Name —
+   aqt meldete „packages ['qtbase', ...] were not found". Finale Form:
+   `--modules qttools --archives qtbase qttools opengl32sw d3dcompiler`.
 
 Merksatz für die nächsten Pakete: nach jedem Push **sofort CI grün machen**
 (4 Commits waren ungetestet gestapelt).
