@@ -417,6 +417,14 @@ am Ziel ab und wartet bis zum Ende.
       Objekte. **Noch offen:** Game_Troop- + Game_Screen-Bruecke (Kampf-
       Zustand/Pictures/Flash); Game_Actor-Equip-MUTATOREN (change_equip),
       Name-Input-Verdahtung (name= liegt aktuell nur auf der Runtime);
+  (g) **TEIL 2 erledigt 2026-07-23: Game_Party-XP-Vervollstaendigung:**
+      nativ neu: item_number/weapon_number/armor_number (XP-Namen,
+      Aliase auf die count-Bindings), has_item, all_dead?; interne
+      __actor_ids/__item_ids/__weapon_ids/__armor_ids. Prelude-Reopen:
+      actors (Game_Actor-Instanzen aus $game_actors = XP-Identitaet),
+      actor(id), items/weapons/armors (ID-Listen-Naeherung statt Hash —
+      dokumentiert), max_level, average_level, item_can_use? (count +
+      consumable via Bruecke), movable?.
   (h) Scene_*-Framework: XP Main.rb treibt `while $scene != nil` —
       unsere Engine ownet den Frame-Loop; Bruecke = $scene bereitstellen
       + Scene.update pro Frame aufrufen (Architektur-Entscheid: Opt-in-

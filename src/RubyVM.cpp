@@ -1569,6 +1569,47 @@ static mrb_value rb_gp_members(mrb_state* mrb, mrb_value self) {
     return ary;
 }
 
+// ---------- XP Game_Party-Zusaetze (Stufe 4g): Identitaets-IDs + XP-Namen
+static mrb_value rb_gp_actor_ids(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const auto& members = Game::Get().Party().Members();
+    mrb_value ary = mrb_ary_new_capa(mrb, (mrb_int)members.size());
+    for (const auto& a : members)
+        mrb_ary_push(mrb, ary, mrb_int_value(mrb, (mrb_int)a.actorId));
+    return ary;
+}
+static mrb_value rb_gp_all_dead(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const auto& members = Game::Get().Party().Members();
+    if (members.empty()) return mrb_false_value();
+    for (const auto& a : members) if (!a.IsDead()) return mrb_false_value();
+    return mrb_true_value();
+}
+static mrb_value GpIdList(mrb_state* mrb, const std::unordered_map<int, int>& m) {
+    mrb_value ary = mrb_ary_new_capa(mrb, (mrb_int)m.size());
+    for (const auto& kv : m)
+        if (kv.second > 0) mrb_ary_push(mrb, ary, mrb_int_value(mrb, (mrb_int)kv.first));
+    return ary;
+}
+static mrb_value rb_gp_item_ids(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return GpIdList(mrb, Game::Get().Party().Items());
+}
+static mrb_value rb_gp_weapon_ids(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return GpIdList(mrb, Game::Get().Party().Weapons());
+}
+static mrb_value rb_gp_armor_ids(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return GpIdList(mrb, Game::Get().Party().Armors());
+}
+static mrb_value rb_gp_has_item(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int id = 0;
+    mrb_get_args(mrb, "i", &id);
+    return mrb_bool_value(Game::Get().Party().GetItemCount((int)id) > 0);
+}
+
 // ---------- $game_player (Game_Player) ----------
 static mrb_value rb_gpl_x(mrb_state* mrb, mrb_value self) {
     (void)self;
@@ -2356,6 +2397,18 @@ void RubyVM::BindUI() {
     mrb_define_method(mMrb, cParty, "remove_actor", rb_gp_remove_actor, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, cParty, "members_size", rb_gp_members_size, MRB_ARGS_NONE());
     mrb_define_method(mMrb, cParty, "members", rb_gp_members, MRB_ARGS_NONE());
+    // XP Game_Party-Ergaenzungen (Stufe 4g): item_number/... als XP-Namen
+    // der Zaehler, has_item, all_dead?; interne ID-Listen fuer das
+    // Prelude (actors/items/weapons/armors dort in Ruby aufgebaut).
+    mrb_define_method(mMrb, cParty, "item_number", rb_gp_item_count, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "weapon_number", rb_gp_weapon_count, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "armor_number", rb_gp_armor_count, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "has_item", rb_gp_has_item, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cParty, "all_dead?", rb_gp_all_dead, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cParty, "__actor_ids", rb_gp_actor_ids, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cParty, "__item_ids", rb_gp_item_ids, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cParty, "__weapon_ids", rb_gp_weapon_ids, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cParty, "__armor_ids", rb_gp_armor_ids, MRB_ARGS_NONE());
     mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_party"),
                mrb_obj_new(mMrb, cParty, 0, nullptr));
 

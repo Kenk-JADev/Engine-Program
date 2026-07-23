@@ -467,6 +467,52 @@ class Game_Actor
   end
 end
 
+# ---------------------------------------------------------------------------
+# XP Game_Party-Komfort (Stufe 4g): actors liefert Game_Actor-Objekte aus
+# $game_actors (gleiche Instanzen = XP-Identitaet). items/weapons/armors
+# liefern — abweichend zu XPs Hash — die anteiligen ID-Listen (Naeherung,
+# Anzahlfragen laufen praezise ueber item_number/weapon_number/armor_number).
+# ---------------------------------------------------------------------------
+class Game_Party
+  def actors
+    a = []
+    __actor_ids.each { |aid| a.push($game_actors[aid]) }
+    a
+  end
+  def actor(actor_id)
+    $game_actors[actor_id]
+  end
+  def items
+    __item_ids
+  end
+  def weapons
+    __weapon_ids
+  end
+  def armors
+    __armor_ids
+  end
+  def max_level
+    lv = 0
+    actors.each { |a| lv = a.level if a.level > lv }
+    lv
+  end
+  def average_level
+    a = actors
+    return 0 if a.length == 0
+    sum = 0
+    a.each { |x| sum += x.level }
+    sum / a.length
+  end
+  def item_can_use?(item_id)
+    return false if item_number(item_id) <= 0
+    it = ($__engine_db_items ||= load_data("Data/Items.rxdata"))[item_id]
+    it ? it.consumable : false
+  end
+  def movable?
+    not all_dead?
+  end
+end
+
 def save_data(obj, filename)
   raise RGSSError, "save_data: Marshal wird nicht unterstuetzt " \
     "(Spielstaende: Game.save(slot))."
