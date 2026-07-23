@@ -166,25 +166,20 @@ Projekt-Neuöffnen.
 ---
 
 ## PAKET 3 — Map-Zeichenwerkzeuge (Stift/Rechteck/Ellipse/Flut) 🟡
-**Status: OFFEN**
-
-**Wo:** `qt_editor/QtMapTab.cpp` (Canvas `mousePressEvent` ~Z. 180,
-`onPaint` ~Z. 95-165: dort wird pro Zelle `tileColor(id)`-Vorschau gezeichnet).
-
-**Umsetzung:**
-- Enum `MapTool { Pen, Rect, Ellipse, Flood }` in QtMapTab.h; 4 exklusive
-  QToolButtons in der Tab-Toolbar (neben den Ebenen-Knöpfen `mModeBtns[4]`).
-- Pen = bisheriges Verhalten. Rect/Ellipse: Drag → Vorschau-Rahmen,
-  Loslassen → Fläche mit aktivem Tile füllen (Ellipse: Mittelpunktsformel).
-- Flood: Klick → klassischer Flood-Fill (Stack, kein Rekursions-Overflow;
-  Karten bis 500×500 → iterative std::queue) auf gleiche ID, nur aktive Ebene.
-- Undo: Es gibt `src/CommandHistory.cpp` — prüfen, ob Tile-Edits schon als
-  Command laufen; Form-Füllungen als EIN Command bündeln (Diff-Liste alter
-  IDs), damit Strg+Z nicht 400 Einzelzellen zurückrollt.
-- XP hat zusätzlich Auswahl/Kopieren — als PAKET 3b optional, NICHT blockierend.
-
-**Akzeptanz:** Rechteck aus Wasser-Tile ziehen füllt exakt das Rechteck;
-Strg+Z macht es in einem Schritt rückgängig.
+**Status: ✅ ERLEDIGT** — beim Code-Audit 2026-07-23 als bereits vollständig
+implementiert befunden (frühere Session hatte das Paket gebaut, ohne den
+TODO-Status zu pflegen). Verifikation gegen die Akzeptanzkriterien:
+`qt_editor/QtMapTab.cpp`: `mToolGroup`/`mToolBtns[4]` (Stift/Rechteck/
+Ellipse/Füllen, exklusiv via QButtonGroup, deutsche Tooltips) in der
+Toolbar neben den Ebenen-Knöpfen; Canvas `tool`-Feld 0..3; Stift =
+`applyAt/paintCell` (kein Verlauf bei Nicht-Änderung); Rechteck/Ellipse:
+Drag mit Vorschau (paintEvent Rahmen/Ellipse), Release → `applyShape`
+(Ellipse via normierter Mittelpunktsgleichung über Zellzentren),
+Rechtsklick bricht ab (kein Verlauf); Flutfüllung: `applyFloodAt`
+iterativ mit std::queue + seen-Set (500×500-sicher), 4-Nachbarschaft,
+nur aktive Ebene; Undo-Bündelung: Form UND Flut laufen als EIN Stroke
+(`onStrokeBegin/End` + `mStrokeAccum` erster Startwert pro Zelle) —
+Strg+Z rollt komplett zurück. Kein weiterer Handlungsbedarf.
 
 ---
 
