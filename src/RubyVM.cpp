@@ -1646,6 +1646,106 @@ static mrb_value rb_game_map_terrain_tag(mrb_state* mrb, mrb_value self) {
     return mrb_int_value(mrb, Game::Get().Map().GetTerrainTagAt((int)x, (int)y));
 }
 
+// ---------- XP Game_Map-Instanz (Stufe 4f): data/display/refresh/events ----------
+// data: baut bei jedem Aufruf frisch eine Table(w, h, 3) aus der gebundenen
+// Karte (XP liest $game_map.data[x, y, z]; unsere nativen IDs -> +384
+// RGSS-Offset). Schreib-Zuruecknehmen bewusst nicht (ehrliche Grenze).
+static mrb_value rb_game_map_data(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const Map* bound = Game::Get().Map().GetBoundMap();
+    const int w = bound ? bound->GetWidth() : 0;
+    const int h = bound ? bound->GetHeight() : 0;
+    if (w <= 0 || h <= 0) return mrb_nil_value();
+    struct RClass* tcls = mrb_class_get(mrb, "Table");
+    mrb_value dims[3] = { mrb_int_value(mrb, w), mrb_int_value(mrb, h),
+                          mrb_int_value(mrb, 3) };
+    mrb_value t = mrb_obj_new(mrb, tcls, 3, dims);
+    mrb_value idv = mrb_iv_get(mrb, t, mrb_intern_lit(mrb, "__rgss_table_id"));
+    if (!mrb_int_p(idv)) return t; // defensiv: leere Table zurueckgeben
+    RgssTableState* state = RgssTableGet((int)mrb_as_int(mrb, idv));
+    if (!state) return t;
+    const auto& layers = bound->GetLayers();
+    for (size_t li = 0; li < layers.size() && li < 3; ++li) {
+        const auto& lay = layers[li];
+        for (int z = 0; z < h; ++z) {
+            for (int x = 0; x < w; ++x) {
+                int v = 0;
+                if (x < lay.width && z < lay.height) {
+                    const int idx = z * lay.width + x;
+                    if (idx >= 0 && idx < (int)lay.tiles.size()) {
+                        const int tId = lay.tiles[idx];
+                        v = tId < 0 ? 0 : tId + 384; // native -> XP-RGSS
+                    }
+                }
+                state->data[(((size_t)li * (size_t)h) + (size_t)z) * (size_t)w + (size_t)x] =
+                    (int16_t)v;
+            }
+        }
+    }
+    return t;
+}
+
+// display_x/display_y in XP-Einheit (1/128 Kachel). Abbildung auf den
+// logischen Scroll-State GameMap::mDisplayPos (Kacheleinheiten) — das
+// Kamera-Verhalten selbst bleibt unveraendert (ehrliche Grenze).
+static mrb_value rb_game_map_display_x_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const double v = (double)Game::Get().Map().GetDisplayPos().x * 128.0;
+    return mrb_int_value(mrb, (mrb_int)(v >= 0 ? v + 0.5 : v - 0.5));
+}
+static mrb_value rb_game_map_display_x_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    Vec3 p = Game::Get().Map().GetDisplayPos();
+    p.x = (float)((double)v / 128.0);
+    Game::Get().Map().SetDisplayPos(p);
+    return mrb_int_value(mrb, v);
+}
+static mrb_value rb_game_map_display_y_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    // x/z-Ebene: XP display_y bildet auf unsere z-Kachelkoordinate ab
+    const double v = (double)Game::Get().Map().GetDisplayPos().z * 128.0;
+    return mrb_int_value(mrb, (mrb_int)(v >= 0 ? v + 0.5 : v - 0.5));
+}
+static mrb_value rb_game_map_display_y_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    Vec3 p = Game::Get().Map().GetDisplayPos();
+    p.z = (float)((double)v / 128.0);
+    Game::Get().Map().SetDisplayPos(p);
+    return mrb_int_value(mrb, v);
+}
+
+// events: bewusst leer (NPC-Darstellung/Interpreter laufen nativ ueber das
+// EventSystem — wie in der Map%03d-Bruecke dokumentiert). Spriteset_Map u.ae.
+// iterieren .values gefahrlos ueber den leeren Hash.
+static mrb_value rb_game_map_events(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    return mrb_hash_new(mrb);
+}
+
+// need_refresh: XP-Marker „Events neu bewerten" — bei uns sofort-Semantik:
+// setzen auf true fuehrt RefreshAllPages sofort aus (gleiches Muster wie
+// die Schalter-Setter), Getter meldet immer false (nie ausstehend).
+static mrb_value rb_game_map_need_refresh_get(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_false_value();
+}
+static mrb_value rb_game_map_need_refresh_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_bool v = 0;
+    mrb_get_args(mrb, "b", &v);
+    if (v) EventSystem::Get().RefreshAllPages();
+    return mrb_bool_value(v);
+}
+static mrb_value rb_game_map_refresh(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    EventSystem::Get().RefreshAllPages();
+    return mrb_nil_value();
+}
+
 // ---------- Menue/Speicherbildschirm aus Ruby oeffnen (XP: Scene_Menu/Scene_Save) ----------
 static mrb_value rb_ui_open_menu(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
@@ -2010,17 +2110,31 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, gameModule, "setup_map", rb_game_map_setup, MRB_ARGS_REQ(1));
 
     // Game_Map module for map data via script - damit Scenes Map Daten nutzen
-    struct RClass* gameMapModule = mrb_define_module(mMrb, "Game_Map");
-    mrb_define_module_function(mMrb, gameMapModule, "visible?", rb_game_map_visible, MRB_ARGS_NONE());
-    mrb_define_module_function(mMrb, gameMapModule, "visible=", rb_game_map_set_visible, MRB_ARGS_REQ(1));
-    mrb_define_module_function(mMrb, gameMapModule, "id", rb_game_map_id, MRB_ARGS_NONE());
-    mrb_define_module_function(mMrb, gameMapModule, "setup", rb_game_map_setup, MRB_ARGS_REQ(1));
-    mrb_define_module_function(mMrb, gameMapModule, "width", rb_game_map_width, MRB_ARGS_NONE());
-    mrb_define_module_function(mMrb, gameMapModule, "height", rb_game_map_height, MRB_ARGS_NONE());
+    // XP Game_Map als vollwertige KLASSE (Stufe 4f): $game_map ist eine
+    // Instanz, nicht mehr das Modul selbst — so wie XP-Skripte es erwarten
+    // ($game_map.data[x, y, z], .display_x, .events, .need_refresh).
+    struct RClass* gameMapClass = mrb_define_class(mMrb, "Game_Map", mMrb->object_class);
+    mrb_define_method(mMrb, gameMapClass, "visible?", rb_game_map_visible, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "visible=", rb_game_map_set_visible, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, gameMapClass, "id", rb_game_map_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "map_id", rb_game_map_id, MRB_ARGS_NONE()); // XP-Name
+    mrb_define_method(mMrb, gameMapClass, "setup", rb_game_map_setup, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, gameMapClass, "width", rb_game_map_width, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "height", rb_game_map_height, MRB_ARGS_NONE());
     // XP Game_Map-Flags (PAKET 6, XP_Scripts): Passage/Bush/Terrain-Tag
-    mrb_define_module_function(mMrb, gameMapModule, "passable?", rb_game_map_passable, MRB_ARGS_ARG(2, 2));
-    mrb_define_module_function(mMrb, gameMapModule, "bush?", rb_game_map_bush, MRB_ARGS_REQ(2));
-    mrb_define_module_function(mMrb, gameMapModule, "terrain_tag", rb_game_map_terrain_tag, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, gameMapClass, "passable?", rb_game_map_passable, MRB_ARGS_ARG(2, 2));
+    mrb_define_method(mMrb, gameMapClass, "bush?", rb_game_map_bush, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, gameMapClass, "terrain_tag", rb_game_map_terrain_tag, MRB_ARGS_REQ(2));
+    // XP-Instanz-Zugang (Stufe 4f): Karte als Table, Scroll-State, Refresh
+    mrb_define_method(mMrb, gameMapClass, "data", rb_game_map_data, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "display_x", rb_game_map_display_x_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "display_x=", rb_game_map_display_x_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, gameMapClass, "display_y", rb_game_map_display_y_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "display_y=", rb_game_map_display_y_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, gameMapClass, "events", rb_game_map_events, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "refresh", rb_game_map_refresh, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "need_refresh", rb_game_map_need_refresh_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, gameMapClass, "need_refresh=", rb_game_map_need_refresh_set, MRB_ARGS_REQ(1));
 
     // ---------- XP-Spielobjekte als globale Variablen ($game_*) ----------
     // Exakt wie in RPG Maker XP: Skripte schreiben $game_switches[5] = true
@@ -2076,9 +2190,10 @@ void RubyVM::BindUI() {
     mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_player"),
                mrb_obj_new(mMrb, cPlayer, 0, nullptr));
 
-    // $game_map zeigt auf das Game_Map-Modul (gleiche Methoden erreichbar)
+    // $game_map = Game_Map.new — XP-Verhalten: Instanz mit der
+    // Map-API (Need-Refresh-Semantik: Setzer loesen sofort aus).
     mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_map"),
-               mrb_obj_value(gameMapModule));
+               mrb_obj_new(mMrb, gameMapClass, 0, nullptr));
 }
 
 // ==================== Actor Bindings ====================

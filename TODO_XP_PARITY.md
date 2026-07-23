@@ -387,8 +387,21 @@ am Ziel ab und wartet bis zum Ende.
   self_ev)/bush?(x,y)/terrain_tag(x,y)` nativ am Game_Map-Modul (Dir d
   2/4/6/8 -> DirBits; GameMap-Overloads IsBushAt/GetTerrainTagAt(x,z)
   neu, Welt-Versionen delegieren); nm-Probe 4 Symbole.** Naechste Stufen:
-  (f) $game_map als XP-faehige Instanz (events, display_x/y, scroll,
-      refresh, data) — heute nur Modul mit Meta-Methoden;
+  (f) ~~$game_map als XP-faehige Instanz~~ **ERLEDIGT 2026-07-23 (Stufe 4f):**
+      `Game_Map` ist jetzt eine native KLASSE (war Modul), `$game_map` eine
+      Instanz. Neu: `data` (Table(w,h,3) bei Abruf frisch aus der gebundenen
+      Karte, native IDs -> +384; Schreib-zurueck bewusst Grenze),
+      `display_x/y` + Setter (XP 1/128-Einheit, logischer Scroll-State
+      GameMap::mDisplayPos — Kamera bleibt unveraendert, ehrlich),
+      `events` (leerer Hash — wie Map-Bruecke begruendet), `refresh`
+      (RefreshAllPages), `need_refresh/=` (Sofort-Semantik wie die
+      Schalter-Setter; Getter immer false), `map_id` als XP-Alias auf id.
+      Bestand (visible?, setup, width/height, passable?/bush?/terrain_tag)
+      laeuft unveraendert als Instanzmethoden; Default-Skripte nutzten
+      `Game_Map.` nirgends (Bruchfreiheit per grep verifiziert).
+      mruby-4.0-Falle direkt gefangen: `mrb_int(v)` ist dort 2-arg-Makro
+      (`mrb_int(mrb, v)`) statt 3.x-Funktion — `mrb_as_int` genutzt, und
+      in statischen rb_*-Funktionen heisst der State `mrb` (nicht mMrb);
   (g) Game_Actors/Game_Troop/Game_Screen-Bruecke zum nativen Kampf/
       Screen-System (Game_Battler-Faehigkeiten = groesster Brocken);
   (h) Scene_*-Framework: XP Main.rb treibt `while $scene != nil` —
