@@ -93,6 +93,8 @@ private:
     QString findPlayerExecutable() const;
     QWidget* buildPropertiesWidget();
     void log(const QString& msg);
+    /// Skript-Editor als eigenes Fenster oeffnen (XP-Stil, F11)
+    void showScriptEditor();
 
     // Easy-to-use: Zuletzt geöffnete Projekte, Willkommens-Dialog, Hilfe
     void addRecentProject(const QString& path);

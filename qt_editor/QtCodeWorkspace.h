@@ -43,8 +43,6 @@ public:
     bool saveCurrent();
     bool saveAll();
     // Ruby-Scripts ausfuehren (Playtest-Vorbereitung)
-    void runCurrent();
-    void runAll();
     void hotReloadAll(); // speichern + ExecuteAllScripts
 
     bool hasUnsavedChanges() const;
@@ -90,7 +88,6 @@ private:
     QLabel* mDirtyLabel = nullptr;
     QComboBox* mSnippetCombo = nullptr;
     QAction* mSaveAction = nullptr;
-    QAction* mRunAction = nullptr;
     QAction* mNewAction = nullptr;
     QAction* mDeleteAction = nullptr;
     QLineEdit* mFindEdit = nullptr;

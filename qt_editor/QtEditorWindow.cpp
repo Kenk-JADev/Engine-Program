@@ -203,7 +203,13 @@ void QtEditorWindow::buildCentral() {
     mView = new QtGameViewWidget(mEngine.get(), mCentralTabs);
     mMapTab = new QtMapTab(mEngine.get(), mCentralTabs);
     mPlayTab = buildPlayTab();
-    mCode = new QtCodeWorkspace(mEngine.get(), mCentralTabs);
+    // Skript-Editor: eigenes Top-Level-Fenster wie in RPG Maker XP (oeffnen
+    // ueber das Skript-Menue oder F11), KEIN Tab und keine Ausfuehr-Buttons.
+    mCode = new QtCodeWorkspace(mEngine.get(), nullptr);
+    mCode->setParent(this, Qt::Window);
+    mCode->setWindowTitle(QStringLiteral("Skript-Editor"));
+    mCode->resize(1100, 720);
+    mCode->hide();
 
     // Zentrale Tabs mit erkennbaren Symbolen (Qt-Standardicons, keine Assets)
     mCentralTabs->addTab(mView, stdIcon(mCentralTabs, QStyle::SP_ComputerIcon),
@@ -215,9 +221,6 @@ void QtEditorWindow::buildCentral() {
     mCentralTabs->addTab(mPlayTab, stdIcon(mCentralTabs, QStyle::SP_MediaPlay),
                          QStringLiteral("Spiel"));
     mCentralTabs->setTabToolTip(2, QStringLiteral("Playtest starten (Player-exe oder eingebettet)"));
-    mCentralTabs->addTab(mCode, stdIcon(mCentralTabs, QStyle::SP_FileIcon),
-                         QStringLiteral("Skript"));
-    mCentralTabs->setTabToolTip(3, QStringLiteral("Ruby-Skripte und C++ Engine-Referenz"));
 
     setCentralWidget(mCentralTabs);
 
@@ -323,6 +326,14 @@ QWidget* QtEditorWindow::buildPlayTab() {
     return page;
 }
 
+void QtEditorWindow::showScriptEditor() {
+    if (!mCode) return;
+    mCode->refresh();
+    if (!mCode->isVisible()) mCode->show();
+    mCode->raise();
+    mCode->activateWindow();
+}
+
 void QtEditorWindow::onCentralTabChanged(int index) {
     QWidget* w = mCentralTabs ? mCentralTabs->widget(index) : nullptr;
     if (w == mView) {
@@ -333,11 +344,6 @@ void QtEditorWindow::onCentralTabChanged(int index) {
         mMapTab->refresh();
         statusBar()->showMessage(QStringLiteral(
             "Landkarte – 2D-Draufsicht. Klicken malt mit dem im Map-Dock gewählten Tile."));
-    } else if (w == mCode) {
-        mCode->setFocus(Qt::OtherFocusReason);
-        mCode->refresh();
-        statusBar()->showMessage(QStringLiteral(
-            "Skript – Ruby-Spiellogik editieren, C++ Engine-API als Referenz."));
     } else if (w == mPlayTab) {
         updatePlayTabInfo();
         statusBar()->showMessage(QStringLiteral("Spiel – Playtest starten."));
@@ -401,17 +407,11 @@ void QtEditorWindow::buildMenus() {
     mCreate->addAction(QStringLiteral("Licht"), this, [this]() { actionCreateLight(); });
 
     QMenu* mCodeMenu = menuBar()->addMenu(QStringLiteral("&Skript"));
-    mCodeMenu->addAction(QStringLiteral("Skript-Tab öffnen"), this, [this]() {
-        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
-    });
+    QAction* openScriptAction = mCodeMenu->addAction(
+        QStringLiteral("Skript-Editor öffnen"), this, [this]() { showScriptEditor(); });
+    openScriptAction->setShortcut(QKeySequence(QStringLiteral("F11")));
     mCodeMenu->addAction(QStringLiteral("Ruby-Skripte speichern"), this, [this]() {
         if (mCode) mCode->saveAll();
-    });
-    mCodeMenu->addAction(QStringLiteral("Ruby ausführen (aktuell)"), this, [this]() {
-        if (mCode) mCode->runCurrent();
-    });
-    mCodeMenu->addAction(QStringLiteral("Alle Ruby-Skripte ausführen"), this, [this]() {
-        if (mCode) mCode->runAll();
     });
 
     QMenu* mViewMenu = menuBar()->addMenu(QStringLiteral("&Ansicht"));
@@ -421,8 +421,8 @@ void QtEditorWindow::buildMenus() {
     mViewMenu->addAction(QStringLiteral("Landkarte"), this, [this]() {
         if (mCentralTabs) mCentralTabs->setCurrentWidget(mMapTab);
     });
-    mShowCodeAction = mViewMenu->addAction(QStringLiteral("Skript"), this, [this]() {
-        if (mCentralTabs) mCentralTabs->setCurrentWidget(mCode);
+    mShowCodeAction = mViewMenu->addAction(QStringLiteral("Skript-Editor"), this, [this]() {
+        showScriptEditor();
     });
     mViewMenu->addSeparator();
     mViewMenu->addAction(mDockHierarchy->toggleViewAction());
@@ -808,8 +808,8 @@ void QtEditorWindow::buildRibbon() {
                      [this]() { mCentralTabs->setCurrentWidget(mMapTab); });
         ribbonButton(p, QStringLiteral("Spiel"), QStringLiteral("Zum Playtest-Tab wechseln"),
                      [this]() { mCentralTabs->setCurrentWidget(mPlayTab); });
-        ribbonButton(p, QStringLiteral("Skript"), QStringLiteral("Zum Skript-Tab wechseln"),
-                     [this]() { mCentralTabs->setCurrentWidget(mCode); });
+        ribbonButton(p, QStringLiteral("Skript"), QStringLiteral("Skript-Editor öffnen [F11]"),
+                     [this]() { showScriptEditor(); });
 #ifdef RPGMAKER3D_ENABLE_RMLUI
         ribbonButton(p, QStringLiteral("HUD umschalten"), QStringLiteral("RmlUi-HUD ein/aus [F9]"),
                      [this]() {

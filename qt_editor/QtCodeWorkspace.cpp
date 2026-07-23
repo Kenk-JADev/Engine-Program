@@ -187,8 +187,8 @@ void QtCodeWorkspace::buildUi() {
     renameAction->setToolTip(QStringLiteral("Aktuelles Script umbenennen [F2]"));
     tb->addAction("Neu laden", this, &QtCodeWorkspace::onReloadFromDisk);
     tb->addSeparator();
-    mRunAction = tb->addAction("Ausführen", this, &QtCodeWorkspace::runCurrent);
-    tb->addAction("Alle ausführen", this, &QtCodeWorkspace::runAll);
+    // XP-Paritaet: KEIN "Script ausfuehren"-Button - Skripte laufen im Spiel,
+    // nicht einzeln aus dem Editor. Nur Hot-Reload bleibt als Dev-Werkzeug.
     tb->addAction("Hot-Reload", this, &QtCodeWorkspace::onHotReload);
     tb->addSeparator();
     tb->addAction("Extern öffnen", this, &QtCodeWorkspace::onOpenExternal);
@@ -491,7 +491,6 @@ void QtCodeWorkspace::setLanguage(int index) {
     mNewAction->setEnabled(mLanguage == CodeLanguage::Ruby);
     mDeleteAction->setEnabled(mLanguage == CodeLanguage::Ruby);
     mSaveAction->setEnabled(mLanguage == CodeLanguage::Ruby);
-    mRunAction->setEnabled(mLanguage == CodeLanguage::Ruby);
 
     mSnippetCombo->blockSignals(true);
     mSnippetCombo->clear();
@@ -718,37 +717,6 @@ bool QtCodeWorkspace::saveAll() {
     refresh();
     emit scriptsChanged();
     return true;
-}
-
-void QtCodeWorkspace::runCurrent() {
-    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
-    flushCurrentToManager();
-    auto& scripts = mEngine->GetScriptManager().GetScripts();
-    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
-    auto& script = scripts[static_cast<size_t>(mCurrentIndex)];
-    const bool ok = mEngine->GetRubyVM().ExecuteString(script->content, script->name);
-    if (ok) {
-        emit logMessage(QString("Ruby OK: %1").arg(mCurrentName));
-        showRubyError(QString());
-    } else {
-        const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
-        emit logMessage(QString("Ruby-Fehler in %1: %2").arg(mCurrentName, err));
-        showRubyError(err);
-    }
-}
-
-void QtCodeWorkspace::runAll() {
-    if (!mEngine) return;
-    if (mLanguage == CodeLanguage::Ruby) flushCurrentToManager();
-    mEngine->GetScriptManager().ExecuteAllScripts();
-    if (mEngine->GetRubyVM().HasError()) {
-        const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
-        emit logMessage("Ruby-Fehler beim Ausführen aller Skripte: " + err);
-        showRubyError(err);
-    } else {
-        emit logMessage("Alle Ruby-Scripts ausgefuehrt (Load-Order).");
-        showRubyError(QString());
-    }
 }
 
 void QtCodeWorkspace::hotReloadAll() {
