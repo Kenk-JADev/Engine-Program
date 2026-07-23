@@ -142,7 +142,7 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
         log(QStringLiteral("Tabs unten: Spielansicht (3D) | Landkarte (2D) | Spiel | Skript."));
         log(QStringLiteral("F5 = Playtest über die Player-exe, Umschalt+F5 = eingebettet."));
         statusBar()->showMessage(
-            QStringLiteral("Bereit. F5 startet den Playtest im Player, F9 schaltet das HUD um."));
+            QStringLiteral("Bereit. F5 startet den Playtest im Player, F9 = HUD, F10 = Debug-Inspektor."));
         setSelectedEntity(-1);
         if (mCode) mCode->refresh();
         if (mMapTab) mMapTab->refresh();
@@ -317,7 +317,8 @@ QWidget* QtEditorWindow::buildPlayTab() {
 
     auto* controls = new QLabel(
         QStringLiteral("Steuerung im Spiel:  WASD / Pfeile = Bewegen,  E / Eingabe = Aktion,  "
-                       "Esc = Menü/Pause,  Umschalt = Rennen,  F9 = HUD ein/aus.\n"
+                       "Esc = Menü/Pause,  Umschalt = Rennen,  F9 = HUD ein/aus,  "
+                       "F10 = Debug-Inspektor (Schalter/Variablen).\n"
                        "Umlaute in Dialogen und Namenseingabe (Alt+A/O/U im Namensfeld) "
                        "werden voll unterstützt (ä ö ü Ä Ö Ü ß)."),
         page);
@@ -1428,7 +1429,8 @@ void QtEditorWindow::showShortcutsDialog() {
             "Strg+S – Projekt speichern<br>"
             "F5 – Playtest (Player-exe)<br>"
             "Umschalt+F5 – Playtest eingebettet<br>"
-            "F9 – HUD ein/aus<br><br>"
+            "F9 – HUD ein/aus<br>"
+            "F10 – Debug-Inspektor: Schalter/Variablen live (wie XP-F9)<br><br>"
             "<b>Landkarte (2D)</b><br>"
             "Strg+Z / Strg+Y – Rückgängig / Wiederholen<br>"
             "Links ziehen – Tile malen<br>"

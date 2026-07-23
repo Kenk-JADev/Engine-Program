@@ -90,6 +90,8 @@ private:
     QScrollArea* mScroll = nullptr;
     QButtonGroup* mModeGroup = nullptr;
     QToolButton* mModeBtns[4] = {};         // 1, 2, 3, EV
+    QButtonGroup* mToolGroup = nullptr;     // XP-Zeichenwerkzeuge
+    QToolButton* mToolBtns[4] = {};         // Stift, Rechteck, Ellipse, Fuellen
     QSpinBox* mZoomSpin = nullptr;
     QLabel* mPosLabel = nullptr;
     int mTileId = 0;

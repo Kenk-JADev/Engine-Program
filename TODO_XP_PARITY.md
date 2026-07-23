@@ -189,7 +189,16 @@ Strg+Z macht es in einem Schritt rückgängig.
 ---
 
 ## PAKET 4 — F9-Debug-Inspektor (Schalter/Variablen) 🟡
-**Status: OFFEN**
+**Status: ✅ ERLEDIGT (2026-07-23)** — als **F10** umgesetzt (F9 bleibt bewusst
+das RmlUi-HUD-Toggle). Engine-intern über die RGSS-Fensterschicht:
+`Engine::ToggleDebugWindow/UpdateDebugWindow/RedrawDebugWindowContent`
+(src/Engine.cpp ab ~Z. 2380, Members mDbg* in Engine.h). Live: Schalter per
+Enter togglen, Variablen per Enter editieren (Ziffern, M = Negativ, Backspace,
+Enter = übernehmen, Esc = Abbruch/schließen, Pfeile/←→ = Blättern). 0,25-s-
+Live-Refresh. Greift auf `Game::Get().Switches()/Variables()` mit Namen aus
+`Database::Get().System().switches/variables` zu. Offen: XP trennt die Listen
+(Tabs) — bei uns eine gemeinsame Liste (Schalter oben, Variablen unten),
+funktional gleichwertig.
 
 **XP:** Im Testspiel (nicht im Released-Build) öffnet F9 ein Fenster mit zwei
 Listen: Schalter (AN/AUS umschaltbar) und Variablen (Zahl editierbar) —

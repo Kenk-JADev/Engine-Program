@@ -71,6 +71,14 @@ public:
     /// kind: 0=BGM, 1=BGS, 2=ME, 3=SE. "" wenn nicht gefunden.
     /// Public fuer die RGSS-Audio-Bindings (XP-Audio.*-API).
     std::string ResolveAudioPath(const std::string& name, int kind) const;
+    // ---- XP-artiger Debug-Inspektor (Paket 4, TODO_XP_PARITY.md) ----
+    // F10: live Schalter-/Variablen-Fenster ueber die RGSS-Fensterschicht
+    // (funktioniert im Player UND im eingebetteten Qt-Playtest, weil die
+    // Taste direkt im Engine-Update abgefragt wird). F9 bleibt RmlUi-HUD.
+    void ToggleDebugWindow();
+    void UpdateDebugWindow(float dt);
+    void RedrawDebugWindowContent();
+    void DestroyDebugWindow();
     #ifdef RPGMAKER3D_ENABLE_RMLUI
     RmlUiSystem* GetRmlUi() { return mRmlUi.get(); }
 #else
@@ -161,6 +169,16 @@ private:
     bool mEditorMode = true;
     bool mPlayMode = false;
     bool mPlayModeFollowPlayer = true;
+    // ---- XP-Debug-Inspektor (Paket 4) ----
+    bool mDbgVisible = false;    // Fensterstatus (F10 toggle)
+    int  mDbgSel = 0;            // Kursorteil: Schalter- oder Variablenzeile
+    int  mDbgScroll = 0;         // erster sichtbarer Eintrag
+    bool mDbgEditing = false;    // Zahleneingabe fuer Variable aktiv
+    int  mDbgEditValue = 0;      // gepufferter Eingabewert
+    int  mDbgWindowId = 0;       // RGSS-Fenster (0 = keins)
+    int  mDbgContentsId = 0;     // RGSS-Bitmap des Fensterinhalts (0 = keine)
+    bool mDbgNeedsRedraw = true; // nach Wertwechsel neu zeichnen
+    float mDbgRefresh = 0.0f;    // Zeitscheibe fuer Live-Refresh (s)
     bool mShowGrid = true;
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};

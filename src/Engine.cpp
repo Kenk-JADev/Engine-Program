@@ -846,6 +846,13 @@ void Engine::Update(float dt) {
         SetPlaying(!mPlayMode);
     }
 
+    // XP-Debug-Inspektor (Paket 4): F10 oeffnet das Schalter/Variablen-Fenster
+    if (mPlayMode && !mDbgVisible && mInput->IsKeyPressed(Key::F10)) {
+        ToggleDebugWindow();
+    }
+    // Fenster live halten / bei Spielstopp automatisch schliessen
+    UpdateDebugWindow(dt);
+
     // Kamera Navigation (Editor oder Play)
     // Qt-Editor: Input kommt nur vom Game-View-Widget (StrongFocus) -> immer erlaubt.
     bool allowCamera = true;
@@ -931,7 +938,9 @@ void Engine::Update(float dt) {
         // haben Vorrang vor allem anderen und konsumieren die Tasten zuerst.
         GameUI::Get().UpdateModalInput(*mInput);
 
-        const bool modalActive = GameUI::Get().IsNumberInputActive() ||
+        // XP-Debug-Inspektor (F10) blockt die Spieleingabe, solange er offen ist
+        const bool modalActive = mDbgVisible ||
+                                 GameUI::Get().IsNumberInputActive() ||
                                  GameUI::Get().IsNameInputActive() ||
                                  GameUI::Get().Message().HasChoices() ||
                                  GameUI::Get().Menu().IsVisible();
@@ -1754,6 +1763,234 @@ bool Engine::LoadScene(const std::string& path) {
 
     RPG_LOG_INFO("Scene loaded from: " + path);
     return true;
+}
+
+// ===========================================================================
+// XP-Debug-Inspektor (Paket 4, TODO_XP_PARITY.md) - F10 im Playtest
+// Fenster mit Schaltern (Live-Toggle per Enter) und Variablen (Enterprise =
+// Zahleneingabe). Rendert ueber die RGSS-Fensterschicht (RgssUI), damit es
+// im Player und im eingebetteten Qt-Playtest gleich auf dem Bildschirm
+// landet. Angelehnt an das XP-F9-Debugfenster; unsere F9-Taste bleibt HUD.
+// ===========================================================================
+
+void Engine::ToggleDebugWindow() {
+    if (!mPlayMode) return; // XP: Debug-Inspektor gibt es nur im (Test-)Spiel
+    mDbgVisible = !mDbgVisible;
+    if (!mDbgVisible) {
+        DestroyDebugWindow();
+        return;
+    }
+    // Fenster (neu) erzeugen
+    auto& ui = RgssUI::Get();
+    mDbgWindowId = ui.CreateWindow(8, 8, 624, 464);
+    if (auto* w = ui.GetWindow(mDbgWindowId)) {
+        w->z = 9000;            // immer oben
+        w->opacity = 235;       // Spiel leicht durchscheinen lassen
+        w->backOpacity = 235;
+        w->openness = 255.0f;
+        w->active = true;
+        w->pause = false;
+        w->stretch = true;
+    }
+    mDbgContentsId = RgssBmpCreate(624 - 32, 464 - 32);
+    if (auto* w = ui.GetWindow(mDbgWindowId))
+        w->contentsBmpId = mDbgContentsId;
+    mDbgSel = 0;
+    mDbgScroll = 0;
+    mDbgEditing = false;
+    mDbgEditValue = 0;
+    mDbgNeedsRedraw = true;
+    mDbgRefresh = 0.0f;
+    RPG_LOG_INFO("Debug-Inspektor geoeffnet (F10)");
+}
+
+void Engine::DestroyDebugWindow() {
+    auto& ui = RgssUI::Get();
+    if (mDbgWindowId > 0) {
+        ui.DisposeWindow(mDbgWindowId);
+        mDbgWindowId = 0;
+    }
+    if (mDbgContentsId > 0) {
+        RgssBmpDispose(mDbgContentsId);
+        mDbgContentsId = 0;
+    }
+}
+
+void Engine::UpdateDebugWindow(float dt) {
+    if (!mDbgVisible) return;
+    // Spiel beendet -> Fenster schliessen
+    if (!mPlayMode) {
+        mDbgVisible = false;
+        DestroyDebugWindow();
+        return;
+    }
+    // Fenster wurde von aussen disposed (z. B. ClearAll) -> neu aufsetzen
+    auto& ui = RgssUI::Get();
+    if (!ui.GetWindow(mDbgWindowId)) {
+        mDbgWindowId = 0;
+        mDbgContentsId = 0;
+        mDbgVisible = false;
+        ToggleDebugWindow(); // sauber neu anlegen
+        return;
+    }
+
+    const auto& swNames = Database::Get().System().switches;
+    const auto& varNames = Database::Get().System().variables;
+    const int swCount = std::max(1, (int)swNames.size());
+    const int varCount = std::max(1, (int)varNames.size());
+    const int rowCount = swCount + varCount;
+
+    auto& inp = *mInput;
+    bool wantRedraw = mDbgNeedsRedraw;
+
+    if (mDbgEditing) {
+        // Zahleneingabe: Ziffern anhaengen, M = Negativ, Backspace, Enter, Esc
+        for (int k = 0; k <= 9; ++k) {
+            if (inp.IsKeyPressed((Key)((int)Key::Num0 + k))) {
+                long v = (long)std::llabs((long)mDbgEditValue) * 10 + k;
+                if (v > 99999999) v = 99999999;
+                mDbgEditValue = (int)((mDbgEditValue < 0) ? -v : v);
+                wantRedraw = true;
+            }
+        }
+        if (inp.IsKeyPressed(Key::M)) {
+            mDbgEditValue = -mDbgEditValue;
+            wantRedraw = true;
+        }
+        if (inp.IsKeyPressed(Key::Backspace)) {
+            mDbgEditValue /= 10;
+            wantRedraw = true;
+        }
+        if (inp.IsKeyPressed(Key::Enter)) {
+            const int varId = (mDbgSel - swCount) + 1; // 1-basiert
+            Game::Get().Variables().Set(varId, mDbgEditValue);
+            mDbgEditing = false;
+            wantRedraw = true;
+        }
+        if (inp.IsKeyPressed(Key::Escape)) {
+            mDbgEditing = false;
+            wantRedraw = true;
+        }
+    } else {
+        if (inp.IsKeyPressed(Key::F10)) {
+            mDbgVisible = false;
+            DestroyDebugWindow();
+            return;
+        }
+        if (inp.IsKeyPressed(Key::Escape)) {
+            mDbgVisible = false;
+            DestroyDebugWindow();
+            return;
+        }
+        if (rowCount > 0) {
+            if (inp.IsKeyPressed(Key::Up)) {
+                mDbgSel = (mDbgSel - 1 + rowCount) % rowCount;
+                wantRedraw = true;
+            }
+            if (inp.IsKeyPressed(Key::Down)) {
+                mDbgSel = (mDbgSel + 1) % rowCount;
+                wantRedraw = true;
+            }
+            if (inp.IsKeyPressed(Key::Left)) {
+                mDbgSel = (mDbgSel - 10 + rowCount) % rowCount;
+                wantRedraw = true;
+            }
+            if (inp.IsKeyPressed(Key::Right)) {
+                mDbgSel = (mDbgSel + 10) % rowCount;
+                wantRedraw = true;
+            }
+        }
+        if (inp.IsKeyPressed(Key::Enter)) {
+            if (mDbgSel < swCount) {
+                // Schalter togglen (live)
+                const int id = mDbgSel + 1; // 1-basiert
+                bool now = Game::Get().Switches().Get(id);
+                Game::Get().Switches().Set(id, !now);
+            } else {
+                // Variable editieren
+                mDbgEditing = true;
+                mDbgEditValue = Game::Get().Variables().Get((mDbgSel - swCount) + 1);
+            }
+            wantRedraw = true;
+        }
+    }
+
+    // Scrollfenster der Auswahl folgen lassen
+    {
+        const int visibleRows = 16; // passt in das 464px-Fenster
+        if (mDbgSel < mDbgScroll) mDbgScroll = mDbgSel;
+        if (mDbgSel >= mDbgScroll + visibleRows)
+            mDbgScroll = mDbgSel - visibleRows + 1;
+        (void)visibleRows;
+    }
+
+    // Live-Refresh: Werte koennen sich von allein aendern (Events laufen)
+    mDbgRefresh -= dt;
+    if (mDbgRefresh <= 0.0f) {
+        mDbgRefresh = 0.25f;
+        wantRedraw = true;
+    }
+    if (!wantRedraw) return;
+    mDbgNeedsRedraw = false;
+
+    RedrawDebugWindowContent();
+}
+
+void Engine::RedrawDebugWindowContent() {
+    const int id = mDbgContentsId;
+    if (id <= 0) return;
+    auto* bmp = RgssBmpGet(id);
+    if (!bmp || bmp->disposed) return;
+
+    RgssBmpClear(id);
+
+    const auto& swNames = Database::Get().System().switches;
+    const auto& varNames = Database::Get().System().variables;
+    const int swCount = std::max(1, (int)swNames.size());
+    const int varCount = std::max(1, (int)varNames.size());
+
+    // Kopfzeile
+    RgssBmpDrawText(id, 0, 0, 592, 22,
+                    "DEBUG-INSPEKTOR (F10)  -  Schalter & Variablen", 0);
+
+    const int visibleRows = 16;
+    const float rowH = 20.0f;
+    for (int r = 0; r < visibleRows; ++r) {
+        const int row = mDbgScroll + r;
+        if (row >= swCount + varCount) break;
+        const float y = 26.0f + r * rowH;
+        const bool selRow = (row == mDbgSel);
+
+        std::string line;
+        if (row < swCount) {
+            const int sid = row + 1;
+            const bool on = Game::Get().Switches().Get(sid);
+            std::string nm = (row < (int)swNames.size() && !swNames[row].empty())
+                                 ? swNames[row] : ("Schalter " + std::to_string(sid));
+            line = "S" + std::to_string(sid) + "\t" + nm + "\t[" +
+                   (on ? "AN" : "AUS") + "]";
+        } else {
+            const int vrow = row - swCount;
+            const int vid = vrow + 1;
+            int val = Game::Get().Variables().Get(vid);
+            bool editingRow = mDbgEditing && selRow;
+            if (editingRow) val = mDbgEditValue;
+            std::string nm = (vrow < (int)varNames.size() && !varNames[vrow].empty())
+                                 ? varNames[vrow] : ("Variable " + std::to_string(vid));
+            line = "V" + std::to_string(vid) + "\t" + nm + "\t= " +
+                   std::to_string(val) + (editingRow ? "_" : "");
+        }
+
+        if (selRow) {
+            RgssBmpFillRect(id, 0, y, 592, rowH, 255, 255, 255, 48.0f);
+        }
+        RgssBmpDrawText(id, 4, y, 588, rowH, line, 0);
+    }
+
+    // Fusszeile (Hilfen)
+    RgssBmpDrawText(id, 0, 416 - 22, 592, 22,
+        "F10: zu  Pfeile: waehlen  Enter: umschalten/editieren  "
+        "(im Edit: Ziffern, M=Negativ, Esc=Abbruch)", 0);
 }
 
 } // namespace rpg

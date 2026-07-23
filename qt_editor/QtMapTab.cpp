@@ -3,6 +3,9 @@
 #include "QtEventEditorDialog.h"
 
 #include <cstdio>
+#include <queue>
+#include <unordered_set>
+#include <utility>
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Map.h"
@@ -64,6 +67,8 @@ public:
     int tileId = 0;       // -1 = Radierer
     int cell = 20;
     bool eventMode = false;
+    // Zeichenwerkzeug (XP): 0 = Stift, 1 = Rechteck, 2 = Ellipse, 3 = Flutfuellung
+    int tool = 0;
 
     std::function<void(int, int)> onPaint;           // (x,z) gemalt
     std::function<void(int, int)> onHover;           // (x,z) Mausposition
@@ -163,6 +168,21 @@ protected:
                           cell * 0.3, cell * 0.3);
         }
 
+        // Form-Vorschau waehrend Drag (Rechteck/Ellipse)
+        if (mDragging && mDragX0 >= 0) {
+            int x0 = mDragX0, z0 = mDragZ0, x1 = mDragX1, z1 = mDragZ1;
+            if (x0 > x1) std::swap(x0, x1);
+            if (z0 > z1) std::swap(z0, z1);
+            const QRect rc(x0 * cell, z0 * cell, (x1 - x0 + 1) * cell, (z1 - z0 + 1) * cell);
+            QColor fill = tileColor(tileId < 0 ? 0 : tileId);
+            fill.setAlpha(110);
+            p.setBrush(fill);
+            p.setPen(QPen(QColor(255, 220, 90), 2));
+            if (tool == 2) p.drawEllipse(rc);   // Ellipse
+            else p.drawRect(rc);                // Rechteck
+            p.setBrush(Qt::NoBrush);
+        }
+
         // Hover-Feld
         if (mHoverX >= 0 && mHoverX < w && mHoverZ >= 0 && mHoverZ < h) {
             p.setPen(QPen(QColor(255, 220, 90), 1));
@@ -186,11 +206,32 @@ protected:
                 selectedEventId = eventAt(x, z);
                 if (onHover) onHover(x, z);
                 update();
+                return;
+            }
+            const int x = e->pos().x() / cell;
+            const int z = e->pos().y() / cell;
+            if (tool == 1 || tool == 2) {
+                // Form-Werkzeuge (Rechteck/Ellipse): Drag beginnen,
+                // Stroke beginnt erst bei Release (abbruchbar via Rechtsklick)
+                mDragging = true;
+                mDragX0 = mDragX1 = x;
+                mDragZ0 = mDragZ1 = z;
+                update();
+            } else if (tool == 3) {
+                // Flutfuellung: sofort, als ein Verlaufs-Eintrag
+                if (onStrokeBegin) onStrokeBegin();
+                applyFloodAt(x, z);
+                if (onStrokeEnd) onStrokeEnd();
+                update();
             } else {
                 mPainting = true;
                 if (onStrokeBegin) onStrokeBegin();
                 applyAt(e->pos());
             }
+        } else if (e->button() == Qt::RightButton && mDragging) {
+            // Form-Zug abbrechen (vor Stroke-Beginn -> kein Verlauf)
+            mDragging = false;
+            update();
         }
     }
     void contextMenuEvent(QContextMenuEvent* e) override {
@@ -214,12 +255,20 @@ protected:
         mHoverZ = z;
         if (onHover) onHover(x, z);
         if (mPainting) applyAt(e->pos());
+        if (mDragging) { mDragX1 = x; mDragZ1 = z; }
         update();
     }
-    void mouseReleaseEvent(QMouseEvent*) override {
-        if (mPainting) {
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        if (mPainting && e->button() == Qt::LeftButton) {
             mPainting = false;
             if (onStrokeEnd) onStrokeEnd();
+        }
+        if (mDragging && e->button() == Qt::LeftButton) {
+            mDragging = false;
+            if (onStrokeBegin) onStrokeBegin();
+            applyShape(tool == 2, mDragX0, mDragZ0, mDragX1, mDragZ1);
+            if (onStrokeEnd) onStrokeEnd();
+            update();
         }
     }
     void leaveEvent(QEvent*) override {
@@ -239,23 +288,94 @@ public:
     void setStartPos(int x, int z) { mStartX = x; mStartZ = z; }
 
 private:
-    void applyAt(const QPoint& pos) {
-        if (!mEngine || !mEngine->IsInitialized()) return;
+    // einzelnes Feld bemalen (gibt true bei echter Aenderung)
+    bool paintCell(int x, int z) {
+        if (!mEngine || !mEngine->IsInitialized()) return false;
         auto& map = mEngine->GetMap();
-        const int x = pos.x() / cell;
-        const int z = pos.y() / cell;
-        if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return;
+        if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return false;
         const int nv = tileId < 0 ? 0 : tileId;
         const int before = map.GetTile(layer, x, z);
-        if (before == nv) return; // keine echte Änderung -> auch kein Verlauf
+        if (before == nv) return false; // keine echte Änderung -> auch kein Verlauf
         map.SetTile(layer, x, z, nv); // setzt mDirty -> 3D baut neu
         if (onTileEdited) onTileEdited(x, z, layer, before, nv);
         if (onPaint) onPaint(x, z);
-        update();
+        return true;
+    }
+
+    void applyAt(const QPoint& pos) {
+        const int x = pos.x() / cell;
+        const int z = pos.y() / cell;
+        if (paintCell(x, z)) update();
+    }
+
+    // Rechteck/Ellipse-Fuellung zwischen zwei Drag-Ecken (inkl. 1-Zelle)
+    void applyShape(bool ellipse, int x0, int z0, int x1, int z1) {
+        if (!mEngine || !mEngine->IsInitialized()) return;
+        if (x0 > x1) std::swap(x0, x1);
+        if (z0 > z1) std::swap(z0, z1);
+        auto& map = mEngine->GetMap();
+        // Drag komplett ausserhalb -> nichts zu tun
+        if (x1 < 0 || z1 < 0 || x0 >= map.GetWidth() || z0 >= map.GetHeight()) return;
+
+        const int sw = x1 - x0 + 1;
+        const int sh = z1 - z0 + 1;
+        const double cx = (x0 + x1) * 0.5;
+        const double cz = (z0 + z1) * 0.5;
+        const double rx = sw * 0.5;
+        const double rz = sh * 0.5;
+        for (int z = z0; z <= z1; ++z) {
+            for (int x = x0; x <= x1; ++x) {
+                if (ellipse && sw > 1 && sh > 1) {
+                    // normierte Ellipsengleichung (Zellzentren)
+                    const double px = (x - cx) / rx;
+                    const double pz = (z - cz) / rz;
+                    if (px * px + pz * pz > 1.0001) continue;
+                }
+                paintCell(x, z); // Bounds-Schnitt passiert darin
+            }
+        }
+    }
+
+    // Flutfuellung (iterativ, 4-Nachbarschaft) auf der aktiven Ebene
+    void applyFloodAt(int sx, int sz) {
+        if (!mEngine || !mEngine->IsInitialized()) return;
+        auto& map = mEngine->GetMap();
+        if (sx < 0 || sz < 0 || sx >= map.GetWidth() || sz >= map.GetHeight()) return;
+        const int nv = tileId < 0 ? 0 : tileId;
+        const int target = map.GetTile(layer, sx, sz);
+        if (target == nv) return;
+
+        std::queue<std::pair<int, int>> q;
+        std::unordered_set<qint64> seen;
+        q.push({sx, sz});
+        seen.insert((qint64)sz * 1000000 + sx);
+        while (!q.empty()) {
+            auto [x, z] = q.front();
+            q.pop();
+            const int before = map.GetTile(layer, x, z);
+            if (before != target) continue;
+            map.SetTile(layer, x, z, nv);
+            if (onTileEdited) onTileEdited(x, z, layer, before, nv);
+            static const int dx[4] = {1, -1, 0, 0};
+            static const int dz[4] = {0, 0, 1, -1};
+            for (int k = 0; k < 4; ++k) {
+                const int nx = x + dx[k], nz = z + dz[k];
+                if (nx < 0 || nz < 0 || nx >= map.GetWidth() || nz >= map.GetHeight()) continue;
+                const qint64 key = (qint64)nz * 1000000 + nx;
+                if (seen.count(key)) continue;
+                if (map.GetTile(layer, nx, nz) != target) continue;
+                seen.insert(key);
+                q.push({nx, nz});
+            }
+        }
+        if (onPaint) onPaint(sx, sz); // 3D-Aktualisierung + Statuszeile
     }
 
     rpg::Engine* mEngine = nullptr;
     bool mPainting = false;
+    bool mDragging = false;                     // Form-Werkzeug aktiv (Drag)
+    int mDragX0 = -1, mDragZ0 = -1;             // Drag-Start (Zelle)
+    int mDragX1 = -1, mDragZ1 = -1;             // Drag aktuell (Zelle)
     int mHoverX = -1, mHoverZ = -1;
 };
 
@@ -293,6 +413,32 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     }
     mModeBtns[0]->setChecked(true);
     connect(mModeGroup, &QButtonGroup::idClicked, this, &QtMapTab::onModeButton);
+
+    // XP-Zeichenwerkzeuge: Stift / Rechteck / Ellipse / Fuellen (Paket 3)
+    tb->addSpacing(12);
+    tb->addWidget(new QLabel(QL("Werkzeug:"), this));
+    mToolGroup = new QButtonGroup(this);
+    mToolGroup->setExclusive(true);
+    static const char* toolNames[4] = {"Stift", "Rechteck", "Ellipse", "Füllen"};
+    static const char* toolTips[4] = {
+        "Stift (XP): freies Malen",
+        "Rechteck (XP): Ziehen füllt das Rechteck mit dem gewählten Tile",
+        "Ellipse (XP): Ziehen füllt die Ellipse mit dem gewählten Tile",
+        "Füllen (XP): Flutfüllung ersetzt zusammenhängende gleiche Tiles"
+    };
+    for (int i = 0; i < 4; ++i) {
+        mToolBtns[i] = new QToolButton(this);
+        mToolBtns[i]->setText(QString::fromUtf8(toolNames[i]));
+        mToolBtns[i]->setToolTip(QString::fromUtf8(toolTips[i]));
+        mToolBtns[i]->setCheckable(true);
+        mToolBtns[i]->setAutoRaise(true);
+        mToolGroup->addButton(mToolBtns[i], i);
+        tb->addWidget(mToolBtns[i]);
+    }
+    mToolBtns[0]->setChecked(true);
+    connect(mToolGroup, &QButtonGroup::idClicked, this, [this](int id) {
+        if (mCanvas) mCanvas->tool = id;
+    });
 
     tb->addSpacing(12);
     tb->addWidget(new QLabel(QL("Zoom:"), this));
