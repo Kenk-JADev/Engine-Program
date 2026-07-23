@@ -1209,6 +1209,9 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
             pages = troop->pages; // XP-Kampfereignis-Seiten
         } else enemies = {1};
         BattleSystem::Get().Setup(enemies, canEscape, canLose, pages);
+        // XP-Bruecke (Stufe 4g): auch der Event-Befehl „Kampf" meldet die
+        // Truppen-ID an $game_troop.setup (Battler stehen bereits).
+        if (Game::Get().onBattleStarted) Game::Get().onBattleStarted(troopId);
         BattleSystem::Get().onMessage = [](const std::string& m) {
             GameUI::Get().ShowMessage(m);
         };

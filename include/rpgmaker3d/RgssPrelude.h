@@ -513,6 +513,216 @@ class Game_Party
   end
 end
 
+# ---------------------------------------------------------------------------
+# XP Game_Actor#equip (Stufe 4g Teil 3): Inventar-Tausch mit der Party
+# (altes Stueck zurueck ins Lager, neues herausgenommen). Der nativ gebundene
+# change_equip setzt rein datengetrieben — exakt die XP-Aufteilung.
+# ---------------------------------------------------------------------------
+class Game_Actor
+  def equip(equip_type, id)
+    if equip_type == 0
+      if id == 0 or $game_party.weapon_number(id) > 0
+        old = weapon_id
+        $game_party.gain_weapon(old, 1) if old > 0
+        change_equip(0, id)
+        $game_party.gain_weapon(id, -1) if id > 0
+      end
+    else
+      if equip_type >= 1 and equip_type <= 4
+        old = [armor1_id, armor2_id, armor3_id, armor4_id][equip_type - 1]
+        if id == 0 or $game_party.armor_number(id) > 0
+          $game_party.gain_armor(old, 1) if old and old > 0
+          change_equip(equip_type, id)
+          $game_party.gain_armor(id, -1) if id > 0
+        end
+      end
+    end
+  end
+end
+
+# ---------------------------------------------------------------------------
+# XP Game_Enemy-Komfort (Stufe 4g Teil 3): Die Klasse ist nativ an die
+# Kampf-Battler gekoppelt; Zustaende haelt die Bruecke objektbezogen als
+# Ruby-Ivar (unser nativer Kampf kennt Stand heute keine Gegner-Zustaende —
+# dokumentierte Naeherung; add/remove_state/states wie in RPGXP).
+# ---------------------------------------------------------------------------
+class Game_Enemy
+  attr_accessor :letter
+  def states
+    if @states == nil
+      @states = []
+    end
+    @states
+  end
+  def add_state(state_id, force = false)
+    s = states
+    found = false
+    i = 0
+    while i < s.length
+      if s[i] == state_id
+        found = true
+      end
+      i += 1
+    end
+    unless found
+      s.push(state_id)
+    end
+    s
+  end
+  def remove_state(state_id, force = false)
+    s = states
+    out = []
+    i = 0
+    while i < s.length
+      if s[i] != state_id
+        out.push(s[i])
+      end
+      i += 1
+    end
+    @states = out
+  end
+end
+
+# ---------------------------------------------------------------------------
+# XP $game_troop (Stufe 4g Teil 3): setup(troop_id) baut die members aus
+# __enemy_ids (nativ: Live-Kampf-Battler bevorzugt, sonst TroopData) und
+# bindet jedes Game_Enemy per __attach an seinen Kampf-Slot. Der Hook
+# Game.onBattleStarted ruft setup bei JEDEM Kampfstart automatisch auf
+# (Skript- wie Event-Weg), so wie es XPs Scene_Battle per Hand macht.
+# ---------------------------------------------------------------------------
+class Game_Troop
+  attr_reader :troop_id, :members
+  def initialize
+    @troop_id = 0
+    @members = []
+  end
+  def setup(troop_id)
+    @troop_id = troop_id
+    @members = []
+    ids = __enemy_ids(troop_id)
+    i = 0
+    while i < ids.length
+      e = Game_Enemy.new(ids[i])
+      e.__attach(i)
+      @members.push(e)
+      i += 1
+    end
+    @members
+  end
+end
+$game_troop = Game_Troop.new
+
+# ---------------------------------------------------------------------------
+# XP Game_Picture (Stufe 4g Teil 3): adressiert die native Bildschicht
+# (GameUI) ueber die bei show gemerkte Laufzeit-ID. Naeherungen (alle hier
+# dokumentiert): nativ wird zentriert (origin-1-Verhalten) und mit EINER
+# Skalierung gezeichnet (zoom_x/zoom_y gemittelt); rotate(speed) ist bei XP
+# kontinuierlich — hier Tween-Schritt je Aufruf; start_tone_change wird nur
+# als Zustand gespeichert (kein nativer Picture-Ton-Renderer).
+# ---------------------------------------------------------------------------
+class Game_Picture
+  attr_reader :number, :name, :origin, :x, :y, :zoom_x, :zoom_y, :opacity, :blend_type, :angle, :tone
+  def initialize(number)
+    @number = number
+    @name = ""
+    @origin = 0
+    @x = 0.0
+    @y = 0.0
+    @zoom_x = 100.0
+    @zoom_y = 100.0
+    @opacity = 255.0
+    @blend_type = 1
+    @angle = 0.0
+    @tone = Tone.new(0, 0, 0, 0)
+    @native_id = nil
+  end
+  def show(name, origin, x, y, zoom_x, zoom_y, opacity, blend_type)
+    @name = name
+    @origin = origin
+    @x = x.to_f
+    @y = y.to_f
+    @zoom_x = zoom_x.to_f
+    @zoom_y = zoom_y.to_f
+    @opacity = opacity.to_f
+    @blend_type = blend_type
+    @native_id = Game.show_picture(name, "xp_pic_" + number.to_s,
+      x / 640.0, y / 480.0, (zoom_x + zoom_y) / 200.0, opacity / 255.0)
+  end
+  def move(duration, origin, x, y, zoom_x, zoom_y, opacity, blend_type)
+    @origin = origin
+    @x = x.to_f
+    @y = y.to_f
+    @zoom_x = zoom_x.to_f
+    @zoom_y = zoom_y.to_f
+    @opacity = opacity.to_f
+    @blend_type = blend_type
+    if @native_id != nil
+      UI.tween_picture(@native_id, @x / 640.0, @y / 480.0,
+        (@zoom_x + @zoom_y) / 200.0, @opacity / 255.0, @angle,
+        duration / 40.0 + 0.01)
+    end
+  end
+  def rotate(speed)
+    @angle = (@angle + speed * 20.0) % 360
+    if @native_id != nil
+      UI.tween_picture(@native_id, @x / 640.0, @y / 480.0,
+        (@zoom_x + @zoom_y) / 200.0, @opacity / 255.0, @angle, 1.0)
+    end
+  end
+  def start_tone_change(tone, duration)
+    @tone = tone
+    @tone_duration = duration
+  end
+  def fade(duration)
+    @opacity = 0.0
+    if @native_id != nil
+      UI.tween_picture(@native_id, @x / 640.0, @y / 480.0,
+        (@zoom_x + @zoom_y) / 200.0, 0.0, @angle, duration / 40.0 + 0.01)
+    end
+  end
+  def erase
+    if @native_id != nil
+      UI.remove_picture(@native_id)
+      @native_id = nil
+    end
+    @name = ""
+  end
+  def update
+    # Tweens laufen nativ — Kompat-No-op
+  end
+end
+
+# ---------------------------------------------------------------------------
+# XP $game_screen (Stufe 4g Teil 3): Klasse nativ an ScreenEffects gekoppelt
+# (start_flash/start_tone_change/start_shake mit XP-Frames 40/s). Hier in
+# Ruby dazu: pictures (51 Game_Picture, XP 1..50 adressiert) und weather als
+# reiner Zustand (type 0=kein/1=Regen/2=Sturm/3=Schnee, max = Staerke*10;
+# Rendern via RPG::Weather in Ruby-Szenen, kein nativer Hook — s. TODO).
+# ---------------------------------------------------------------------------
+class Game_Screen
+  attr_reader :weather_type, :weather_max
+  def weather(type, power, duration)
+    @weather_type = type
+    @weather_max = power.to_f * 10.0
+    @weather_duration = duration
+  end
+  def pictures
+    if @pictures == nil
+      @pictures = []
+      i = 0
+      while i <= 50
+        @pictures.push(Game_Picture.new(i))
+        i += 1
+      end
+    end
+    @pictures
+  end
+  def update
+    # Flash/Tone/Shake laufen als C++-Timer — Kompat-No-op
+  end
+end
+$game_screen = Game_Screen.new
+
 def save_data(obj, filename)
   raise RGSSError, "save_data: Marshal wird nicht unterstuetzt " \
     "(Spielstaende: Game.save(slot))."

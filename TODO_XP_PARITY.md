@@ -414,9 +414,9 @@ am Ziel ab und wartet bis zum Ende.
       face_index. Prelude: `Game_Actors`-Sammlung mit Instanz-Cache pro ID
       ($game_actors = XP-Identitaet) + Komfort-Reopen: `int` (aus der
       Akteur-Parameter-Table der load_data-Bruecke), weapon/armor1..4 als
-      Objekte. **Noch offen:** Game_Troop- + Game_Screen-Bruecke (Kampf-
-      Zustand/Pictures/Flash); Game_Actor-Equip-MUTATOREN (change_equip),
-      Name-Input-Verdahtung (name= liegt aktuell nur auf der Runtime);
+      Objekte. **Erledigt in TEIL 3:** Game_Troop- + Game_Screen-Bruecke,
+      Game_Actor-Equip-Mutatoren (change_equip/equip). **Noch offen:**
+      Name-Input-Verdrahtung (name= liegt aktuell nur auf der Runtime);
   (g) **TEIL 2 erledigt 2026-07-23: Game_Party-XP-Vervollstaendigung:**
       nativ neu: item_number/weapon_number/armor_number (XP-Namen,
       Aliase auf die count-Bindings), has_item, all_dead?; interne
@@ -425,6 +425,42 @@ am Ziel ab und wartet bis zum Ende.
       actor(id), items/weapons/armors (ID-Listen-Naeherung statt Hash —
       dokumentiert), max_level, average_level, item_can_use? (count +
       consumable via Bruecke), movable?.
+  (g) **TEIL 3 erledigt 2026-07-23: `$game_troop`/`Game_Enemy`,
+      `$game_screen`/`Game_Picture`, Game_Actor#equip:**
+      - **Game_Enemy nativ** (RubyVM.cpp): @battle_index bindet an den
+        LIVE-Battler (BattleSystem::Enemies()), sonst fluechtiger Orphan
+        aus EnemyData (Muster wie Game_Actor). id/enemy_id, index, exist?,
+        name, battler_name/hue, hp/sp mit XP-Clamp-Setzern (schreiben live
+        in den Battler inkl. isDead-Sync), maxhp/maxsp/atk/def/agi, dead?,
+        recover_all (loescht auch @states, XP-verhalten), exp/gold,
+        transform (spiegelt Event-Befehl 336: neue Art uebernimmt Werte
+        komplett), animation1/2_id = 0 (EnemyData fuehrt keine — ehrlich).
+        States/letter im Prelude als Objekt-Ivars (nativer Kampf kennt
+        keine Gegner-Zustaende — dokumentierte Grenze).
+      - **Game_Troop**: nativ nur `__enemy_ids(troop_id)` (Live-Battler
+        bevorzugt, sonst TroopData.members); Prelude: setup/members/
+        troop_id + `$game_troop`. **Kampfstart-Hook** `Game::onBattleStarted`
+        (Game.h): feuert in BEIDEN Trichtern (Game::StartBattleByTroop UND
+        EventSystem WireInterpreter onBattleProcessing — Wichtig: der
+        Event-Befehl laeuft NICHT ueber StartBattleByTroop!); RubyVM
+        verdrahtet damit `$game_troop.setup(troop_id)` (XP: macht
+        Scene_Battle per Hand), Hook-Aufloesung in Shutdown (haelt `this`).
+      - **Game_Screen nativ** direkt an EventSystem::ScreenEffects
+        (derselbe Zustand wie Befehle 223-225): start_flash/flash_color,
+        start_tone_change/tone (frisches Tone-Objekt), start_shake/shake
+        (Integer-Naeherung des XP-Versatz-Getters). Dauer in XP-FRAMES
+        (40 fps) -> Sekunden — Umrechnung dokumentiert. Prelude:
+        `$game_screen`, pictures (51 Game_Picture), weather als reiner
+        Zustand (type 0-3, max=power*10; Rendern via RPG::Weather in
+        Ruby-Szenen, kein nativer Hook), update no-op.
+      - **Game_Picture** (Prelude): show/move/fade/erase/rotate/\
+        start_tone_change ueber die native GameUI-Bildschicht (Laufzeit-ID
+        bei show gemerkt). Dokumentierte Naeherungen: zentriertes Zeichnen
+        (origin-1-Verhalten), zoom_x/zoom_y gemittelt, rotate als Tween-
+        Schritt, Picture-Ton nur als Zustand gespeichert.
+      - **Game_Actor#change_equip nativ** (slot 0-4, item nil/ID/Objekt)
+        + **#equip im Prelude** (Inventar-Tausch mit $game_party — exakt
+        die XP-Aufteilung).
   (h) Scene_*-Framework: XP Main.rb treibt `while $scene != nil` —
       unsere Engine ownet den Frame-Loop; Bruecke = $scene bereitstellen
       + Scene.update pro Frame aufrufen (Architektur-Entscheid: Opt-in-

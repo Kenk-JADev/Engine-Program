@@ -755,6 +755,8 @@ void Game::StartBattleByTroop(int troopId, bool canEscape) {
     BattleSystem::Get().onMessage = [](const std::string& msg) {
         GameUI::Get().ShowMessage(msg);
     };
+    // XP-Bruecke (Stufe 4g): $game_troop.setup(troop_id) aus Ruby nachziehen
+    if (onBattleStarted) onBattleStarted(troopId);
     // Keine vorbelegte Aktion mehr: Die Engine oeffnet bei NeedsInput() das
     // XP-Kampfmenue (Angriff/Fertigkeit/Gegenstand/Verteidigen/Flucht).
     GameUI::Get().ShowMessage("Kampf!");

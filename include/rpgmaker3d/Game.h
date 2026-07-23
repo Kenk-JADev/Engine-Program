@@ -354,6 +354,13 @@ public:
     /// Wire-once-Hook (Engine, Paket 6): Weltposition -> RGSS-Canvas (0..640
     /// x 0..480). false = nicht projizierbar (hinter Kamera/kein Fenster).
     std::function<bool(const Vec3& worldPos, float& outCanvasX, float& outCanvasY)> worldToScreenHook;
+    /// XP-Bruecke (Stufe 4g, $game_troop): wird bei JEDEM Kampfstart mit der
+    /// Truppen-ID aufgerufen — sowohl aus Skripten (Game.start_battle /
+    /// StartBattleByTroop) als auch aus dem Event-Befehl „Kampf"
+    /// (EventSystem WireInterpreter, troopId aus dem Befehl). Ausgeloest
+    /// NACH BattleSystem::Setup, d.h. die Battler stehen bereits. Die
+    /// RubyVM verdrahtet damit $game_troop.setup(troop_id).
+    std::function<void(int troopId)> onBattleStarted;
 
     GameSwitches& Switches() { return mSwitches; }
     GameVariables& Variables() { return mVariables; }

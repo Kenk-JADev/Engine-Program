@@ -109,6 +109,9 @@ bool RubyVM::Initialize(Engine* engine) {
 }
 
 void RubyVM::Shutdown() {
+    // In BindUI verdrahteter Hook haelt `this` — VOR mrb_close loesen,
+    // sonst zeigt die Game-Lambda spaeter auf einen toten VM-Zeiger.
+    Game::Get().onBattleStarted = nullptr;
     if (mMrb) {
         mrb_close(mMrb);
         mMrb = nullptr;
@@ -1966,6 +1969,312 @@ static mrb_value rb_gactor_face_index(mrb_state* mrb, mrb_value self) {
     return mrb_int_value(mrb, GActorPtr(mrb, self)->faceIndex);
 }
 
+// XP Game_Actor#change_equip(equip_type, item) (Stufe 4g Teil 3): rein
+// datengetrieben (KEIN Inventar-Tausch — das uebernimmt equip im Prelude,
+// exakt wie beim Original). equip_type 0 = Waffe, 1..4 = Ruestungsslots;
+// item = nil, Integer (ID) oder Objekt mit #id (RPG::Weapon/RPG::Armor).
+static mrb_value rb_gactor_change_equip(mrb_state* mrb, mrb_value self) {
+    mrb_int slot = 0;
+    mrb_value item;
+    mrb_get_args(mrb, "io", &slot, &item);
+    int id = 0;
+    if (mrb_integer_p(item) || mrb_float_p(item)) {
+        id = (int)(mrb_integer_p(item) ? mrb_integer(item) : (mrb_int)mrb_float(item));
+    } else if (!mrb_nil_p(item)) {
+        mrb_value idv = mrb_funcall(mrb, item, "id", 0);
+        if (mrb_integer_p(idv)) id = (int)mrb_integer(idv);
+        if (mrb->exc) mrb->exc = nullptr; // item ohne #id -> wie nil werten
+    }
+    auto* a = GActorPtr(mrb, self);
+    if (slot == 0) {
+        a->weaponId = id;
+    } else if (slot >= 1 && slot <= 4) {
+        const size_t s = (size_t)(slot - 1);
+        while (a->armors.size() <= s) a->armors.push_back(0);
+        a->armors[s] = id;
+    }
+    return mrb_nil_value();
+}
+
+// ---------- XP Game_Enemy-Bruecke (Stufe 4g Teil 3) ----------
+// Gespiegelt am Game_Actor-Muster: @battle_index >= 0 bindet die Instanz an
+// den LIVE-Battler des laufenden Kampfs (BattleSystem::Enemies()); ohne
+// Anbindung (lesende DB-Zugriffe, Aufbau vor Kampfbeginn) dient ein
+// fluechtiger Orphan-Battler aus EnemyData als Quelle.
+static std::unordered_map<int, Battler> s_orphanEnemies;
+static Battler& EngineOrphanEnemyFor(int enemyId) {
+    auto it = s_orphanEnemies.find(enemyId);
+    if (it != s_orphanEnemies.end()) return it->second;
+    Battler b;
+    b.isActor = false;
+    b.id = enemyId;
+    b.index = -1;
+    if (const auto* d = Database::Get().GetEnemy(enemyId)) {
+        b.name = d->name;
+        b.hp = b.maxHp = d->maxHp;
+        b.mp = b.maxMp = d->maxMp;
+        b.atk = d->atk; b.def = d->def; b.agi = d->agi;
+    }
+    auto res = s_orphanEnemies.emplace(enemyId, std::move(b));
+    return res.first->second;
+}
+static mrb_int GEnemyBattleIndex(mrb_state* mrb, mrb_value self) {
+    return mrb_as_int(mrb, mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@battle_index")));
+}
+static int GEnemyId(mrb_state* mrb, mrb_value self) {
+    return (int)mrb_as_int(mrb, mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@enemy_id")));
+}
+static Battler* GEnemyLive(mrb_state* mrb, mrb_value self) {
+    if (!BattleSystem::Get().IsInBattle()) return nullptr;
+    const mrb_int idx = GEnemyBattleIndex(mrb, self);
+    auto& list = BattleSystem::Get().Enemies();
+    if (idx < 0 || idx >= (mrb_int)list.size()) return nullptr;
+    return &list[(size_t)idx];
+}
+// Effektive Quelle: Live-Battler bevorzugt, sonst Orphan.
+static Battler& GEnemyPtr(mrb_state* mrb, mrb_value self) {
+    if (Battler* live = GEnemyLive(mrb, self)) return *live;
+    return EngineOrphanEnemyFor(GEnemyId(mrb, self));
+}
+static const EnemyData* GEnemyData(mrb_state* mrb, mrb_value self) {
+    if (Battler* live = GEnemyLive(mrb, self))
+        return Database::Get().GetEnemy(live->id);
+    return Database::Get().GetEnemy(GEnemyId(mrb, self));
+}
+
+static mrb_value rb_genemy_initialize(mrb_state* mrb, mrb_value self) {
+    mrb_int id = 1;
+    mrb_get_args(mrb, "|i", &id);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@enemy_id"), mrb_int_value(mrb, id));
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@battle_index"), mrb_int_value(mrb, -1));
+    return self;
+}
+// Intern (nur Prelude/Game_Troop): Bindung an den Kampf-Battler-Slot.
+static mrb_value rb_genemy_attach(mrb_state* mrb, mrb_value self) {
+    mrb_int idx = -1;
+    mrb_get_args(mrb, "i", &idx);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@battle_index"), mrb_int_value(mrb, idx));
+    return mrb_int_value(mrb, idx);
+}
+static mrb_value rb_genemy_id(mrb_state* mrb, mrb_value self) {
+    if (Battler* live = GEnemyLive(mrb, self)) return mrb_int_value(mrb, live->id);
+    return mrb_int_value(mrb, GEnemyId(mrb, self));
+}
+static mrb_value rb_genemy_index(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyBattleIndex(mrb, self));
+}
+static mrb_value rb_genemy_exist(mrb_state* mrb, mrb_value self) {
+    if (GEnemyLive(mrb, self)) return mrb_true_value();
+    return mrb_bool_value(Database::Get().GetEnemy(GEnemyId(mrb, self)) != nullptr);
+}
+static mrb_value rb_genemy_name(mrb_state* mrb, mrb_value self) {
+    const auto& n = GEnemyPtr(mrb, self).name;
+    return mrb_str_new(mrb, n.data(), (mrb_int)n.size());
+}
+static mrb_value rb_genemy_battler_name(mrb_state* mrb, mrb_value self) {
+    const auto* d = GEnemyData(mrb, self);
+    return mrb_str_new_cstr(mrb, d ? d->battlerName.c_str() : "");
+}
+static mrb_value rb_genemy_battler_hue(mrb_state* mrb, mrb_value self) {
+    const auto* d = GEnemyData(mrb, self);
+    return mrb_int_value(mrb, d ? d->battlerHue : 0);
+}
+static mrb_value rb_genemy_hp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).hp);
+}
+static mrb_value rb_genemy_hp_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    Battler& b = GEnemyPtr(mrb, self);
+    b.hp = std::clamp((int)v, 0, b.maxHp); // XP-Clamp
+    b.isDead = (b.hp <= 0);
+    if (b.hp > 0 && v > 0) b.isDead = false; // Wiederbeleben per hp= (XP)
+    return mrb_int_value(mrb, b.hp);
+}
+static mrb_value rb_genemy_sp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).mp);
+}
+static mrb_value rb_genemy_sp_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    Battler& b = GEnemyPtr(mrb, self);
+    b.mp = std::clamp((int)v, 0, b.maxMp);
+    return mrb_int_value(mrb, b.mp);
+}
+static mrb_value rb_genemy_maxhp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).maxHp);
+}
+static mrb_value rb_genemy_maxsp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).maxMp);
+}
+static mrb_value rb_genemy_atk(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).atk);
+}
+static mrb_value rb_genemy_def(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).def);
+}
+static mrb_value rb_genemy_agi(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GEnemyPtr(mrb, self).agi);
+}
+static mrb_value rb_genemy_dead(mrb_state* mrb, mrb_value self) {
+    const Battler& b = GEnemyPtr(mrb, self);
+    return mrb_bool_value(b.isDead || b.hp <= 0);
+}
+static mrb_value rb_genemy_recover_all(mrb_state* mrb, mrb_value self) {
+    Battler& b = GEnemyPtr(mrb, self);
+    b.hp = b.maxHp;
+    b.mp = b.maxMp;
+    b.isDead = false;
+    // XP loescht hier auch alle Zustaende — die States der Game_Enemy-
+    // Bruecke leben als Ruby-Ivar (siehe Prelude-Reopen).
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@states"), mrb_ary_new(mrb));
+    return mrb_nil_value();
+}
+static mrb_value rb_genemy_exp(mrb_state* mrb, mrb_value self) {
+    const auto* d = GEnemyData(mrb, self);
+    return mrb_int_value(mrb, d ? d->exp : 0);
+}
+static mrb_value rb_genemy_gold(mrb_state* mrb, mrb_value self) {
+    const auto* d = GEnemyData(mrb, self);
+    return mrb_int_value(mrb, d ? d->gold : 0);
+}
+// XP Game_Enemy#transform(enemy_id): wie der Event-Befehl 336 (EnemyTransform)
+// in BattleSystem::ApplyEventCommand — neue Art uebernimmt Namen/Werte voll.
+static mrb_value rb_genemy_transform(mrb_state* mrb, mrb_value self) {
+    mrb_int newId = 0;
+    mrb_get_args(mrb, "i", &newId);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@enemy_id"), mrb_int_value(mrb, newId));
+    Battler& b = GEnemyPtr(mrb, self); // nach dem Ivar-Wechsel: live ODER frischer Orphan
+    b.id = (int)newId;
+    if (const auto* d = Database::Get().GetEnemy((int)newId)) {
+        b.name = d->name;
+        b.maxHp = d->maxHp; b.hp = d->maxHp;
+        b.maxMp = d->maxMp; b.mp = d->maxMp;
+        b.atk = d->atk; b.def = d->def; b.agi = d->agi;
+        b.isDead = false;
+    }
+    return mrb_nil_value();
+}
+// EnemyData fuehrt (anders als XP RPG::Enemy) keine Animations-IDs — ehrlich 0.
+static mrb_value rb_genemy_animation_zero(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_int_value(mrb, 0);
+}
+
+// ---------- XP Game_Troop-Bruecke (Stufe 4g Teil 3): nur die ID-Bruecke nativ ----------
+// setup/members baut das Prelude in Ruby (gleiches Muster wie Game_Party).
+// __enemy_ids(troop_id): LIVE-Kampf-Battler haben Vorrang, sonst TroopData.
+static mrb_value rb_gtroop_enemy_ids(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int troopId = 0;
+    mrb_get_args(mrb, "i", &troopId);
+    std::vector<int> ids;
+    auto& bs = BattleSystem::Get();
+    if (bs.IsInBattle()) {
+        // Die laufenden Battler sind die Wahrheit (Reihenfolge = Slot-Index).
+        for (const auto& b : bs.Enemies()) ids.push_back(b.id);
+    } else if (const auto* tr = Database::Get().GetTroop((int)troopId)) {
+        ids = tr->members;
+    }
+    mrb_value ary = mrb_ary_new_capa(mrb, (mrb_int)ids.size());
+    for (int id : ids) mrb_ary_push(mrb, ary, mrb_int_value(mrb, id));
+    return ary;
+}
+
+// ---------- XP Game_Screen-Bruecke (Stufe 4g Teil 3) ----------
+// Direkt an EventSystem::ScreenEffects gekoppelt (derselbe Zustand, den die
+// Event-Befehle 223/224/225 bedienen). XP uebergibt Dauer in FRAMES bei
+// 40 fps -> Sekunden = frames / 40.0 (dokumentierte Umrechnung).
+static float XpFramesToSecs(mrb_int frames) {
+    const double s = (double)frames / 40.0;
+    return s > 0.0 ? (float)s : 0.0f;
+}
+static mrb_value rb_gscreen_start_flash(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value color;
+    mrb_int frames = 0;
+    mrb_get_args(mrb, "oi", &color, &frames);
+    float r = 255, g = 255, b = 255, a = 255;
+    if (!mrb_nil_p(color)) {
+        mrb_value idv = mrb_iv_get(mrb, color, mrb_intern_lit(mrb, "__rgss_color_id"));
+        if (mrb_int_p(idv)) {
+            if (auto* cs = RgssColorGet((int)mrb_as_int(mrb, idv))) {
+                r = cs->r; g = cs->g; b = cs->b; a = cs->a;
+            }
+        }
+    }
+    auto& fx = GetScreenEffects();
+    fx.flashColor = Color(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+    fx.flashDuration = XpFramesToSecs(frames);
+    fx.flashTimer = fx.flashDuration;
+    return mrb_nil_value();
+}
+static mrb_value rb_gscreen_flash_color(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const auto& fx = GetScreenEffects();
+    if (fx.flashTimer <= 0.0f) return mrb_nil_value(); // XP: nil ausserhalb
+    struct RClass* ccls = mrb_class_get(mrb, "Color");
+    mrb_value args[4] = {
+        mrb_float_value(mrb, fx.flashColor.r * 255.0f),
+        mrb_float_value(mrb, fx.flashColor.g * 255.0f),
+        mrb_float_value(mrb, fx.flashColor.b * 255.0f),
+        mrb_float_value(mrb, fx.flashColor.a * 255.0f) };
+    return mrb_obj_new(mrb, ccls, 4, args);
+}
+static mrb_value rb_gscreen_start_tone_change(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value tone;
+    mrb_int frames = 0;
+    mrb_get_args(mrb, "oi", &tone, &frames);
+    auto& fx = GetScreenEffects();
+    if (!mrb_nil_p(tone)) {
+        mrb_value idv = mrb_iv_get(mrb, tone, mrb_intern_lit(mrb, "__rgss_tone_id"));
+        if (mrb_int_p(idv)) {
+            if (auto* ts = RgssToneGet((int)mrb_as_int(mrb, idv))) {
+                fx.toneTarget = Color(ts->r / 255.0f, ts->g / 255.0f,
+                                      ts->b / 255.0f, ts->gray / 255.0f);
+            }
+        }
+    }
+    fx.toneElapsed = 0.0f;
+    fx.toneDuration = XpFramesToSecs(frames);
+    if (fx.toneDuration <= 0.0f) fx.toneCurrent = fx.toneTarget; // XP: d=0 -> sofort
+    return mrb_nil_value();
+}
+static mrb_value rb_gscreen_tone(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const auto& fx = GetScreenEffects();
+    struct RClass* tcls = mrb_class_get(mrb, "Tone");
+    mrb_value args[4] = {
+        mrb_float_value(mrb, fx.toneCurrent.r * 255.0f),
+        mrb_float_value(mrb, fx.toneCurrent.g * 255.0f),
+        mrb_float_value(mrb, fx.toneCurrent.b * 255.0f),
+        mrb_float_value(mrb, fx.toneCurrent.a * 255.0f) };
+    return mrb_obj_new(mrb, tcls, 4, args);
+}
+static mrb_value rb_gscreen_start_shake(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int power = 5, speed = 10, frames = 0;
+    mrb_get_args(mrb, "iii", &power, &speed, &frames);
+    auto& fx = GetScreenEffects();
+    fx.shakePower = (int)power;
+    fx.shakeSpeed = (int)speed;
+    fx.shakeDuration = fx.shakeTimer = XpFramesToSecs(frames);
+    return mrb_nil_value();
+}
+// XP Game_Screen#shake liefert den aktuellen Versatz fuer den Viewport; der
+// Renderer wendet ihn nativ an — hier als Integer-Naeherung (Kraft, solange
+// der Timer laeuft, sonst 0), dokumentiert.
+static mrb_value rb_gscreen_shake(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    const auto& fx = GetScreenEffects();
+    return mrb_int_value(mrb, fx.shakeTimer > 0.0f ? fx.shakePower : 0);
+}
+static mrb_value rb_gscreen_initialize(mrb_state* mrb, mrb_value self) {
+    (void)mrb;
+    return self;
+}
+
 
 // ---------- Menue/Speicherbildschirm aus Ruby oeffnen (XP: Scene_Menu/Scene_Save) ----------
 static mrb_value rb_ui_open_menu(mrb_state* mrb, mrb_value self) {
@@ -2469,6 +2778,69 @@ void RubyVM::BindUI() {
     mrb_define_method(mMrb, cGameActor, "armor4_id", rb_gactor_armor4_id, MRB_ARGS_NONE());
     mrb_define_method(mMrb, cGameActor, "character_name", rb_gactor_character_name, MRB_ARGS_NONE());
     mrb_define_method(mMrb, cGameActor, "face_index", rb_gactor_face_index, MRB_ARGS_NONE());
+    // Stufe 4g Teil 3: XP-Equip-Mutator (Inventar-Tausch = equip im Prelude)
+    mrb_define_method(mMrb, cGameActor, "change_equip", rb_gactor_change_equip, MRB_ARGS_REQ(2));
+
+    // ---------- XP Game_Enemy (Stufe 4g Teil 3): live an den nativen ----------
+    // Kampf gekoppelt (oder Orphan-Datenbankwerte). states kommen im Prelude
+    // als Ruby-Ivars dazu (unser C++-Kampf kennt keine Gegner-Zustaende —
+    // dokumentierte Grenze).
+    struct RClass* cGameEnemy = mrb_define_class(mMrb, "Game_Enemy", mMrb->object_class);
+    mrb_define_method(mMrb, cGameEnemy, "initialize", rb_genemy_initialize, MRB_ARGS_OPT(1));
+    mrb_define_method(mMrb, cGameEnemy, "__attach", rb_genemy_attach, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEnemy, "id", rb_genemy_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "enemy_id", rb_genemy_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "index", rb_genemy_index, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "exist?", rb_genemy_exist, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "name", rb_genemy_name, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "battler_name", rb_genemy_battler_name, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "battler_hue", rb_genemy_battler_hue, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "hp", rb_genemy_hp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "hp=", rb_genemy_hp_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEnemy, "sp", rb_genemy_sp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "sp=", rb_genemy_sp_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEnemy, "maxhp", rb_genemy_maxhp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "maxsp", rb_genemy_maxsp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "atk", rb_genemy_atk, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "def", rb_genemy_def, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "agi", rb_genemy_agi, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "dead?", rb_genemy_dead, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "recover_all", rb_genemy_recover_all, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "exp", rb_genemy_exp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "gold", rb_genemy_gold, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "transform", rb_genemy_transform, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEnemy, "animation1_id", rb_genemy_animation_zero, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "animation2_id", rb_genemy_animation_zero, MRB_ARGS_NONE());
+
+    // ---------- XP Game_Troop (Stufe 4g Teil 3): nur ID-Bruecke nativ ----------
+    struct RClass* cGameTroop = mrb_define_class(mMrb, "Game_Troop", mMrb->object_class);
+    mrb_define_method(mMrb, cGameTroop, "__enemy_ids", rb_gtroop_enemy_ids, MRB_ARGS_REQ(1));
+
+    // ---------- XP Game_Screen (Stufe 4g Teil 3): direkt an ScreenEffects ----------
+    // (Flash/Tone/Shake der Event-Befehle 223-225). pictures/weather baut
+    // das Prelude in Ruby; Dauer-Uebergaben sind XP-Frames (40 fps).
+    struct RClass* cGameScreen = mrb_define_class(mMrb, "Game_Screen", mMrb->object_class);
+    mrb_define_method(mMrb, cGameScreen, "initialize", rb_gscreen_initialize, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameScreen, "start_flash", rb_gscreen_start_flash, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cGameScreen, "flash_color", rb_gscreen_flash_color, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameScreen, "start_tone_change", rb_gscreen_start_tone_change, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cGameScreen, "tone", rb_gscreen_tone, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameScreen, "start_shake", rb_gscreen_start_shake, MRB_ARGS_REQ(3));
+    mrb_define_method(mMrb, cGameScreen, "shake", rb_gscreen_shake, MRB_ARGS_NONE());
+
+    // ---------- XP-Bruecke (Stufe 4g): Kampfstart -> $game_troop.setup ----------
+    // Feuert bei JEDEM Kampfstart (Skript- UND Event-Weg — die beiden
+    // Trichter Game::StartBattleByTroop und EventSystem WireInterpreter
+    // melden die Truppen-ID hierher). Fehler im Setup duerfen den
+    // Kampfstart nicht abwetzen -> Exception wird geschluckt.
+    Game::Get().onBattleStarted = [this](int troopId) {
+        if (!mMrb) return;
+        mrb_value troop = mrb_gv_get(mMrb, mrb_intern_lit(mMrb, "$game_troop"));
+        if (mrb_nil_p(troop)) return;
+        mrb_value arg = mrb_int_value(mMrb, (mrb_int)troopId);
+        mrb_funcall_argv(mMrb, troop, mrb_intern_lit(mMrb, "setup"), 1, &arg);
+        if (mMrb->exc) mMrb->exc = nullptr;
+    };
 }
 
 // ==================== Actor Bindings ====================
