@@ -194,6 +194,24 @@ Wichtig dabei:
   (Aufrufkette, Datei/Zeile) im Log.
 - Fenstertitel des Players = **Spieltitel** aus der Datenbank (System-Tab).
 
+### Fehlersuche: Player/Editor startet nicht (Windows)
+
+Wird die exe bzw. `RPGMaker3D_Player.exe` auf einem fremden Rechner
+ausgeführt und **schließt sich sofort** (kurze Console, dann nichts), fehlt
+fast immer die **Microsoft Visual C++ Redistributable (x64, VS 2022)**
+(`vc_redist.x64.exe` von microsoft.com). Die Engine ist dynamisch gelinkt –
+auf Entwicklerrechnern ist die Laufzeit durch Visual Studio vorinstalliert,
+auf Ziel-PCs nicht. Workarounds:
+
+1. **vc_redist installieren** (empfohlen, einmalig pro Rechner), oder
+2. exe **statisch linken** (CMake-Option `-DCMAKE_POLICY_DEFAULT_CMP0091=NEW`
+   + `/MT`), wenn der Build angestoßen wird, oder
+3. wenn die Start-Härtung greift, liegt neben der exe eine **`engine.log`**
+   mit einer Zeile `[FATAL-STARTUP] ...` – der genaue Grund steht darin.
+
+Das war übrigens auch die Ursache beim gemeldeten „Programm öffnet nicht"-
+Problem (Juli 2026): fehlendes vc_redist auf dem Zielrechner.
+
 ## Events (XP-Befehlssatz)
 
 Der Event-Interpreter unterstützt den **vollständigen RPG-Maker-XP-Befehlssatz**

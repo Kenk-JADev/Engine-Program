@@ -1,6 +1,8 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/Map.h"
+#include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/AudioManager.h"
 #include "rpgmaker3d/JsonUtils.h"
@@ -1468,6 +1470,43 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
         if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
         float dist = glm::length(Vec3(playerPos.x - ep.x, 0.0f, playerPos.z - ep.z));
         if (dist < best) { best = dist; bestId = ev.id; }
+    }
+    if (bestId >= 0) { StartEvent(bestId); return; }
+
+    // XP-Tresen (Counter-Flag, Paket 1/6): Wenn der Spieler einem Tresen-
+    // Tile (Verkaufstresen/Theke) gegenuebersteht, darf das ActionButton-
+    // Event EIN Feld dahinter ausgeloest werden.
+    const auto& gm = Game::Get().Map();
+    const Map* bound = gm.GetBoundMap();
+    if (!bound) return;
+    auto tileset = bound->GetTileset();
+    if (!tileset || !tileset->HasTilesetData()) return;
+
+    const float reach = radius + 1.0f; // zusaetzliche Kachel
+    float bestC = reach;
+    for (auto& ev : mEvents) {
+        if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
+        RefreshEventPage(ev);
+        const EventPage* page = ev.GetCurrentPage();
+        if (!page || page->trigger != EventTrigger::ActionButton) continue;
+        Vec3 ep = ev.worldPos;
+        if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+        const float dist = glm::length(Vec3(playerPos.x - ep.x, 0.0f, playerPos.z - ep.z));
+        if (dist >= reach || dist <= radius) continue; // nur die neu erschlossene Zone
+        // Mittelpunkt zwischen Spieler und Event: dort muss ein Tresen-Tile liegen
+        const Vec3 mid((playerPos.x + ep.x) * 0.5f, 0.0f, (playerPos.z + ep.z) * 0.5f);
+        int mx, mz;
+        if (!gm.WorldToMap(mid.x, mid.z, mx, mz)) continue;
+        bool counter = false;
+        for (const auto& layer : bound->GetLayers()) {
+            if (mx < 0 || mz < 0 || mx >= layer.width || mz >= layer.height) continue;
+            const int idx = mz * layer.width + mx;
+            if (idx >= 0 && idx < (int)layer.tiles.size()) {
+                const int tid = layer.tiles[idx];
+                if (tid >= 0 && tileset->GetCounter(tid) != 0) { counter = true; break; }
+            }
+        }
+        if (counter && dist < bestC) { bestC = dist; bestId = ev.id; }
     }
     if (bestId >= 0) StartEvent(bestId);
 }

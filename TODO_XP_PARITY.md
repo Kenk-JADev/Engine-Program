@@ -280,7 +280,7 @@ am Ziel ab und wartet bis zum Ende.
 
 ---
 
-## PAKET 6 — Kleinigkeiten (Danach)
+## PAKET 6 — Kleinigkeiten (Stand 2026-07-23)
 - [ ] **XP-Importdialog („Material base"):** Asset-Browser vorhanden
   (`qt_editor/QtAssetBrowserDock.*`); XP kann zusätzlich Datei→Projektordner
   importieren inkl. transparenter Farbe (nur ViaScript: Bitmap hat Colorkey?
@@ -289,16 +289,26 @@ am Ziel ab und wartet bis zum Ende.
   3D-Darstellung nutzt Höhen-Offset pro Priorität; RGSS-Tilemap kann es
   schon (`priorities`-Table) — native Pfad offen.
 - [ ] **Busch-Flag-Effekt:** Spieler-Sprite unten „im Gras" (halbe Deckkraft/
-  Z-Maske) wenn auf Bush-Tile steht (Daten kommen aus Paket 1).
-- [ ] **Counter-Flag:** Event-Auslösung ÜBER ein Tresen-Tile hinweg
-  (ActionButton-Trigger mit +1 Tile Distanz wenn Counter) — XP-Feeling.
+  Z-Maske) wenn auf Bush-Tile steht (Daten kommen aus Paket 1; Visualisierung
+  wurde nicht gebaut, weil der Spieler aktuell ein 3D-Modell ist — 3D-
+  Näherung: Tile-Overlay oder kurzer „Bewegung durch Gras"-Effekt).
+- [x] **Counter-Flag (ERLEDIGT 2026-07-23):** `EventSystem::TryInteract`
+  erweitert: findet kein ActionButton-Event im Normalradius, schaut er ein
+  Tile weiter; löst es nur aus, wenn die Mittelkachel zwischen Spieler und
+  Event counter-geflaggt ist (alle Ebenen geprüft). XP-Feeling an
+  Verkaufstresen.
 - [ ] **Terrain-Tag:** definieren, was unsere Engine damit tut
   (z.B. Schritt-SE, Busch-Alternativen) — erst nach Paket 1 Daten verfügbar.
-- [ ] **Player-Export:** `vc_redist`-Hinweis ins README/Release-Notes
-  (User-Problem 2026-07: Ziel-PC ohne vc_redist → Exe schließt sofort).
+- [x] **Player-Export vc_redist-Hinweis (ERLEDIGT 2026-07-23):** README-
+  Abschnitt „Fehlersuche: Player/Editor startet nicht (Windows)" erklärt
+  die Schließt-sofort-Historie (vc_redist) + Vorschläge (installieren,
+  statisch linken, engine.log [FATAL-STARTUP] lesen).
 - [ ] **XP_Scripts/ schrittweise lauffähig:** die 90 Original-Skripte gegen
   unsere RGSS-Implementierung laufen lassen; jedes noch-fehlende API hier
   eintragen. Bekannte dokumentierte Grenze: `load_data`/Marshal (rxdata).
+- [ ] **Animations-Ziel (param1) beachten:** Paket-5-Nebenpunkt — das
+  Ziel-Event aus „Animation zeigen" wird noch als Canvas-Mitte interpretiert;
+  echte 3D→2D-Projektion der Eventposition als Folgearbeit.
 
 ---
 
