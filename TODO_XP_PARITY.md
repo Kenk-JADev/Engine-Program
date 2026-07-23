@@ -325,12 +325,17 @@ grün — alles Windows-spezifische Fallen). Fixes:
    Regel: NIEMALS Member `CreateWindow` nennen — windows.h-Makro.
 2. **mruby 4.0.0: `mrb_integer_value` entfernt** → heißt jetzt
    `mrb_int_value(mrb, i)`. Neuer Header **`include/rpgmaker3d/RubyCompat.h`**
-   mit `RPG_MRB_INT_VALUE(...)` (1- oder 2-Arg-Form; bei 1 Arg wird der State
-   aus `mrb` gezogen — Achtung: im Install-Scope heißt er `mMrb`, dort 2-Arg
-   verwenden!). Alle ~79 Aufrufstellen umgestellt. Kompat: mruby 4.x
-   `mrb_int_value`, 3.x `mrb_integer_value`, ≤2.x `mrb_fixnum_value`.
-   Lokal verifiziert gegen echte mruby-4.0.0-Header (geklont nach /tmp,
-   `-fsyntax-only`, beide Dateien sauber: RUBY-Zweig UND Stub-Zweig).
+   mit `RPG_MRB_INT_VALUE(mrb_, i)` — IMMER 2-argumentig aufrufen (State im
+   Install-Scope heißt dort `mMrb`). Kompat: mruby 4.x `mrb_int_value`,
+   3.x `mrb_integer_value`, ≤2.x `mrb_fixnum_value`. Alle 83 Aufrufstellen
+   umgestellt. Lokal verifiziert gegen echte mruby-4.0.0-Header (geklont
+   nach /tmp, `-fsyntax-only`, beide Dateien sauber: RUBY-Zweig UND
+   Stub-Zweig).
+   **Falle (CI-Lauf 2):** Der ursprüngliche 1/2-Arg-`__VA_ARGS__`-Dispatcher
+   im Makro funktionierte unter g++, aber NICHT unter dem MSVC-Legacy-
+   Präprozessor (C2065 'mrb' im Install-Scope) → Dispatcher entfernt,
+   strikt 2-argumentig. Merksatz: keine __VA_ARGS__-Arg-Zähl-Tricks in
+   Headern, die MSVC bauen muss.
 3. **`M_PI` unter MSVC:** `src/RgssUI.cpp` definiert M_PI jetzt selbst
    (MSVC braucht sonst `_USE_MATH_DEFINES`).
 4. **Qt-Includes im Namespace (Editor-Build-Totalschaden):**
