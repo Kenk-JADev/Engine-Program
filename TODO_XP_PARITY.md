@@ -354,8 +354,16 @@ am Ziel ab und wartet bis zum Ende.
   Flag-Tabellen mit +384-Offset; Actor-Parameter linear initial->final über
   99 Level; Troop-Member ohne Koordinaten aufgereiht). XP-Skripte bekommen
   ihre `$data_*` so aus dem Datenbank-Dialog-JSON.
-  **Offen (geordnet, nächste Stufen zuerst):** (a) `Map%03d.rxdata`-Brücke
-  (Engine-Map -> RPG::Map mit Table data — nötig für Game_Map.setup);
+  **Offen (geordnet, nächste Stufen zuerst):** (a) ~~`Map%03d.rxdata`~~
+  **ERLEDIGT 2026-07-23 (Stufe 2):** `__engine_db_fetch("map", id)` lädt
+  `maps/map<N>.map` (Binaerformat, statisches Map::Load — keine Engine/
+  Singleton noetig) und liefert Geometrie + Layer (z-major, roh inkl. -1);
+  tileset_id/encounter_* aus `MapInfo` (die .map-Datei fuehrt sie nicht).
+  Prelude erkennt den Dateinamen ohne Regexp (mruby-Kern), baut RPG::Map
+  mit data-Table(w,h,3) und native ID -> +384-RGSS-Offset; `events = {}`
+  bewusst: NPC-Rendering + Interpreter laufen nativ (LoadMapEvents haette
+  singleton-Seiteneffekte gehabt — Event-Export als moegliche Stufe 2b
+  vermerkt, falls XP-Skripte ev.pages/list wirklich lesen muessen);
   (b) `CommonEvents.rxdata` (Database hat noch keine CommonEvent-Struct ->
   erst Paket „Gemeinsame Ereignisse" in der DB); (c) `BT_*.rxdata`
   (Kampf-Testdaten) — Ausgabe der XP-Test-Schiene; (d) Marshal.load/save

@@ -50,6 +50,19 @@ def load_data(filename)
   base = filename.to_s
   slash = base.rindex("/")
   base = base[(slash + 1)..-1] if slash
+  # Dynamische Kartendateien (XP Game_Map.setup: "Data/Map%03d.rxdata"):
+  # Zahl extrahieren — ohne Regexp (mruby-Kern hat keine).
+  if base.length >= 12 and base[0..2] == "Map" and base[-7..-1] == ".rxdata"
+    num = base[3..-8].to_i
+    if num > 0
+      rows = __engine_db_fetch("map", num)
+      if rows.nil?
+        raise RGSSError, "load_data(\"#{filename}\"): Karte nicht gefunden " \
+          "(maps/map#{num}.map im Projekt)."
+      end
+      return __engine_db_build("map", rows)
+    end
+  end
   kind = case base
     when "Actors.rxdata"      then "actors"
     when "Classes.rxdata"     then "classes"
@@ -83,6 +96,32 @@ end
 # Baut aus den generischen DB-Hashes (nativ) die RPG::*-Objekte.
 def __engine_db_build(kind, rows)
   case kind
+  when "map"
+    # Stufe 2a: volle Geometrie; Events leer (NPCs laufen nativ ueber das
+    # EventSystem — XP-Skripte iterieren $game_map.events gefahrlos).
+    m = RPG::Map.new(rows[:width], rows[:height])
+    m.tileset_id = rows[:tileset_id]
+    m.encounter_step = rows[:encounter_step]
+    m.encounter_list = rows[:encounter_list]
+    w = rows[:width]; h = rows[:height]
+    t = Table.new(w, h, 3)
+    rows[:layers].each_with_index do |lay, li|
+      break if li >= 3
+      for y in 0...h
+        for x in 0...w
+          v = lay[y * w + x]
+          if v.nil? or v < 0
+            t[x, y, li] = 0
+          else
+            # native Tile-ID -> RGSS-ID (0..383 sind Autotiles bei XP)
+            t[x, y, li] = v + 384
+          end
+        end
+      end
+    end
+    m.data = t
+    m.events = {}
+    return m
   when "actors"
     out = [nil]
     rows.each do |r|

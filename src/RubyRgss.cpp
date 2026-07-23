@@ -16,6 +16,10 @@
 #include "rpgmaker3d/RgssUI.h"
 #include "rpgmaker3d/RgssPrelude.h"
 #include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/Map.h"
+
+#include <cstdio>
+#include <filesystem>
 
 // ssize_t-Fix wie in RubyVM.cpp (MSVC kennt den POSIX-Typ nicht)
 #include <cstddef>
@@ -1868,10 +1872,57 @@ mrb_value DbStrArray(mrb_state* mrb, const std::vector<std::string>& v) {
 
 static mrb_value rb_engine_db_fetch(mrb_state* mrb, mrb_value /*self*/) {
     char* kindC = nullptr;
-    mrb_get_args(mrb, "z", &kindC);
+    mrb_int mapId = 1; // nur fuer kind == "map" (zweites, optionales Arg)
+    mrb_get_args(mrb, "z|i", &kindC, &mapId);
     const std::string kind = kindC ? kindC : "";
     Database& db = Database::Get();
 
+    if (kind == "map") {
+        // XP Stufe 2 (Map%03d.rxdata): Engine-Map-Datei (Binaerformat,
+        // Map::Load) laden und als generischen Hash liefern — Ruby baut
+        // daraus RPG::Map (data-Table mit +384-RGSS-Offset). tileset/encounter
+        // kommen aus MapInfo (die .map-Datei fuehrt sie nicht). Events
+        // bleiben bewusst leer: NPC-Darstellung + Interpreter laufen nativ
+        // ueber das EventSystem (LoadMapEvents haette hier Singleton-
+        // Seiteneffekte, deshalb kein Export an dieser Stelle).
+        const std::string base = RgssUI::ProjectBase().empty()
+            ? std::string(".") : RgssUI::ProjectBase();
+        char rel[64];
+        std::snprintf(rel, sizeof(rel), "maps/map%d.map", (int)mapId);
+        const std::string p1 = base + "/" + rel;
+        Map m;
+        const bool ok = std::filesystem::exists(p1) ? m.Load(p1) : m.Load(rel);
+        if (!ok) return mrb_nil_value();
+
+        int tilesetId = 1;
+        int encStep = 30;
+        std::vector<int> encList;
+        for (const auto& mi : db.MapInfos()) {
+            if (mi.id == (int)mapId) {
+                tilesetId = mi.tilesetId;
+                encStep = mi.encounterStep;
+                for (int k = 0; k < 8; ++k)
+                    if (mi.encounterList[k] > 0) encList.push_back(mi.encounterList[k]);
+                break;
+            }
+        }
+
+        mrb_value h = mrb_hash_new(mrb);
+        DbSetInt(mrb, h, "width", m.GetWidth());
+        DbSetInt(mrb, h, "height", m.GetHeight());
+        DbSetInt(mrb, h, "tileset_id", tilesetId);
+        DbSetInt(mrb, h, "encounter_step", encStep);
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "encounter_list")),
+                     DbIntArray(mrb, encList));
+        // Layer z-major roh (-1 = leer); Ruby verschiebt native ID -> +384.
+        const auto& layers = m.GetLayers();
+        mrb_value lays = mrb_ary_new_capa(mrb, (mrb_int)layers.size());
+        for (const auto& lay : layers) {
+            mrb_ary_push(mrb, lays, DbIntArray(mrb, lay.tiles));
+        }
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "layers")), lays);
+        return h;
+    }
     if (kind == "actors") {
         mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Actors().size());
         for (const auto& a : db.Actors()) {
@@ -2264,8 +2315,9 @@ void RubyVM::BindRgssGraphics() {
 
     // XP load_data-Bruecke (PAKET 6): Engine-DB (JSON) -> Ruby-Hashes.
     // Privater Kernel-Helfer; der Prelude baut daraus die RPG::*-Objekte.
+    // kind "map" nimmt zusaetzlich die Map-ID als zweites Argument.
     mrb_define_method(mMrb, mMrb->kernel_module, "__engine_db_fetch",
-                      rb_engine_db_fetch, MRB_ARGS_REQ(1));
+                      rb_engine_db_fetch, MRB_ARGS_ARG(1, 1));
 }
 
 void RubyVM::BindRgssWindowEx() {
