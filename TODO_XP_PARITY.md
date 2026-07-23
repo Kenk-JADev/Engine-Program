@@ -348,6 +348,17 @@ grün — alles Windows-spezifische Fallen). Fixes:
    von `tileAt()` ergänzt (+`#include <QPoint>`); doppelten `tileCount()`-
    Body im .cpp entfernt (C2084).
 
+6. **Linker-Verwechslung (CI-Lauf 3):** `GameMap::IsPassableWithRadius
+   (pos, radius, dirBit)` (3-Arg-Overload aus Paket 1) war im Header deklariert
+   und von `GamePlayer::Update` benutzt, die Definition in Game.cpp fehlte
+   aber (beim Staging verloren gegangen) → LNK2019. `-fsyntax-only` erkennt
+   das nicht! Neu in Game.cpp implementiert: gleiche Abtaststruktur wie die
+   2-Arg-Version, aber `dirBit` wird an JEDEM Samplepunkt durchgereicht
+   (Kanten-Flags/passage4dir greifen so auch, wenn der Spielerkreis sie
+   streift). Lokal per `nm -C Game.o` verifiziert, dass BEIDE Overloads
+   definiert sind. Merksatz: nach dem Syntaxcheck neu eingeführte
+   Member-Definitionen kurz mit `nm -C` auf Vorhandensein prüfen.
+
 Merksatz für die nächsten Pakete: nach jedem Push **sofort CI grün machen**
 (4 Commits waren ungetestet gestapelt).
 

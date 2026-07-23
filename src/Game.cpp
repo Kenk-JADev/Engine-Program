@@ -490,6 +490,35 @@ bool GameMap::IsPassableWithRadius(const Vec3& pos, float radius) const {
     return true;
 }
 
+bool GameMap::IsPassableWithRadius(const Vec3& pos, float radius, int dirBit) const {
+    // Wie die 2-Argument-Version, aber mit XP-Richtungspruefung (dirBit):
+    // Die Richtung wird an JEDEM Abtastpunkt geprueft, damit Kanten-Flags
+    // (passage4dir) korrekt greifen, wenn der Spieler-Kreis sie streift.
+    if (!IsInsideMapBounds(pos, radius)) return false;
+
+    auto pass = [this](float wx, float wz, int dir) {
+        int mx, mz;
+        WorldToMap(wx, wz, mx, mz);
+        return IsPassable(mx, mz, dir);
+    };
+
+    if (!pass(pos.x, pos.z, dirBit)) return false;
+    if (radius <= 0.0f) return true;
+
+    if (!pass(pos.x + radius, pos.z, dirBit)) return false;
+    if (!pass(pos.x - radius, pos.z, dirBit)) return false;
+    if (!pass(pos.x, pos.z + radius, dirBit)) return false;
+    if (!pass(pos.x, pos.z - radius, dirBit)) return false;
+
+    float diag = radius * 0.7071f;
+    if (!pass(pos.x + diag, pos.z + diag, dirBit)) return false;
+    if (!pass(pos.x - diag, pos.z + diag, dirBit)) return false;
+    if (!pass(pos.x + diag, pos.z - diag, dirBit)) return false;
+    if (!pass(pos.x - diag, pos.z - diag, dirBit)) return false;
+
+    return true;
+}
+
 int GameMap::GetWidth() const {
     if (mBoundMap) return mBoundMap->GetWidth();
     return 20;
