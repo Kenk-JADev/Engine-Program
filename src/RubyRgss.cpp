@@ -444,6 +444,17 @@ static mrb_value rb_font_italic_set(mrb_state* mrb, mrb_value self) {
     if (auto* f = RgssFontFrom(mrb, self)) f->italic = v;
     return mrb_bool_value(v);
 }
+// XP Font#shadow: Zustand vollstaendig (eingebauter Text-Renderer
+// zeichnet den Schatten Stand heute nicht mit — s. TODO_XP_PARITY).
+static mrb_value rb_font_shadow_get(mrb_state* mrb, mrb_value self) {
+    if (auto* f = RgssFontFrom(mrb, self)) return mrb_bool_value(f->shadow);
+    return mrb_bool_value(false);
+}
+static mrb_value rb_font_shadow_set(mrb_state* mrb, mrb_value self) {
+    mrb_bool v = false; mrb_get_args(mrb, "b", &v);
+    if (auto* f = RgssFontFrom(mrb, self)) f->shadow = v;
+    return mrb_bool_value(v);
+}
 static mrb_value rb_font_color_get(mrb_state* mrb, mrb_value self) {
     if (auto* f = RgssFontFrom(mrb, self))
         return RgssWrapById(mrb, "Color", "__rgss_color_id", f->colorId);
@@ -491,6 +502,14 @@ static mrb_value rb_fdef_italic_get(mrb_state* mrb, mrb_value) {
 static mrb_value rb_fdef_italic_set(mrb_state* mrb, mrb_value) {
     mrb_bool v = false; mrb_get_args(mrb, "b", &v);
     RgssFontDefaults().italic = v;
+    return mrb_bool_value(v);
+}
+static mrb_value rb_fdef_shadow_get(mrb_state* mrb, mrb_value) {
+    (void)mrb; return mrb_bool_value(RgssFontDefaults().shadow);
+}
+static mrb_value rb_fdef_shadow_set(mrb_state* mrb, mrb_value) {
+    mrb_bool v = false; mrb_get_args(mrb, "b", &v);
+    RgssFontDefaults().shadow = v;
     return mrb_bool_value(v);
 }
 static mrb_value rb_fdef_color_get(mrb_state* mrb, mrb_value) {
@@ -945,6 +964,12 @@ RGSS_DRW_FATTR(zoom_x, zoomX)
 RGSS_DRW_FATTR(zoom_y, zoomY)
 RGSS_DRW_FATTR(angle, angle)
 RGSS_DRW_FATTR(bush_depth, bushDepth)
+// XP Sprite-Wave (Zustand vollstaendig; Renderer zeichnet keine
+// Sinusverzerrung — ehrliche Grenze, s. TODO_XP_PARITY).
+RGSS_DRW_FATTR(wave_height, waveHeight)
+RGSS_DRW_FATTR(wave_amp, waveAmp)
+RGSS_DRW_FATTR(wave_length, waveLength)
+RGSS_DRW_FATTR(wave_speed, waveSpeed)
 
 static mrb_value rb_drw_mirror_get(mrb_state* mrb, mrb_value self) {
     if (auto* d = RgssDrwFrom(mrb, self)) return mrb_bool_value(d->mirror);
@@ -1049,7 +1074,12 @@ static mrb_value rb_sprite_flash(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 static mrb_value rb_sprite_update(mrb_state* mrb, mrb_value self) {
-    (void)mrb; (void)self;
+    if (auto* d = RgssDrwFrom(mrb, self)) {
+        // XP Sprite#wave_update: Phase laeuft nur bei aktivem Wave sinnvoll,
+        // XP-Division wave_speed / [2.0 * wave_length, 1.0].max
+        if (d->waveAmp > 0.0f)
+            d->wavePhase += d->waveSpeed / std::max(2.0f * d->waveLength, 1.0f);
+    }
     return mrb_nil_value();
 }
 
@@ -1319,6 +1349,16 @@ static mrb_value rb_graphics_transition(mrb_state* mrb, mrb_value self) {
 }
 static mrb_value rb_graphics_frame_reset(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
+    return mrb_nil_value();
+}
+// XP Graphics.wait(duration): pausiert in XP Dauer-Frames. Unsere Engine
+// ownet den Frame-Loop — ein Blockieren einfrieren lassen wuerde die UI,
+// darum ehrlich als frame-freundlicher Kompat-No-op (s. TODO_XP_PARITY).
+static mrb_value rb_graphics_wait(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int d = 1;
+    mrb_get_args(mrb, "|i", &d);
+    (void)d;
     return mrb_nil_value();
 }
 static mrb_value rb_graphics_frame_rate_get(mrb_state* mrb, mrb_value self) {
@@ -1671,6 +1711,8 @@ void RubyVM::BindRgssObjects() {
     mrb_define_method(mMrb, font, "italic=", rb_font_italic_set, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, font, "color", rb_font_color_get, MRB_ARGS_NONE());
     mrb_define_method(mMrb, font, "color=", rb_font_color_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, font, "shadow", rb_font_shadow_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, font, "shadow=", rb_font_shadow_set, MRB_ARGS_REQ(1));
 
     // FontDefaults (Rueckgrat fuer Font.default_* aus der Prelude)
     struct RClass* fdef = mrb_define_module(mMrb, "FontDefaults");
@@ -1684,6 +1726,8 @@ void RubyVM::BindRgssObjects() {
     mrb_define_module_function(mMrb, fdef, "italic=", rb_fdef_italic_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, fdef, "color", rb_fdef_color_get, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, fdef, "color=", rb_fdef_color_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, fdef, "shadow", rb_fdef_shadow_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, fdef, "shadow=", rb_fdef_shadow_set, MRB_ARGS_REQ(1));
 
     // Bitmap
     struct RClass* bmp = mrb_define_class(mMrb, "Bitmap", mMrb->object_class);
@@ -1767,6 +1811,15 @@ void RubyVM::BindRgssDrawables() {
     mrb_define_method(mMrb, sprite, "mirror=", rb_drw_mirror_set, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, sprite, "bush_depth", rb_drw_bush_depth_get, MRB_ARGS_NONE());
     mrb_define_method(mMrb, sprite, "bush_depth=", rb_drw_bush_depth_set, MRB_ARGS_REQ(1));
+    // XP Wave (Zustand + Phasen-Advance in update; kein Renderer-Effekt)
+    mrb_define_method(mMrb, sprite, "wave_height", rb_drw_wave_height_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, sprite, "wave_height=", rb_drw_wave_height_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, sprite, "wave_amp", rb_drw_wave_amp_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, sprite, "wave_amp=", rb_drw_wave_amp_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, sprite, "wave_length", rb_drw_wave_length_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, sprite, "wave_length=", rb_drw_wave_length_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, sprite, "wave_speed", rb_drw_wave_speed_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, sprite, "wave_speed=", rb_drw_wave_speed_set, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, sprite, "opacity", rb_drw_opacity_get, MRB_ARGS_NONE());
     mrb_define_method(mMrb, sprite, "opacity=", rb_drw_opacity_set, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, sprite, "blend_type", rb_drw_blend_type_get, MRB_ARGS_NONE());
@@ -2315,6 +2368,7 @@ void RubyVM::BindRgssGraphics() {
     mrb_define_module_function(mMrb, gfx, "freeze", rb_graphics_freeze, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gfx, "transition", rb_graphics_transition, MRB_ARGS_ANY());
     mrb_define_module_function(mMrb, gfx, "frame_reset", rb_graphics_frame_reset, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gfx, "wait", rb_graphics_wait, MRB_ARGS_OPT(1));
     mrb_define_module_function(mMrb, gfx, "frame_rate", rb_graphics_frame_rate_get, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gfx, "frame_rate=", rb_graphics_frame_rate_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gfx, "frame_count", rb_graphics_frame_count_get, MRB_ARGS_NONE());

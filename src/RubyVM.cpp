@@ -65,6 +65,7 @@ typedef std::intptr_t ssize_t;
 #endif
 
 #include <cstdio>
+#include <cstring> // strlen (mrb_intern mit Laenge, mruby 4.x 3-arg)
 #include <iostream>
 #include <memory>
 
@@ -2191,6 +2192,93 @@ static mrb_value rb_genemy_animation_zero(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
     return mrb_int_value(mrb, 0);
 }
+// XP Arrow_*-Bruecke (PAKET 6/i Rundung): Bildschirmposition des Battlers
+// auf dem RGSS-Canvas, projiziert ueber Game::worldToScreenHook mit der
+// Laufzeitkamera (dieselbe Mechanik wie Map-Animationen an Weltpositionen).
+// Ohne Hook/nicht im Kampf -> 0 (ehrlich statt Phantasieposition).
+static bool GBattlerProject(const Battler* b, float& outX, float& outY) {
+    if (!b || !Game::Get().worldToScreenHook) return false;
+    return Game::Get().worldToScreenHook(b->position, outX, outY);
+}
+static mrb_value rb_genemy_x(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GEnemyLive(mrb, self), x, y);
+    return mrb_int_value(mrb, (mrb_int)x);
+}
+static mrb_value rb_genemy_y(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GEnemyLive(mrb, self), x, y);
+    return mrb_int_value(mrb, (mrb_int)y);
+}
+// Dasselbe fuer Akteure (XP Arrow_Actor): Party-Battler anhand der
+// Actor-ID finden (eindeutig in der Party), dann projizieren.
+static const Battler* GActorLiveBattler(mrb_state* mrb, mrb_value self) {
+    if (!BattleSystem::Get().IsInBattle()) return nullptr;
+    const int id = (int)GActorId(mrb, self);
+    const auto& list = BattleSystem::Get().Actors();
+    for (const auto& b : list)
+        if (b.isActor && b.id == id) return &b;
+    return nullptr;
+}
+static mrb_value rb_gactor_x(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GActorLiveBattler(mrb, self), x, y);
+    return mrb_int_value(mrb, (mrb_int)x);
+}
+static mrb_value rb_gactor_y(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GActorLiveBattler(mrb, self), x, y);
+    return mrb_int_value(mrb, (mrb_int)y);
+}
+// screen_x/screen_y (XP Game_Battler-Attribute): Getter liefert den per
+// Setter abgelegten Wert, wenn gesetzt (XP laesst Spritesets die Anzeige-
+// Position am Battler ablegen) — sonst die Engine-Projektion; beim
+// Setter: einfaches Ablegen (kein Renderer-Zugriff, XP-getreu).
+static mrb_value GBattlerScreenGet(mrb_state* mrb, mrb_value self,
+                                   const char* ivar, float projVal) {
+    mrb_value ov = mrb_iv_get(mrb, self, mrb_intern(mrb, ivar, (mrb_int)strlen(ivar)));
+    if (mrb_int_p(ov) || mrb_float_p(ov)) return ov;
+    return mrb_int_value(mrb, (mrb_int)projVal);
+}
+static mrb_value GBattlerScreenSet(mrb_state* mrb, mrb_value self, const char* ivar) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    mrb_iv_set(mrb, self, mrb_intern(mrb, ivar, (mrb_int)strlen(ivar)),
+               mrb_int_value(mrb, v));
+    return mrb_int_value(mrb, v);
+}
+static mrb_value rb_genemy_screen_x_get(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GEnemyLive(mrb, self), x, y);
+    return GBattlerScreenGet(mrb, self, "@screen_x", x);
+}
+static mrb_value rb_genemy_screen_x_set(mrb_state* mrb, mrb_value self) {
+    return GBattlerScreenSet(mrb, self, "@screen_x");
+}
+static mrb_value rb_genemy_screen_y_get(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GEnemyLive(mrb, self), x, y);
+    return GBattlerScreenGet(mrb, self, "@screen_y", y);
+}
+static mrb_value rb_genemy_screen_y_set(mrb_state* mrb, mrb_value self) {
+    return GBattlerScreenSet(mrb, self, "@screen_y");
+}
+static mrb_value rb_gactor_screen_x_get(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GActorLiveBattler(mrb, self), x, y);
+    return GBattlerScreenGet(mrb, self, "@screen_x", x);
+}
+static mrb_value rb_gactor_screen_x_set(mrb_state* mrb, mrb_value self) {
+    return GBattlerScreenSet(mrb, self, "@screen_x");
+}
+static mrb_value rb_gactor_screen_y_get(mrb_state* mrb, mrb_value self) {
+    float x = 0.0f, y = 0.0f;
+    (void)GBattlerProject(GActorLiveBattler(mrb, self), x, y);
+    return GBattlerScreenGet(mrb, self, "@screen_y", y);
+}
+static mrb_value rb_gactor_screen_y_set(mrb_state* mrb, mrb_value self) {
+    return GBattlerScreenSet(mrb, self, "@screen_y");
+}
 
 // ---------- XP Game_Troop-Bruecke (Stufe 4g Teil 3): nur die ID-Bruecke nativ ----------
 // setup/members baut das Prelude in Ruby (gleiches Muster wie Game_Party).
@@ -2850,6 +2938,13 @@ void RubyVM::BindUI() {
     mrb_define_method(mMrb, cGameActor, "face_index", rb_gactor_face_index, MRB_ARGS_NONE());
     // Stufe 4g Teil 3: XP-Equip-Mutator (Inventar-Tausch = equip im Prelude)
     mrb_define_method(mMrb, cGameActor, "change_equip", rb_gactor_change_equip, MRB_ARGS_REQ(2));
+    // Battler-Bildschirmposition im Kampf (XP Arrow_Actor; 0 ausserhalb)
+    mrb_define_method(mMrb, cGameActor, "x", rb_gactor_x, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "y", rb_gactor_y, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "screen_x", rb_gactor_screen_x_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "screen_x=", rb_gactor_screen_x_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "screen_y", rb_gactor_screen_y_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "screen_y=", rb_gactor_screen_y_set, MRB_ARGS_REQ(1));
 
     // ---------- XP Game_Enemy (Stufe 4g Teil 3): live an den nativen ----------
     // Kampf gekoppelt (oder Orphan-Datenbankwerte). states kommen im Prelude
@@ -2881,6 +2976,13 @@ void RubyVM::BindUI() {
     mrb_define_method(mMrb, cGameEnemy, "transform", rb_genemy_transform, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, cGameEnemy, "animation1_id", rb_genemy_animation_zero, MRB_ARGS_NONE());
     mrb_define_method(mMrb, cGameEnemy, "animation2_id", rb_genemy_animation_zero, MRB_ARGS_NONE());
+    // Battler-Bildschirmposition (XP Arrow_*; Projektion via worldToScreenHook)
+    mrb_define_method(mMrb, cGameEnemy, "x", rb_genemy_x, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "y", rb_genemy_y, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "screen_x", rb_genemy_screen_x_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "screen_x=", rb_genemy_screen_x_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEnemy, "screen_y", rb_genemy_screen_y_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEnemy, "screen_y=", rb_genemy_screen_y_set, MRB_ARGS_REQ(1));
 
     // ---------- XP Game_Troop (Stufe 4g Teil 3): nur ID-Bruecke nativ ----------
     struct RClass* cGameTroop = mrb_define_class(mMrb, "Game_Troop", mMrb->object_class);

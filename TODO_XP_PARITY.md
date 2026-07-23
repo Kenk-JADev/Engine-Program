@@ -415,8 +415,8 @@ am Ziel ab und wartet bis zum Ende.
       ($game_actors = XP-Identitaet) + Komfort-Reopen: `int` (aus der
       Akteur-Parameter-Table der load_data-Bruecke), weapon/armor1..4 als
       Objekte. **Erledigt in TEIL 3:** Game_Troop- + Game_Screen-Bruecke,
-      Game_Actor-Equip-Mutatoren (change_equip/equip). **Noch offen:**
-      Name-Input-Verdrahtung (name= liegt aktuell nur auf der Runtime);
+      Game_Actor-Equip-Mutatoren (change_equip/equip); **in TEIL 4:**
+      Name-Input-Verdrahtung (siehe unten).
   (g) **TEIL 2 erledigt 2026-07-23: Game_Party-XP-Vervollstaendigung:**
       nativ neu: item_number/weapon_number/armor_number (XP-Namen,
       Aliase auf die count-Bindings), has_item, all_dead?; interne
@@ -527,12 +527,33 @@ am Ziel ab und wartet bis zum Ende.
         fehlen im Ruby-Spriteset (native Darstellung laeuft ausserhalb);
         Spriteset_Battle findet jetzt $game_troop.members, ohne
         Animations-IDs am Enemy (0).
-      - **Bekannte Fehlstellen (klein):** Font#shadow; Sprite wave_*;
-        Graphics.snap_to_bitmap/snap/wait; Arrow_* brauchen Battler-
-        Bildschirmpositionen (im nativen Kampf nicht abgebildet —
-        Luecke, falls Kampfpfeile gewuenscht); Bitmap-Argumentformen
-        (Rect- vs 4-Int-Form bei fill_rect/draw_text) im Live-Lauf zu
-        pruefen (Risiko: mittel).
+      - **Bekannte Fehlstellen — RUNDUNG 2026-07-23 (Teil 2):**
+        - ~~Bitmap-Argumentformen~~: ENTFAELLT — fill_rect/draw_text
+          akzeptieren bereits beide XP-Formen (4 Int + Rect);
+          gradient_fill_rect ebenso verbaut.
+        - **Font#shadow**: Zustand nativ (RgssFontState.shadow +
+          Instanz-/FontDefaults-Bindings + Font.default_shadow im
+          Prelude). **Offen:** der eingebaute Text-Renderer zeichnet
+          den Schatten nicht mit (in XP praktisch ungenutzt —
+          Window_Base setzt es nie, ehrlich vermerkt).
+        - **Sprite wave_*** (height/amp/length/speed): Zustand nativ
+          (RgssDrawableState) + XP-Phasen-Advance in Sprite#update
+          (wave_speed / [2.0*wave_length, 1.0].max, nur wenn amp > 0).
+          **Offen:** keine Sinusverzerrung im Renderer.
+        - **Graphics.wait(duration)**: frame-freundlicher Kompat-No-op
+          (Blockieren einfrieren lassen wuerde die UI; dokumentiert).
+        - **Arrow_*-Battler-Position — GESCHLOSSEN:** Game_Enemy UND
+          Game_Actor liefern jetzt x/y als RGSS-Canvas-Projektion der
+          Battler-Weltposition via Game::worldToScreenHook (0 ohne
+          Hook/ausser Kampf — ehrlich), sowie die XP Game_Battler-
+          Attribute screen_x/screen_y (Getter: Setter-Ablage bevorzugt,
+          sonst Projektion — XP-Spritesets duerfen legen) plus blink/
+          screen_z als Halde im Prelude.
+        - **Graphics.snap_to_bitmap/snap:** bewusst OFFEN — synchroner
+          GL-Readback aus dem Ruby-Kontext ist zeitkritisch (Frame-
+          Timing/Kontext); Transition-Mechanik nutzt den vorhandenen
+          Freeze-Snapshot bereits nativ (Graphics.freeze/transition
+          funktionieren ohne snap).
       - **NICHT portieren:** Scene_Battle 1-4 (Game_BattleAction/
         Animation/Arrow-Abhaengigkeiten — unser nativer Kampf +
         Battle-Custom-API); Main.rb-Blockierschleife (XP-Modus Ticket h

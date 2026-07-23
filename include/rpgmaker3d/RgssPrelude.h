@@ -519,6 +519,8 @@ end
 # change_equip setzt rein datengetrieben — exakt die XP-Aufteilung.
 # ---------------------------------------------------------------------------
 class Game_Actor
+  # XP Game_Battler-Anzeigeflags (siehe Game_Enemy-Block)
+  attr_accessor :blink, :screen_z
   def equip(equip_type, id)
     if equip_type == 0
       if id == 0 or $game_party.weapon_number(id) > 0
@@ -548,6 +550,9 @@ end
 # ---------------------------------------------------------------------------
 class Game_Enemy
   attr_accessor :letter
+  # XP Game_Battler-Anzeigeflags (Spriteset-Seite; screen_x/screen_y sind
+  # nativ mit Engine-Projektion abgesichert, blink/screen_z reine Halde)
+  attr_accessor :blink, :screen_z
   def states
     if @states == nil
       @states = []
@@ -1061,6 +1066,8 @@ class Font
     def default_italic=(v); FontDefaults.italic = v; end
     def default_color; FontDefaults.color; end
     def default_color=(v); FontDefaults.color = v; end
+    def default_shadow; FontDefaults.shadow; end
+    def default_shadow=(v); FontDefaults.shadow = v; end
     # Der eingebaute Bitmap-Font kann jeden Namen darstellen
     def exist?(name); true; end
   end
