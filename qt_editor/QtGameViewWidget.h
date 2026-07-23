@@ -2,7 +2,7 @@
 // Qt-Editor: eingebettetes OpenGL-Widget - der "Game View" des Editors.
 // Besitzt den GL-Kontext (Qt), laedt glad, initialisiert die Engine im
 // Embedded-Modus und rendert jede paintGL()-Runde den Engine-Frame.
-// Zusaetzlich: Tile-Paint-Modus + RmlUi-Input-Bruecke.
+// Zusaetzlich: Tile-Paint-Modus + Engine-Input-Bruecke (RmlUi entfallen, PAKET 10).
 
 // glad VOR Qt OpenGL, sonst "OpenGL header already included"
 #ifndef GLAD_GL_H_

@@ -189,9 +189,11 @@ public:
 
 // ---------------------------------------------------------------------------
 // Generisches Listen-Menue im XP-Stil (Titel + nummerierte Eintraege + Cursor)
-// Anzeige erfolgt ueber RmlUi (#menu_box); die Tastatursteuerung laeuft in
+// PAKET 10: Anzeige im GameUI-ImGui-Overlay (MenuWindow::Draw, gerufen aus
+// GameUI::Draw) — kein RmlUi mehr. Die Tastatursteuerung laeuft weiterhin in
 // GameUI::UpdateModalInput. Basis fuer: Spielmenue (Esc), Gegenstandsliste,
-// Speicherbildschirm (4 Slots) und Shop (Kaufen/Verkaufen).
+// Speicherbildschirm (4 Slots), Shop (Kaufen/Verkaufen) und Alle
+// Battle-Untermenues.
 // ---------------------------------------------------------------------------
 class MenuWindow {
 public:
@@ -204,6 +206,7 @@ public:
               std::function<void(int)> onPick, bool cancelable = true);
     void Hide();
     bool IsVisible() const { return mVisible; }
+    void Draw(); // ImGui-Overlay (ohne ImGui: No-Op, Logik laeuft weiter)
 
     void MoveCursor(int dir); // +/-1, ueberspringt deaktivierte Eintraege
     void Confirm();           // ruft onPick(cursor)
@@ -304,6 +307,10 @@ public:
 
     /// Compact playtest/game HUD (HP/Gold/hints)
     void DrawPlayHud(bool playtest);
+    /// PAKET 10: HUD-Sichtbarkeit (F9; Startwert aus CustomConfig::nativeHud)
+    void ToggleHud() { mHudVisible = !mHudVisible; }
+    void SetHudVisible(bool v) { mHudVisible = v; }
+    bool IsHudVisible() const { return mHudVisible; }
 
     // === Screen Text System (NEW) ===
     // Add a screen-space text (0..1 normalized). Returns id. Duration 0 = infinite, else seconds.
@@ -429,6 +436,14 @@ private:
     std::unordered_map<std::string, std::shared_ptr<Texture>> mFaceCache;
     unsigned int GetFaceTexture(const std::string& faceName, int& outW, int& outH);
     void DrawBattleStatus();
+
+    // PAKET 10: Modale Fenster im ImGui-Overlay (loest das RmlUi-#menu_box ab):
+    // Menue (MenuWindow::Draw), Zahleneingabe, Namenseingabe; Choices zeichnet
+    // weiterhin MessageWindow::Draw direkt im Nachrichtenfenster.
+    void DrawModalWindows();
+    void DrawNumberInput();
+    void DrawNameInput();
+    bool mHudVisible = true; // HUD-Sichtbarkeit (F9)
 };
 
 } // namespace rpg

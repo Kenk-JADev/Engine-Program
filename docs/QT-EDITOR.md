@@ -1,7 +1,7 @@
 # Qt-Editor (RPGMAKER3D_EDITOR_QT)
 
 Der Editor ist eine **native Qt-App** (QMainWindow + Dock-Panels + Tabs).
-Der **ImGui-Editor ist entfernt**. Der **Player** bleibt SDL2 + optional RmlUi.
+Der **ImGui-Editor ist entfernt**. Der **Player** bleibt SDL2 + GameUI-ImGui-Overlay (PAKET 10: RmlUi vollständig entfernt).
 
 ## Architektur
 
@@ -80,7 +80,7 @@ Fertig:
 - [x] **Map-Editor-Dock** (Kartenliste, Props, Tile-Palette, Malen im Game View)
 - [x] **Database-Editor** (QTableView: Actors/Items/Enemies + System)
 - [x] **Syntax-Highlighting** (Ruby + C++ via QSyntaxHighlighter)
-- [x] **RmlUi-Input-Bruecke** im Qt-Modus (Maus/Tastatur/Text, F9, Viewport)
+- [x] **Engine-Input-Bruecke** im Qt-Modus (Maus/Tastatur, F9 = GameUI-HUD)
 
 - [x] **Map-Editor**: echte Tileset-Texturen, Pinsel + Rechteck
 - [x] **Event-Editor-Dock**: Events / Seiten / Befehle

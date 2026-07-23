@@ -39,7 +39,7 @@
 
 - SDL2-Fenster, `editorMode=false`
 - Kein Qt, kein ImGui-Editor
-- Optional RmlUi für Ingame-UI
+- GameUI-ImGui-Overlay für Ingame-UI (PAKET 10; RmlUi vollständig entfernt)
 
 ## 3. Schichten
 
@@ -68,16 +68,15 @@
 | `RPGMAKER3D_EDITOR_QT` | ON | Qt-Editor bauen |
 | `RPGMAKER3D_BUILD_EDITOR` | ON | Editor-Target |
 | `RPGMAKER3D_BUILD_PLAYER` | ON | Player-EXE |
-| `RPGMAKER3D_ENABLE_RMLUI` | ON | RmlUi |
 | `RPGMAKER3D_ENABLE_RUBY` | OFF | mruby |
-| `RPGMAKER3D_ENABLE_IMGUI` | OFF | Legacy GameUI-Overlay only |
+| `RPGMAKER3D_ENABLE_IMGUI` | ON | GameUI-Overlay = gesamte Spielanzeige |
 
 ## 6. Nächste Schritte
 
 1. Gizmo-Transform im Game View
 2. Asset-Browser
 3. Undo-Batch fuer Multi-Tile-Pinsel
-4. GameUI Messages komplett auf RmlUi
+4. (erledigt, PAKET 10) RmlUi entfernt — gesamte Anzeige im GameUI-ImGui-Overlay
 
 
 ## 7. UI-Pipeline (Scripts & Game-Fenster)
@@ -89,19 +88,16 @@
   RubyVM  UI.show_message / show_screen_text / show_picture
         |
         v
-  GameUI  (Logik: MessageWindow, ScreenTexts, Pictures)
-        |
-        +--(optional ImGui Draw, wenn RPGMAKER3D_ENABLE_IMGUI)
-        |
+  GameUI  (Logik: MessageWindow, MenuWindow, ScreenTexts, Pictures,
+        |   Modal-Input)  +  Draw im ImGui-Overlay (PAKET 10: Messages,
+        |   Menues, Zahl-/Namenseingabe, HUD, Pictures, Kampfstatus)
         v
-  RmlUiSystem::SyncFromGameUI()
-        |
-        v
-  RmlUi Game-Kontext  (sichtbares HUD + Dialog-Box im GL-Fenster)
+  ImGui GameUI-Overlay (sichtbare Anzeige im GL-Fenster)
 ```
 
-**RmlUi hat kein Ruby-Binding.** Scripts nutzen immer das Modul `UI` (C++-Bindings
-in `RubyVM::BindUI`). RmlUi ist nur der Renderer fuer das Game-Fenster.
+**Die Anzeige hat kein Ruby-Binding.** Scripts nutzen immer das Modul `UI`
+(C++-Bindings in `RubyVM::BindUI`). Das ImGui-Overlay ist nur der Renderer
+fuer das Game-Fenster; `UI.hud_visible=` steuert das HUD, F9 toggelt es.
 
 **Ruby-Runtime pro Frame (Playtest/Player):**
 1. `SceneManager.update` (Title/Map/Battle aus Script-Editor)
@@ -116,13 +112,13 @@ Qt-Editor-Docks sind **Werkzeuge** (Map/Events/DB/Code/Assets) und laufen nicht 
 | Feature | Wie |
 |---------|-----|
 | Scenes | Ruby `SceneManager` + `Scene_Title`/`Map`/`Battle` |
-| Dialoge | Event `ShowText` / Ruby `UI.show_message` → GameUI → RmlUi |
+| Dialoge | Event `ShowText` / Ruby `UI.show_message` → GameUI → ImGui-Overlay |
 | Switches/Variables | `Game.switch` / `Game.set_switch` / `variable` |
 | Save/Load | `Game.save(slot)` / `Game.load` → `saves/saveN.json` |
 | Battle | Event `BattleProcessing` / `Game.start_battle(troopId)` / Random Encounter / `Battle.*` Ruby-Modul (Custom-Szenen) |
 | Shop | Event `ShopProcessing` → `GameUI::ShowShopGoods` (Items + `w<ID>` Waffen + `a<ID>` Ruestungen) |
-| Custom-UIs | `Game.ini` (NativeTitle/Hud/GameMenu/BattleMenu/BattleStatus) + `UI.native_*=` + `CallGameHook("custom_title")` + `UI.open_list_menu` + `RmlUiSystem::ReloadDocumentsIfChanged` (`UI/Skin.rcss`, `UI/Game.rml`) |
-| Pictures | bis 8 RmlUi-`<img>` (pic0..pic7), Rotation via `transform: rotate(); Kampf: bis 4 Gegnerbilder `$battlerN` aus `Graphics/Battlers/` (EnemyData.battlerName) |
+| Custom-UIs | `Game.ini` (NativeTitle/Hud/GameMenu/BattleMenu/BattleStatus) + `UI.native_*=` + `CallGameHook("custom_title")` + `UI.open_list_menu` |
+| Pictures | ImGui-Overlay (DrawPictures: Skalierung/Rotation, PAKET 9 Flash/Blink, battlerHue-Farbton); Kampf: bis 4 Gegnerbilder `$battlerN` aus `Graphics/Battlers/` (EnemyData.battlerName/battlerHue) |
 | Script-Befehl | Event `Script` → RubyVM (Script-Editor-Code) |
 | Troops/States | `database/Troops.json`, `States.json` |
 
@@ -155,7 +151,7 @@ Button **Common+** im Event-Dock.
 | Feature | Umsetzung |
 |---------|-----------|
 | Esc-Party-Menue | `15_Party_Menu.rb` (Items/Status/Save) |
-| Message Name/Pos | `MessageWindow` Speaker + Position → RmlUi |
+| Message Name/Pos | `MessageWindow` Speaker + Position → ImGui-Overlay |
 | Self-Switch | Event-Befehl + Seiten-Condition im Event-Dock |
 | Move Route | `UDLR W T A X` Text-Format, Runtime-Update |
 | Battle-UI | XP-Kampfmenue ueber `GameUI::OpenBattleCommands()` (MenuWindow) |

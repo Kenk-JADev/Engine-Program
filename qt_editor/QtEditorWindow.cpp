@@ -22,9 +22,7 @@
 #include "rpgmaker3d/ScriptManager.h"
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Game.h"
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-#include "rpgmaker3d/RmlUiSystem.h"
-#endif
+#include "rpgmaker3d/UI.h" // PAKET 10: HUD-Toggle (GameUI) statt RmlUi
 
 #include <QApplication>
 #include <QCheckBox>
@@ -502,12 +500,10 @@ void QtEditorWindow::buildMenus() {
     if (mDockEvents) mViewMenu->addAction(mDockEvents->toggleViewAction());
     if (mDockAssets) mViewMenu->addAction(mDockAssets->toggleViewAction());
     mViewMenu->addAction(mDockConsole->toggleViewAction());
-#ifdef RPGMAKER3D_ENABLE_RMLUI
     mViewMenu->addSeparator();
-    mViewMenu->addAction(QStringLiteral("RmlUi HUD umschalten (F9)"), this, [this]() {
-        if (mEngine && mEngine->GetRmlUi()) mEngine->GetRmlUi()->ToggleVisible();
+    mViewMenu->addAction(QStringLiteral("Spiel-HUD umschalten (F9)"), this, [this]() {
+        rpg::GameUI::Get().ToggleHud(); // PAKET 10: ImGui-HUD statt RmlUi
     });
-#endif
 
     QMenu* mPlay = menuBar()->addMenu(QStringLiteral("&Playtest"));
     mPlayPlayerAction = mPlay->addAction(stdIcon(this, QStyle::SP_MediaPlay),
@@ -883,12 +879,10 @@ void QtEditorWindow::buildRibbon() {
                      [this]() { mCentralTabs->setCurrentWidget(mPlayTab); });
         ribbonButton(p, QStringLiteral("Skript"), QStringLiteral("Skript-Editor öffnen [F11]"),
                      [this]() { showScriptEditor(); });
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-        ribbonButton(p, QStringLiteral("HUD umschalten"), QStringLiteral("RmlUi-HUD ein/aus [F9]"),
+        ribbonButton(p, QStringLiteral("HUD umschalten"), QStringLiteral("Spiel-HUD ein/aus [F9]"),
                      [this]() {
-                         if (mEngine && mEngine->GetRmlUi()) mEngine->GetRmlUi()->ToggleVisible();
+                         rpg::GameUI::Get().ToggleHud(); // PAKET 10: ImGui-HUD statt RmlUi
                      });
-#endif
     }
     // ---- Tab: Fenster -----------------------------------------------------------
     if (QWidget* p = ribbonPage(QStringLiteral("Fenster"))) {
@@ -1316,7 +1310,7 @@ static void ensureGameIniTemplate(const QString& projectPath) {
         ini.write(QStringLiteral(
             "; RPG Maker 3D ---- Alles custom ----------------------------------\n"
             "; Eingebaute Oberflaechen abschalten (0) und durch eigene\n"
-            "; Ruby-Szenen / RmlUi-Skins ersetzen. Standard ist 1 (an).\n"
+            "; Ruby-Szenen ersetzen. Standard ist 1 (an).\n"
             "[RPG Maker 3D]\n"
             "NativeTitle=1        ; 0 = kein eingebauter Titel -> Ruby-Hook Game.custom_title\n"
             "NativeHud=1          ; 0 = HUD beim Start aus (UI.hud_visible= steuert)\n"

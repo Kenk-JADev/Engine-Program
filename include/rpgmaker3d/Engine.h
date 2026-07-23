@@ -19,7 +19,6 @@ class Framebuffer;
 class CommandHistory;
 class RubyVM;
 class ScriptManager;
-class RmlUiSystem;
 
 class MeshFactory;
 struct Battler; // BattleSystem.h — fuer das Kampf-Feedback (PAKET 9)
@@ -76,16 +75,12 @@ public:
     // ---- XP-artiger Debug-Inspektor (Paket 4, TODO_XP_PARITY.md) ----
     // F10: live Schalter-/Variablen-Fenster ueber die RGSS-Fensterschicht
     // (funktioniert im Player UND im eingebetteten Qt-Playtest, weil die
-    // Taste direkt im Engine-Update abgefragt wird). F9 bleibt RmlUi-HUD.
+    // Taste direkt im Engine-Update abgefragt wird). F9 toggelt das
+    // Spiel-HUD (GameUI::ToggleHud, PAKET 10).
     void ToggleDebugWindow();
     void UpdateDebugWindow(float dt);
     void RedrawDebugWindowContent();
     void DestroyDebugWindow();
-    #ifdef RPGMAKER3D_ENABLE_RMLUI
-    RmlUiSystem* GetRmlUi() { return mRmlUi.get(); }
-#else
-    RmlUiSystem* GetRmlUi() { return nullptr; }
-#endif
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }
@@ -160,9 +155,6 @@ private:
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    std::unique_ptr<RmlUiSystem> mRmlUi;
-#endif
     std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 

@@ -185,7 +185,8 @@ Strg+Z rollt komplett zurück. Kein weiterer Handlungsbedarf.
 
 ## PAKET 4 — F9-Debug-Inspektor (Schalter/Variablen) 🟡
 **Status: ✅ ERLEDIGT (2026-07-23)** — als **F10** umgesetzt (F9 bleibt bewusst
-das RmlUi-HUD-Toggle). Engine-intern über die RGSS-Fensterschicht:
+das HUD-Toggle — seit PAKET 10 `GameUI::ToggleHud` statt RmlUi). Engine-intern
+über die RGSS-Fensterschicht:
 `Engine::ToggleDebugWindow/UpdateDebugWindow/RedrawDebugWindowContent`
 (src/Engine.cpp ab ~Z. 2380, Members mDbg* in Engine.h). Live: Schalter per
 Enter togglen, Variablen per Enter editieren (Ziffern, M = Negativ, Backspace,
@@ -199,19 +200,18 @@ funktional gleichwertig.
 Listen: Schalter (AN/AUS umschaltbar) und Variablen (Zahl editierbar) —
 ändert sich LIVE im laufenden Spiel.
 
-**Bei uns:** F9 = HUD-Toggle (QtGameViewWidget.cpp ~Z. 102 → RmlUi toggle).
-Lösung wie XP: F9 NUR im Playtest den Debug-Inspektor, HUD-Toggle auf andere
-Taste ODER Debug-Fenster als eigenen Toggle DANEBEN (F9 bleibt Debug,
-HUD-Toggle z.B. F8 — in QtEditorWindow.cpp + Hilfetexten anpassen:
-QtEditorWindow.cpp Z. 145, 320, 1431!).
+**Bei uns:** F9 = HUD-Toggle (Engine::Update → `GameUI::ToggleHud`, seit
+PAKET 10; zuvor RmlUi). Lösung wie XP: F9 NUR im Playtest den
+Debug-Inspektor, HUD-Toggle auf andere Taste ODER Debug-Fenster als
+eigenen Toggle DANEBEN — umgesetzt: **F10** = Debug-Inspektor, F9 = HUD.
 
 **Datenquelle:** Schalter/Variablen-Werte zur Laufzeit stehen im Game-System
 (Suche: `mSwitches`, `mVariables` in src/Game.* — `Game_System` hält sie;
 Namen aus `Database::Get().System().switches/variables`).
 
-**Darstellung:** als RmlUi-Panel im „game"-Kontext ODER als natives
-RGSS-Overlay (RgssUI existiert seit d548352; dort wäre ein Debugfenster 20
-Zeilen). Wichtig: nur aktiv, wenn Playtest-Flag gesetzt (Editor-Start /
+**Darstellung (historisch):** damals „RmlUi-Panel ODER natives RGSS-Overlay"
+— umgesetzt als RGSS-Overlay (RgssUI); RmlUi ist seit PAKET 10 entfernt.
+Wichtig: nur aktiv, wenn Playtest-Flag gesetzt (Editor-Start /
 BATTLE_TEST-Konstante?), im exportierten Player deaktivieren.
 Edits: Schalter per Klick togglen; Variable: Dialog/Doppelklick → Zahl.
 
@@ -779,34 +779,48 @@ als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
   geschlossen: `Enemies.json` speichert `battlerHue` jetzt auch (Laden
   + RGSS `battler_hue` existierten schon, nur Speichern fehlte).
 
-## PAKET 10 — RmlUi-Ablösung der Menü-Anzeige 🔧 (Nutzer-priorisiert)
+## PAKET 10 — RmlUi-Ablösung der Anzeige ✅ ERLEDIGT 2026-07-23
 
 Nutzer-Strategie (2026-07-23): „wenn alles fertig ist wird RmlUI nicht
-mehr benötigt." Mit PAKET 9 ist der letzte Feature-Block auf alter Basis
-abgeschlossen — die Menü-Anzeige wandert jetzt in den ImGui-Overlay-/
-RgssUI-Pfad, danach kann RmlUi als Abhängigkeit entfallen.
+mehr benötigt." Umgesetzt: **RmlUi (+ FreeType) ist vollständig aus
+Code, Build und third_party entfernt** (~1.900 Dateien gelöscht). Die
+gesamte Spielanzeige läuft im GameUI-ImGui-Overlay; `RPGMAKER3D_ENABLE_IMGUI`
+ist jetzt Default ON (bei OFF: Draw = No-Op, Logik läuft — dokumentiert).
 
-- [ ] **MenuWindow auf ImGui-Overlay portieren:** `MenuWindow` (Basis für
-  Spielmenü (Esc), Gegenstandsliste, Speicherbildschirm (4 Slots), Shop
-  und alle Battle-Untermenüs) zeigt aktuell über RmlUi `#menu_box`; die
-  Tastatursteuerung läuft bereits in `GameUI::UpdateModalInput` und
-  bleibt. Ziel: Darstellung im Stil von `MessageWindow::Draw`/
-  `DrawBattleStatus` (WindowBg, randlos, NoTitleBar/NoResize/NoMove),
-  API unverändert (`Show(title, Entry{text,enabled}, onPick, cancelable)`,
-  `GetTitle()`, `GetCursor()`).
-- [ ] **Restliche RmlUi-Anzeigepfade inventarisieren + portieren:**
-  Titelbildschirm/Titelgrafik, HUD-Toggle (F9), ScreenPictures-<img>-
-  Overlays (RmlUiSystem.cpp ~676), qt_editor-Anbindung.
-- [ ] **RmlUi entfernen:** `RPGMAKER3D_ENABLE_RMLUI`-Pfade, `mRmlUi` in
-  Engine, third_party/rmlui(+glue), CMake/`#include`-Reste; Build in
-  beiden ImGui-Varianten gruen, CI-Lauf abwarten.
+- [x] **Anzeige-Parität im ImGui-Overlay hergestellt:**
+  `MenuWindow::Draw()` (Titel mittig, im Spiel rechts oben — ehemalige
+  #menu_box-Position; Einträge als Selectable mit Cursor, deaktivierte
+  ausgegraut, Maus-Klick bestätigt; Schnappschuss der Items wegen
+  aufbauender onPick-Callbacks) + `GameUI::DrawModalWindows()` mit
+  Priorität Menü → `DrawNumberInput()` (Ziffernzeile mit Klammer-Stelle)
+  → `DrawNameInput()` (Unterstrich-Cursor); Choices zeichnet schon immer
+  `MessageWindow::Draw` im Nachrichtenfenster (Sprecherzeile ergänzt).
+  HUD: `GameUI::mHudVisible` + `ToggleHud()/SetHudVisible()`; F9 wird
+  direkt im `Engine::Update` abgefragt (Player UND eingebetteter
+  Qt-Playtest); `DrawPlayHud` zeigt zusätzlich FPS.
+- [x] **RmlUi komplett entfernt:** Dateien `RmlUiSystem.h/.cpp` +
+  `third_party/rmlui` (22 MB), `third_party/rmlui_glue`,
+  `third_party/freetype` gelöscht; `RPGMAKER3D_ENABLE_RMLUI` nirgends
+  mehr referenziert (grep-bewiesen). Engine: Init/Shutdown/Update/
+  ProcessEvent/Render ohne mRmlUi; Qt-Widget: RmlUi-Input-Blöcke
+  entfernt (Qt-Tasten laufen ohnehin ueber `Input::OnKeyChanged`,
+  modale Eingaben ueber `UpdateModalInput` — nichts geht verloren);
+  QtEditorWindow (Menü/Ribbon „Spiel-HUD umschalten" →
+  `GameUI::ToggleHud`); RubyVM-Bindings `UI.hud_visible[?]`/`native_hud=`
+  steuern jetzt `GameUI::SetHudVisible` (kein API-Bruch fuer Skripte).
+- [x] **Build & Doku:** CMakeLists (Option + freetype/rmlui-Block,
+  Quellen/Link/Defines an 4 Stellen entfernt; IMGUI-Option ON mit
+  neuer Beschreibung), ci/Main.yml.template 2× IMGUI=ON (⚠ echter
+  Workflow .github/workflows/Main.yml muss vom Nutzer gespiegelt
+  werden — Bot pusht keine Workflow-Dateien), README +
+  docs/ARCHITECTURE.md + docs/QT-EDITOR.md + Custom.h-Kommentare.
 
 ## Arbeitsregeln (für Agenten-Sessions)
 
-**Strategie (Nutzer, 2026-07-23):** RmlUi ist eine Uebergangsloesung und
-wird entfernt, sobald alles fertig ist — **keine neuen Features darauf
-aufbauen.** HUD/Menues in ImGui (GameUI-Overlay-Pfad, wie MessageWindow),
-XP-Fenster im nativen RgssUI-Canvas.
+**Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und
+wurde mit **PAKET 10 vollständig entfernt** — die gesamte Spielanzeige
+läuft im GameUI-ImGui-Overlay (Default ON), XP-Fenster im nativen
+RgssUI-Canvas. Neue Anzeige-Features nur in diesen beiden Pfaden.
 
 1. **Nur** Branch `arena/019f6f2a-engine-program`; vor jedem Commit:
    `git log --oneline -1` + `git fetch origin arena/019f6f2a-engine-program -q`

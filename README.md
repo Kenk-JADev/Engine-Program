@@ -34,7 +34,7 @@ Eine modulare 3D-Game-Engine im Stil von RPG Maker, aber mit modernem Renderer u
 - `qt_editor/` – Qt-Editor (Hauptfenster, Game View, Code Workspace)
 - `ruby/` – Beispiel-Scripts und Runtime-Scripts
 - `assets/` – Shaders, Texturen, Modelle, Audio
-- `third_party/` – glad, stb_image, miniaudio, RmlUi, …
+- `third_party/` – glad, stb_image, miniaudio, imgui, …
 - `docs/` – Architektur- und API-Dokumentation
 
 ## Build (Windows mit Visual Studio 2022)
@@ -231,8 +231,8 @@ alle XP-Befehle auf drei Seiten.
 
 ## Spielmenü, Speichern/Laden & Laden (Shop) im Spiel
 
-Alles ist jetzt **im Player sichtbar und spielbar** (RmlUi-Anzeige,
-Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
+Alles ist jetzt **im Player sichtbar und spielbar** (Anzeige im
+GameUI-ImGui-Overlay, Pfeiltasten/W-S wählen, E/Enter bestätigen, Esc zurück):
 
 - **Titelbildschirm (Player)** – nach dem Start zeigt der Player den
   XP-Titel mit dem Spieltitel aus der Datenbank: **Neues Spiel /
@@ -442,27 +442,22 @@ Alle fünf Schalter gibt es auch als Ruby-Setter, z. B.
 - **Pro Frame laufen** weiterhin `SceneManager.update` und `$game.update(dt)` –
   dort eigene Szenen aktualisieren (mit `Input.key_pressed?` navigieren).
 
-### 3. UI-Skins (`<Projekt>/UI/`) – komplettes Redesign ohne C++
+### 3. Eingebaute Oberflächen – GameUI-ImGui-Overlay (PAKET 10)
 
-Die gesamte RmlUi-Oberfläche (HUD, Menü-Fenster) besteht aus HTML-ähnlichem
-RML + RCSS und lässt sich dateibasiert ersetzen:
-
-- `<Projekt>/UI/Skin.rcss` – ersetzt das komplette Stylesheet
-- `<Projekt>/UI/Game.rml` – ersetzt das HUD-/Menü-Layout (Body-Fragment;
-  Datenbindung `{{hp}}`, `{{gold}}`, `{{menu_title}}` … bleibt gleich)
-- `<Projekt>/UI/Editor.rml` – Editor-Panel-Layout
-
-Fehlt eine Datei, gilt der eingebaute Standard; ist eine Custom-Datei
-fehlerhaft, fällt die Engine mit Warnung auf den Standard zurück (das Spiel
-startet immer). Skins werden beim Spielstart geladen.
+Die gesamte eingebaute Spielanzeige (Nachrichten mit Sprecher, Menüs,
+Zahlen-/Namenseingabe, HUD, Bilder, Bildschirmtexte, Kampf-Statusfenster)
+läuft seit PAKET 10 im **GameUI-ImGui-Overlay** – **RmlUi ist vollständig
+entfernt** (keine RML/RCSS-Skins mehr). Eigene Oberflächen baut man wie in
+XP üblich als **Ruby-Szenen/Fenster** (Punkt 4, RGSS) oder schaltet die
+eingebauten per `Game.ini`-Flags (`NativeTitle/Hud/GameMenu/…`) ab.
+**F9** blendet das HUD ein/aus.
 
 ### 4. RGSS (Ruby Game Scripting System) – komplette XP-Skriptschicht
 
 Die Engine enthält eine **vollständige RGSS-Schicht nach dem RGSS-Referenz-
-Handbuch des RPG Maker XP** – ein eigenes, RmlUi-unabhängiges 2D-System, das
-komplett aus Ruby gesteuert wird. Alles wird als GL-Overlay auf der
-**obersten Ebene** (auch über der RmlUi-HUD) im logischen **640×480-Raum**
-gezeichnet; RmlUi bleibt vorerst parallel bestehen.
+Handbuch des RPG Maker XP** – ein eigenes 2D-System, das komplett aus Ruby
+gesteuert wird. Alles wird als GL-Overlay auf der **obersten Ebene** (über
+allen GameUI-Overlays) im logischen **640×480-Raum** gezeichnet.
 
 **Abgedeckte RGSS-Bibliothek (Spezifikation: RMXP-Hilfe):**
 

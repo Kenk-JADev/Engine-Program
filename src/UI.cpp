@@ -89,6 +89,8 @@ void MessageWindow::Draw() {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
     ImGui::Begin("##MessageBox", nullptr,
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    if (!mSpeakerName.empty()) // PAKET 10: Sprecherzeile (war im RmlUi-Kasten)
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mSpeakerName.c_str());
     ImGui::TextWrapped("%s", mDisplayed.c_str());
     ImGui::Dummy(ImVec2(0, 8));
     if (mCharIndex >= mText.size()) {
@@ -153,7 +155,8 @@ void TitleScreen::Show() {
 }
 void TitleScreen::Update(float dt) { (void)dt; }
 void TitleScreen::Draw() {
-    // Anzeige laeuft ueber RmlUi (#menu_box, zentriert) - kein ImGui noetig.
+    // Das Titelmenue ist ein MenuWindow (siehe Show oben) — die Anzeige
+    // laeuft im GameUI-ImGui-Overlay (DrawModalWindows, Titel mittig).
 }
 
 // --- PauseMenu (delegiert an das XP-Spielmenue) ---
@@ -161,7 +164,8 @@ void PauseMenu::Show() { GameUI::Get().OpenGameMenu(); }
 void PauseMenu::Hide() { GameUI::Get().Menu().Hide(); }
 bool PauseMenu::IsVisible() const { return GameUI::Get().Menu().IsVisible(); }
 void PauseMenu::Draw() {
-    // Anzeige laeuft ueber RmlUi (#menu_box) - kein ImGui-Pfad mehr noetig.
+    // Das Pausenmenue ist das XP-Spielmenue (MenuWindow) — die Anzeige
+    // laeuft im GameUI-ImGui-Overlay (DrawModalWindows).
 }
 
 // --- MenuWindow ---
@@ -209,6 +213,60 @@ void MenuWindow::Cancel() {
     Hide();
 }
 
+// PAKET 10: Darstellung im GameUI-ImGui-Overlay (ersetzt das RmlUi-#menu_box).
+// Tastatur bleibt in GameUI::UpdateModalInput; die Maus kann zusaetzlich
+// klicken. Ohne ImGui-Define: No-Op (Logik laeuft weiter).
+void MenuWindow::Draw() {
+    if (!mVisible) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const bool titleMode = GameUI::Get().Title().IsVisible();
+    const float w = io.DisplaySize.x * (titleMode ? 0.40f : 0.46f);
+    float x, y;
+    if (titleMode) {
+        // XP: Titelmenue mittig
+        x = (io.DisplaySize.x - w) * 0.5f;
+        y = io.DisplaySize.y * 0.30f;
+    } else {
+        // im Spiel/Menue rechts oben (ehemalige #menu_box-Position)
+        x = io.DisplaySize.x - w - io.DisplaySize.x * 0.04f;
+        y = io.DisplaySize.y * 0.12f;
+    }
+    ImGui::SetNextWindowPos(ImVec2(x, y));
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f)); // Hoehe waechst mit dem Inhalt
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##MenuBox", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    if (!mTitle.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mTitle.c_str());
+        ImGui::Separator();
+    }
+    // Schnappschuss: onPick darf das Menue neu aufbauen (Show erneut rufen),
+    // waehrend wir noch in der Schleife waeren.
+    const std::vector<Entry> items = mItems;
+    for (size_t i = 0; i < items.size(); ++i) {
+        ImGui::PushID((int)i);
+        if (!items[i].enabled) {
+            ImGui::TextDisabled("%s", items[i].text.c_str());
+        } else if (ImGui::Selectable(items[i].text.c_str(), (int)i == mCursor)) {
+            mCursor = (int)i; // Maus bestaetigt direkt (Tastatur: UpdateModalInput)
+            Confirm();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    if (mCancelable)
+        ImGui::TextDisabled("Pfeile/W-S waehlen | E/Enter bestaetigen | Esc zurueck");
+    else
+        ImGui::TextDisabled("Pfeile/W-S waehlen | E/Enter bestaetigen");
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
+}
+
 // --- GameUI ---
 GameUI& GameUI::Get() {
     static GameUI instance;
@@ -228,6 +286,9 @@ void GameUI::Draw() {
     // Screen texts and pictures always on top (HUD)
     DrawPictures();
     DrawScreenTexts();
+    // PAKET 10: modale Fenster (Menue/Zahl/Name) obenauf (ImGui-Overlay,
+    // ersetzt das RmlUi-#menu_box; ohne ImGui No-Op)
+    DrawModalWindows();
 }
 void GameUI::ShowMessage(const std::string& text) {
     mMessage.Show(text);
@@ -1162,8 +1223,72 @@ void GameUI::UpdateModalInput(Input& input) {
     }
 }
 
+// PAKET 10: Modale Fenster im ImGui-Overlay. Prioritaet wie in
+// UpdateModalInput: Menue zuerst, dann Zahleneingabe, dann Namenseingabe;
+// Choices zeichnet MessageWindow::Draw direkt im Nachrichtenfenster.
+void GameUI::DrawModalWindows() {
+    if (mMenu.IsVisible()) { mMenu.Draw(); return; }
+    if (mNumberActive)     { DrawNumberInput(); return; }
+    if (mNameActive)       { DrawNameInput(); return; }
+}
+
+void GameUI::DrawNumberInput() {
+    if (!mNumberActive) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = io.DisplaySize.x * 0.32f;
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - io.DisplaySize.x * 0.04f,
+                                   io.DisplaySize.y * 0.12f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f)); // Hoehe nach Inhalt
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##NumberInput", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s",
+        mNumberPrompt.empty() ? "Zahleneingabe" : mNumberPrompt.c_str());
+    ImGui::Separator();
+    // Ziffernzeile, aktuelle Stelle in Klammern (links = hoechste Stelle, XP)
+    std::string line;
+    for (int pos = mNumberDigits - 1; pos >= 0; --pos) {
+        int div = 1;
+        for (int i = 0; i < pos; ++i) div *= 10;
+        const int d = (mNumberValue / div) % 10;
+        if (!line.empty()) line += " ";
+        line += (pos == mNumberCursor) ? "(" + std::to_string(d) + ")"
+                                       : std::to_string(d);
+    }
+    ImGui::Text("%s", line.c_str());
+    ImGui::TextDisabled("links/rechts Stelle | hoch/runter Ziffer | 0-9 | Enter");
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
+}
+
+void GameUI::DrawNameInput() {
+    if (!mNameActive) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = io.DisplaySize.x * 0.32f;
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - io.DisplaySize.x * 0.04f,
+                                   io.DisplaySize.y * 0.12f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##NameInput", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s",
+        mNamePrompt.empty() ? "Namenseingabe" : mNamePrompt.c_str());
+    ImGui::Separator();
+    ImGui::Text("%s_", mNameText.c_str()); // Unterstrich als Cursor
+    ImGui::TextDisabled("A-Z tippen | Alt+A/O/U Umlaute | Enter fertig | Esc Abbruch");
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
+}
+
 void GameUI::DrawPlayHud(bool playtest) {
     if (mTitle.IsVisible() || mPause.IsVisible()) return;
+    if (!mHudVisible) return; // PAKET 10: F9-Toggle
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(12, 12));
@@ -1190,6 +1315,7 @@ void GameUI::DrawPlayHud(bool playtest) {
     } else if (EventSystem::Get().IsWaitingForMessage()) {
         ImGui::TextColored(ImVec4(1,0.9f,0.4f,1), "Dialog...");
     }
+    ImGui::TextDisabled("%.0f FPS  |  F9 HUD ein/aus", io.Framerate);
     ImGui::End();
     (void)io;
     (void)maxhp;

@@ -12,7 +12,6 @@
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/EventSystem.h"
-#include "rpgmaker3d/RmlUiSystem.h"
 #include "rpgmaker3d/Custom.h" // "alles custom"-Schalter (UI.native_*)
 #include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (Ruby-Klasse Window)
 
@@ -2507,11 +2506,11 @@ DEF_NATIVE_FLAG(battle_menu, nativeBattleMenu)
 DEF_NATIVE_FLAG(battle_status, nativeBattleStatus)
 DEF_NATIVE_FLAG(xp_scene_mode, xpSceneMode) // PAKET 6/h: XP-Szenen-Framework
 #undef DEF_NATIVE_FLAG
-// native_hud= schaltet zusaetzlich LIVE die RmlUi-Sichtbarkeit um
+// native_hud= schaltet zusaetzlich LIVE die HUD-Sichtbarkeit um
+// (PAKET 10: GameUI-ImGui-HUD statt RmlUi)
 static mrb_value rb_ui_native_hud_set_live(mrb_state* mrb, mrb_value self) {
     mrb_value v = rb_ui_native_hud_set(mrb, self);
-    Engine* e = static_cast<Engine*>(mrb->ud);
-    if (e && e->GetRmlUi()) e->GetRmlUi()->SetVisible(CustomConfig::Get().nativeHud);
+    GameUI::Get().SetHudVisible(CustomConfig::Get().nativeHud);
     return v;
 }
 
@@ -2531,18 +2530,17 @@ static mrb_value rb_game_start_game(mrb_state* mrb, mrb_value self) {
 }
 
 // ---------- HUD an/aus aus Ruby (UI.hud_visible = true/false) ----------
+// PAKET 10: steuert das GameUI-ImGui-HUD (RmlUi ist entfernt)
 static mrb_value rb_ui_hud_set_visible(mrb_state* mrb, mrb_value self) {
     (void)self;
     mrb_bool v;
     mrb_get_args(mrb, "b", &v);
-    Engine* e = static_cast<Engine*>(mrb->ud);
-    if (e && e->GetRmlUi()) e->GetRmlUi()->SetVisible(v);
+    GameUI::Get().SetHudVisible(v);
     return mrb_bool_value(v);
 }
 static mrb_value rb_ui_hud_visible(mrb_state* mrb, mrb_value self) {
-    (void)self;
-    Engine* e = static_cast<Engine*>(mrb->ud);
-    return mrb_bool_value(e && e->GetRmlUi() && e->GetRmlUi()->IsVisible());
+    (void)mrb; (void)self;
+    return mrb_bool_value(GameUI::Get().IsHudVisible());
 }
 
 // ---------------------------------------------------------------------------

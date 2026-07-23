@@ -8,9 +8,6 @@
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/ResourceManager.h"
 #include "rpgmaker3d/Camera.h"
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-#include "rpgmaker3d/RmlUiSystem.h"
-#endif
 #include "rpgmaker3d/Model.h"
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Framebuffer.h"
@@ -103,19 +100,12 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         return false;
     }
 
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    // RmlUi UI-System (F9 toggelt Sichtbarkeit; Kontexte "editor" / "game")
-    mRmlUi = std::make_unique<RmlUiSystem>();
-    if (!mRmlUi->Initialize(this)) {
-        RPG_LOG_WARN("RmlUi initialization failed - continuing without RmlUi");
-        mRmlUi.reset();
-    }
-    // Im Editor (Qt) ist das In-Game-HUD standardmaessig AUS: Der Editor
-    // zeigt FPS/Karte/Status in der eigenen Statuszeile an – das HUD wuerde
-    // nur im Weg liegen. Es wird beim Playtest-Start sichtbar (F9 toggelt
-    // jederzeit manuell). Im Player startet es sichtbar.
-    if (mRmlUi && mEditorMode) mRmlUi->SetVisible(false);
-#endif
+    // PAKET 10: RmlUi ist entfernt — die gesamte Spielanzeige laeuft im
+    // GameUI-ImGui-Overlay (Menues/HUD/Messages). HUD-Startwert: Im Editor
+    // (Qt) ist das In-Game-HUD standardmaessig AUS (der Editor zeigt
+    // FPS/Karte/Status in der eigenen Statuszeile); es wird beim
+    // Playtest-Start sichtbar (F9 toggelt jederzeit). Im Player: an.
+    GameUI::Get().SetHudVisible(!mEditorMode);
 
     // Core Systeme
     mInput = std::make_unique<Input>();
@@ -270,8 +260,9 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     mMap = std::make_unique<Map>();
     mResources = std::make_unique<ResourceManager>();
 
-// ImGui-Editor entfernt. UI-Host ist Qt (RPGMAKER3D_EDITOR_QT) bzw. RmlUi im Player.
-    RPG_LOG_INFO("ImGui editor disabled - Qt/RmlUi host only");
+// ImGui-Editor entfernt; UI-Host ist Qt (RPGMAKER3D_EDITOR_QT). Die
+// Spielanzeige laeuft im GameUI-ImGui-Overlay (PAKET 10, kein RmlUi mehr).
+    RPG_LOG_INFO("UI host: Qt editor / GameUI overlay in game");
 
     // Datenbank laden / Defaults
     try {
@@ -372,7 +363,7 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
 #ifdef RPGMAKER3D_EDITOR_QT
         RPG_LOG_INFO("Qt editor host active (ImGui Editor removed)");
 #else
-        RPG_LOG_INFO("Editor mode without Qt host – RmlUi panels (F9) + F5 Playtest. "
+        RPG_LOG_INFO("Editor mode without Qt host – F5 Playtest. "
                      "Fuer vollen Qt-Editor: Qt6 + -DRPGMAKER3D_EDITOR_QT=ON -DCMAKE_PREFIX_PATH=<Qt>");
 #endif
     }
@@ -474,9 +465,7 @@ void Engine::SetPlaying(bool playing) {
             GameUI::Get().Title().Hide();
             // Menue-Callbacks (Speichern/Beenden) sind bereits zentral in
             // InitializeInternal verdrahtet (gelten auch fuer den Player).
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-            if (mRmlUi) mRmlUi->SetVisible(true); // HUD im Playtest zeigen
-#endif
+            GameUI::Get().SetHudVisible(true); // HUD im Playtest zeigen (F9 toggelt)
             GameUI::Get().ShowMessage(std::string("PLAYTEST\nWASD bewegen | E/Enter sprechen | Esc Pause\nGehe zum Dorfältesten (NPC) und drücke E."));
 
             if (mScriptManager) mScriptManager->ExecuteAllScriptsOnce();
@@ -487,9 +476,7 @@ void Engine::SetPlaying(bool playing) {
             RPG_LOG_INFO("=== PLAYTEST STOP ===");
             GameUI::Get().Message().Hide();
             GameUI::Get().Pause().Hide();
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-            if (mRmlUi) mRmlUi->SetVisible(false); // Editor: HUD wieder aus
-#endif
+            GameUI::Get().SetHudVisible(!mEditorMode); // Editor: HUD wieder aus
             if (mProject) {
                 std::string backup = mProject->GetProjectPath() + "/__editor_play_backup.json";
                 if (std::filesystem::exists(backup)) LoadScene(backup);
@@ -526,14 +513,8 @@ void Engine::LoadCustomConfigForProject() {
     const std::string base = mProject ? mProject->GetProjectPath() : std::string();
     CustomConfig::Get().LoadFromProject(base);
     RgssUI::Get().SetProjectBase(base); // Windowskin-Aufloesung der Ruby-UI
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (mRmlUi) {
-        // HUD-Startwert (UI.hud_visible= kann es danach jederzeit aendern)
-        mRmlUi->SetVisible(CustomConfig::Get().nativeHud);
-        // Projekt-Skins (<Projekt>/UI/Skin.rcss, Game.rml, Editor.rml)
-        mRmlUi->ReloadDocumentsIfChanged(base.empty() ? base : (base + "/UI"));
-    }
-#endif
+    // HUD-Startwert aus der Projekt-Config (F9 kann es jederzeit umlegen)
+    GameUI::Get().SetHudVisible(CustomConfig::Get().nativeHud);
 }
 
 void Engine::StartTitleMode() {
@@ -709,9 +690,6 @@ void Engine::Shutdown() {
     mInitialized = false;
 // ImGui/Editor shutdown removed
     mGridMesh.Delete();
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (mRmlUi) { mRmlUi->Shutdown(); mRmlUi.reset(); }
-#endif
     if (mResources) mResources.reset();
     if (mMap) mMap.reset();
     if (mProject) mProject.reset();
@@ -891,13 +869,10 @@ void Engine::Update(float dt) {
 
 #ifdef RPGMAKER3D_EDITOR_QT
     // Im Qt-Editor gibt es kein SDL-Fenster: Input kommt vom Qt-Widget
-    // (ruft OnKeyChanged/OnMouseMoved direkt), RmlUi-Input ist hier (noch) nicht angeschlossen.
+    // (ruft OnKeyChanged/OnMouseMoved direkt).
 #else
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-        if (mRmlUi) mRmlUi->ProcessEvent(e);
-#endif
         switch (e.type) {
             case SDL_QUIT:
                 mRunning = false;
@@ -1321,9 +1296,11 @@ void Engine::Update(float dt) {
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode
     GameUI::Get().Update(dt);
 
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (mRmlUi) mRmlUi->Update(dt);
-#endif
+    // PAKET 10: F9 = Spiel-HUD ein/aus (ersetzt den RmlUi-HUD-Toggle).
+    // Direkt im Update abgefragt, damit es im Player UND im eingebetteten
+    // Qt-Playtest funktioniert (wie der F10-Debug-Inspektor).
+    if (mInput && (mPlayMode || !mEditorMode) && mInput->IsKeyPressed(Key::F9))
+        GameUI::Get().ToggleHud();
 
     // Push scene LightComponents into the global lighting system (point lights)
     // so floors/objects actually receive per-object light in the editor & play mode.
@@ -1369,24 +1346,18 @@ void Engine::Render() {
     if (mWindow && mWindow->GetWidth() > 0 && mWindow->GetHeight() > 0)
         glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
 
-    // GameUI-Draw ist ohne ImGui No-Op; Logik (Messages) laeuft weiter via Input.
+    // PAKET 10: Die gesamte Spielanzeige (Messages, Menues, HUD, Pictures,
+    // ScreenTexts, Kampfstatus) laeuft im GameUI-ImGui-Overlay — ohne
+    // ImGui-Define ist Draw ein No-Op, die Logik (Modal-Input) laeuft weiter.
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     if (mPlayMode || !mEditorMode) {
         GameUI::Get().Draw();
         if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
     }
-#else
-    if (mPlayMode) {
-        // Fortschritt nur ueber Engine-Input (AdvanceInput bereits in Update)
-        (void)0;
-    }
 #endif
 
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (mRmlUi) mRmlUi->Render();
-#endif
     // RGSS-Fenster (reine Ruby-UI) liegen auf der obersten Schicht -
-    // nach RmlUi zeichnen, damit Ruby-UIs alles ueberdecken koennen.
+    // nach den GameUI-Overlays zeichnen, damit Ruby-UIs alles ueberdecken.
     if (mWindow) RgssUI::Get().Render(mWindow->GetWidth(), mWindow->GetHeight());
 }
 
