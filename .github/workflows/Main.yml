@@ -1,10 +1,19 @@
-# TEMPLATE: Inhalt von .github/workflows/Main.yml (Qt-Editor CI).
-# Der Arena-Bot darf Workflow-Dateien oft nicht pushen (workflows permission).
-# Maintainer: diese Datei nach .github/workflows/Main.yml kopieren und pushen.
-#
-# GitHub Actions Workflow für den Windows-Build mit mruby/MSVC + Qt-Editor
-# Qt-DLLs sind /MD -> vcpkg-Triplet x64-windows (nicht -static /MT).
-
+# ============================================================================
+# TEMPLATE: Inhalt von .github/workflows/Main.yml (Qt-Editor CI)
+# ----------------------------------------------------------------------------
+# Der Arena-Bot darf Workflow-Dateien nicht pushen (fehlende "workflows"-
+# Permission des GitHub-App-Tokens -> "refusing to allow a GitHub App to
+# create or update workflow"). Deshalb liegt der aktuelle Stand HIER als
+# Vorlage.
+# MAINTAINER: Um die Aenderungen zu aktivieren, diese Datei 1:1 nach
+#   .github/workflows/Main.yml
+# kopieren und mit einem normalen User-Account committen+pushen
+# (oder im GitHub-Web-Editor einfuegen).
+# Letzte inhaltliche Aenderung (2026-07-23): Qt-Download gehaertet -
+# aqtinstall==3.1.* gepinnt, Archivliste reduziert (kein qtdeclarative mehr,
+# das war das korrupte Bad7zFile-Archiv 2026-07-23), 1 Retry bei Spiegel-
+# Fehlern. Details: TODO_XP_PARITY.md, PAKET 7 Punkt 7.
+# ============================================================================
 name: Build Windows EXE
 
 on:
@@ -38,9 +47,36 @@ jobs:
       - name: Install Qt for editor
         shell: pwsh
         run: |
-          python -m pip install aqtinstall
-          # MSVC 2022 64-bit Desktop Qt (passend zu windows-latest / VS Enterprise)
-          aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt"
+          # aqt auf die als stabil geltende Serie pinnen (kein Stillstand durch
+          # brandneue aqt-Releases mit ungetesteten Qt-Paket-Layouts).
+          python -m pip install "aqtinstall==3.1.*"
+          # Windows-Mirror lieferte schon mehrfach korrupte 7z-Archive aus
+          # (Bad7zFile / "Specified path is bad: mkspecs/features/qtquickcompiler.prf").
+          # Deshalb: 1) weniger Archive laden (qtdeclarative & Co. brauchen wir
+          # nicht - der Editor nutzt nur Widgets/OpenGLWidgets aus qtbase),
+          # was die Angriffsflaeche fuer korrupte Downloads deutlich senkt, und
+          # 2) ein Retry mit sauberem Zielverzeichnis, falls doch ein Archiv
+          # defekt ankommt.
+          $attempt = 0
+          while ($attempt -lt 2) {
+            $attempt++
+            Write-Host "aqt install attempt $attempt"
+            if ($attempt -gt 1 -and (Test-Path "$env:GITHUB_WORKSPACE/qt")) {
+              Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE/qt" -ErrorAction SilentlyContinue
+            }
+            # --modules: Metadaten/Doku dieser Module; --archives: nur diese
+            # 7z-Bibliotheksarchive herunterladen & entpacken. qtbase/qtsvg/
+            # qttools/qttranslations = der Satz, den Build & Deployment brauchen
+            # (windeployqt liegt in qttools, Plattform-Plugins in qtbase);
+            # opengl32sw/d3dcompiler bleiben dabei, damit windeployqt weiter
+            # den Software-GL-Fallback mit ausliefern kann.
+            aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --modules qtbase qtsvg qttools qttranslations --archives qtbase qtsvg qttools qttranslations opengl32sw d3dcompiler
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "aqt attempt $attempt failed (exit $LASTEXITCODE)"
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Qt installation failed after retries"
+          }
           $qtDir = "$env:GITHUB_WORKSPACE/qt/6.9.1/msvc2022_64"
           if (-not (Test-Path "$qtDir/bin/qmake.exe")) {
             throw "Qt installation missing: $qtDir"
