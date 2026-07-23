@@ -723,6 +723,49 @@ class Game_Screen
 end
 $game_screen = Game_Screen.new
 
+# ---------------------------------------------------------------------------
+# XP Szenen-Framework (PAKET 6/h, Opt-in): Aktivierung mit
+#   UI.xp_scene_mode = true      (oder Game.ini: XpSceneMode=1)
+# Dann tickt die ENGINE pro Frame $scene.__engine_frame: start genau einmal,
+# update pro Frame, terminate genau einmal sobald $scene auf eine andere
+# Szene zeigt. Szenenwechsel wie in RPGXP per Zuweisung:
+#   $scene = Scene_Karte.new
+# WICHTIG: Die XP-Main.rb-Schleife `while $scene != nil; $scene.main; end`
+# darf im XP-Modus NICHT verwendet werden — die Engine ownet den Frame-Loop
+# (main ist hier bewusst nur die Start-Fassade; dokumentiert in TODO).
+# ---------------------------------------------------------------------------
+class Scene_Base
+  def initialize
+    @__started = false
+    @__done = false
+  end
+  def start
+  end
+  def update
+  end
+  def terminate
+  end
+  # Engine-Tick (intern): start einmalig -> update pro Frame -> terminate
+  # einmalig beim Szenenwechsel (XP ruft diese drei aus main auf).
+  def __engine_frame
+    unless @__started
+      @__started = true
+      start
+    end
+    update
+    if $scene != self and not @__done
+      @__done = true
+      terminate
+    end
+  end
+  # XP-Kompat-Fassade: ohne blockierende While-Schleife (Engine-Frame-Loop)
+  # laeuft main hier als genau ein Frame-Tick — ehrlich dokumentiert.
+  def main
+    __engine_frame
+  end
+end
+$scene = nil
+
 def save_data(obj, filename)
   raise RGSSError, "save_data: Marshal wird nicht unterstuetzt " \
     "(Spielstaende: Game.save(slot))."

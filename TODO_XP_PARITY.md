@@ -461,10 +461,32 @@ am Ziel ab und wartet bis zum Ende.
       - **Game_Actor#change_equip nativ** (slot 0-4, item nil/ID/Objekt)
         + **#equip im Prelude** (Inventar-Tausch mit $game_party — exakt
         die XP-Aufteilung).
-  (h) Scene_*-Framework: XP Main.rb treibt `while $scene != nil` —
-      unsere Engine ownet den Frame-Loop; Bruecke = $scene bereitstellen
-      + Scene.update pro Frame aufrufen (Architektur-Entscheid: Opt-in-
-      XP-Modus, Default bleibt nativ);
+  (g) **TEIL 4 erledigt 2026-07-23: Name-Input-Verdrahtung komplett:**
+      Bestand (verifiziert): Event-Befehl 303 oeffnet GameUI-
+      Namenseingabe und schreibt zurueck (EventSystem WireInterpreter),
+      `Game_Actor#name=` nativ (Teil 1), Save/Load persistiert den Namen
+      (JSON `"name"` hin UND zurueck). **Neu:** `UI.open_name_input(
+      actor_id = nil, max_chars = 8, prompt = "") { |name| ... }` —
+      XP-Befehl-303-Verhalten jetzt auch aus Custom-Szenen heraus: mit
+      actor_id Starttext = aktueller Name + Ergebnis-Rueckschreiben,
+      nil = reine Eingabe nur per Block. Block GC-sicher geparkt
+      (Muster wie UI.open_list_menu), Rueckruf ueber neue public
+      RubyVM::CallNameInputResult (Stub-Zweig mitgeliefert + nm-geprueft).
+      Damit sind ALLE (g)-Punkte abgeschlossen.
+  (h) ~~Scene_*-Framework~~ **ERLEDIGT 2026-07-23 (Opt-in XP-Modus, wie
+      im Eintrag festgelegte Architektur):** Aktivierung `UI.xp_scene_mode
+      = true` oder Game.ini `XpSceneMode=1` (CustomConfig.xpSceneMode,
+      Default AUS = natives Verhalten). Prelude: `Scene_Base` mit
+      start/update/terminate + Engine-Tick `__engine_frame` (start
+      einmalig -> update pro Frame -> terminate einmalig beim
+      $scene-Wechsel), `$scene = nil` Standard. Nativ: RubyVM::Update
+      ruft pro Frame `$scene.__engine_frame` (Block 3 nach SceneManager
+      und $game.update). Szenenwechsel XP-konform per Zuweisung
+      `$scene = Scene_X.new`, wirksam ab dem naechsten Frame (kein
+      Rekursions-Stapel). **Ehrliche Abweichung:** die Main.rb-Schleife
+      `while $scene != nil; $scene.main; end` darf im XP-Modus nicht
+      verwendet werden (Engine ownet den Frame-Loop; main = 1 Tick als
+      Kompat-Fassade) — im Prelude-Kommentar dokumentiert.
   (i) interpreter 1-7: bewusst NICHT uebernehmen (unser nativer
       EventSystem-Interpreter bleibt fuehrend); Windows_*/Sprite_* der
       Originalskripte sind gegen RgssUI weitgehend API-kompatibel und

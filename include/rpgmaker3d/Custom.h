@@ -13,6 +13,9 @@
 //   NativeGameMenu=1     ; 0 = Esc oeffnet NICHT das eingebaute Spielmenue
 //   NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenue (Custom via Battle-API)
 //   NativeBattleStatus=1 ; 0 = keine eingebaute Gegner-/Gruppenzeile im Kampf
+//   XpSceneMode=0        ; 1 = XP-Szenen-Framework aktiv: die Engine tickt
+//                          pro Frame $scene.__engine_frame (Scene_Base aus dem
+//                          RGSS-Prelude) — Opt-in, Default bleibt nativ.
 //
 // Die gleichen Flags sind zur Laufzeit aus Ruby schreibbar:
 //   UI.native_battle_menu = false   usw. (siehe README "Alles custom")
@@ -30,6 +33,9 @@ public:
     bool nativeGameMenu = true;
     bool nativeBattleMenu = true;
     bool nativeBattleStatus = true;
+    /// XP-Szenen-Framework (Opt-in, PAKET 6/h): pro Frame $scene.__engine_frame
+    /// (Scene_Base-Tick: start -> update -> terminate). Default AUS.
+    bool xpSceneMode = false;
 
     /// Alles auf Standard (eingebaute Oberflaechen aktiv)
     void Reset();

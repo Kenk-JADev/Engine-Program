@@ -277,6 +277,25 @@ bool RubyVM::Update(float deltaTime) {
             return false;
         }
     }
+
+    // 3) XP-Szenen-Framework (PAKET 6/h, Opt-in via UI.xp_scene_mode /
+    //    Game.ini XpSceneMode=1): XP treibt Szenen mit einer blockierenden
+    //    `while $scene != nil; $scene.main; end`-Schleife — unsere Engine
+    //    ownet den Frame-Loop, daher tickt sie stattdessen pro Frame
+    //    `$scene.__engine_frame` der Scene_Base (start -> update ->
+    //    terminate bei $scene-Wechsel; siehe RgssPrelude). Szenenwechsel
+    //    geschieht XP-konform per Zuweisung `$scene = Scene_X.new` und
+    //    wird ab dem naechsten Frame wirksam (kein Rekursions-Stapel).
+    if (CustomConfig::Get().xpSceneMode) {
+        mrb_value scene = mrb_gv_get(mMrb, mrb_intern_lit(mMrb, "$scene"));
+        if (!mrb_nil_p(scene)) {
+            mrb_funcall(mMrb, scene, "__engine_frame", 0);
+            if (mMrb->exc) {
+                CaptureException("$scene.__engine_frame");
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -310,6 +329,18 @@ void RubyVM::CallListMenuBlock(int index) {
     mrb_funcall_argv(mMrb, blk, mrb_intern_lit(mMrb, "call"), 1, &arg);
     if (mMrb->exc) {
         CaptureException("UI.open_list_menu-Block");
+        mMrb->exc = nullptr; // UI darf bei Ruby-Fehler nicht stehen bleiben
+    }
+}
+
+void RubyVM::CallNameInputResult(const std::string& name) {
+    if (!mMrb) return;
+    mrb_value blk = mrb_gv_get(mMrb, mrb_intern_lit(mMrb, "$__rpg3d_nameinput_block"));
+    if (mrb_nil_p(blk)) return;
+    mrb_value arg = mrb_str_new(mMrb, name.data(), (mrb_int)name.size());
+    mrb_funcall_argv(mMrb, blk, mrb_intern_lit(mMrb, "call"), 1, &arg);
+    if (mMrb->exc) {
+        CaptureException("UI.open_name_input-Block");
         mMrb->exc = nullptr; // UI darf bei Ruby-Fehler nicht stehen bleiben
     }
 }
@@ -2339,6 +2370,39 @@ static mrb_value rb_ui_open_list_menu(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+// ---------- Namenseingabe aus Ruby (XP Befehl 303 auch fuer Custom-Szenen) ----------
+// UI.open_name_input(actor_id = nil, max_chars = 8, prompt = "") { |name| ... }
+// Mit actor_id (Integer) verhaelt es sich exakt wie der Event-Befehl 303:
+// Starttext = aktueller Actor-Name, Ergebnis wird zurueckgeschrieben UND
+// zusaetzlich an den Block gegeben. actor_id = nil: reine Eingabe, nur Block.
+// Der Block wird GC-sicher global geparkt (Muster wie UI.open_list_menu).
+static mrb_value rb_ui_open_name_input(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_value actorId;
+    mrb_int maxChars = 8;
+    char* prompt = nullptr;
+    mrb_value blk;
+    mrb_get_args(mrb, "o|iz&", &actorId, &maxChars, &prompt, &blk);
+
+    int aid = 0;
+    std::string initial;
+    if (mrb_integer_p(actorId)) {
+        aid = (int)mrb_integer(actorId);
+        if (auto* a = Game::Get().Party().GetActor(aid)) initial = a->name;
+    }
+    mrb_gv_set(mrb, mrb_intern_lit(mrb, "$__rpg3d_nameinput_block"), blk);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    GameUI::Get().ShowNameInput(prompt ? prompt : "", initial,
+        (int)(maxChars > 0 ? maxChars : 8),
+        [e, aid](const std::string& name) {
+            if (aid > 0) {
+                if (auto* a = Game::Get().Party().GetActor(aid)) a->name = name;
+            }
+            if (e) e->GetRubyVM().CallNameInputResult(name);
+        });
+    return mrb_nil_value();
+}
+
 // ---------- Native-UI-Schalter aus Ruby (Pendant zu Game.ini) ----------
 #define DEF_NATIVE_FLAG(Name, Field) \
     static mrb_value rb_ui_native_##Name##_set(mrb_state* mrb, mrb_value self) { \
@@ -2353,6 +2417,7 @@ DEF_NATIVE_FLAG(hud, nativeHud)
 DEF_NATIVE_FLAG(game_menu, nativeGameMenu)
 DEF_NATIVE_FLAG(battle_menu, nativeBattleMenu)
 DEF_NATIVE_FLAG(battle_status, nativeBattleStatus)
+DEF_NATIVE_FLAG(xp_scene_mode, xpSceneMode) // PAKET 6/h: XP-Szenen-Framework
 #undef DEF_NATIVE_FLAG
 // native_hud= schaltet zusaetzlich LIVE die RmlUi-Sichtbarkeit um
 static mrb_value rb_ui_native_hud_set_live(mrb_state* mrb, mrb_value self) {
@@ -2566,6 +2631,7 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, uiModule, "open_load_screen", rb_ui_open_load_screen, MRB_ARGS_NONE());
     // "Alles custom": eigene Menues per Block + Abschalten der Native-UIs
     mrb_define_module_function(mMrb, uiModule, "open_list_menu", rb_ui_open_list_menu, MRB_ARGS_REQ(2) | MRB_ARGS_BLOCK());
+    mrb_define_module_function(mMrb, uiModule, "open_name_input", rb_ui_open_name_input, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(2) | MRB_ARGS_BLOCK());
     mrb_define_module_function(mMrb, uiModule, "native_title=", rb_ui_native_title_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, uiModule, "native_title?", rb_ui_native_title_get, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "native_hud=", rb_ui_native_hud_set_live, MRB_ARGS_REQ(1));
@@ -2576,6 +2642,10 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, uiModule, "native_battle_menu?", rb_ui_native_battle_menu_get, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "native_battle_status=", rb_ui_native_battle_status_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, uiModule, "native_battle_status?", rb_ui_native_battle_status_get, MRB_ARGS_NONE());
+    // XP-Szenen-Framework (PAKET 6/h, Opt-in): UI.xp_scene_mode = true ->
+    // die Engine tickt pro Frame $scene.__engine_frame (Scene_Base).
+    mrb_define_module_function(mMrb, uiModule, "xp_scene_mode=", rb_ui_native_xp_scene_mode_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "xp_scene_mode?", rb_ui_native_xp_scene_mode_get, MRB_ARGS_NONE());
 
     // Custom-Start (eigener Titel ruft das auf "Neues Spiel" auf)
     {
@@ -3292,6 +3362,7 @@ void RubyVM::CollectGarbage() {} // ScriptManager ruft das ungeschuetzt
 
 bool RubyVM::CallGameHook(const std::string& name) { (void)name; return false; }
 void RubyVM::CallListMenuBlock(int index) { (void)index; }
+void RubyVM::CallNameInputResult(const std::string& name) { (void)name; }
 
 bool RubyVM::CaptureException(const std::string&) { return false; }
 

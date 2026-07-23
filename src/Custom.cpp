@@ -17,6 +17,7 @@ void CustomConfig::Reset() {
     nativeGameMenu = true;
     nativeBattleMenu = true;
     nativeBattleStatus = true;
+    xpSceneMode = false; // XP-Szenen-Framework ist Opt-in
 }
 
 void CustomConfig::LoadFromProject(const std::string& projectPath) {
@@ -63,13 +64,15 @@ void CustomConfig::LoadFromProject(const std::string& projectPath) {
         else if (key == "nativegamemenu")    nativeGameMenu = parseBool(value, nativeGameMenu);
         else if (key == "nativebattlemenu")  nativeBattleMenu = parseBool(value, nativeBattleMenu);
         else if (key == "nativebattlestatus") nativeBattleStatus = parseBool(value, nativeBattleStatus);
+        else if (key == "xpscenemode")        xpSceneMode = parseBool(value, xpSceneMode);
     }
 
     RPG_LOG_INFO("[Custom] Game.ini gelesen: Title=" + std::to_string(nativeTitle) +
                  " Hud=" + std::to_string(nativeHud) +
                  " GameMenu=" + std::to_string(nativeGameMenu) +
                  " BattleMenu=" + std::to_string(nativeBattleMenu) +
-                 " BattleStatus=" + std::to_string(nativeBattleStatus));
+                 " BattleStatus=" + std::to_string(nativeBattleStatus) +
+                 " XpSceneMode=" + std::to_string(xpSceneMode));
 }
 
 } // namespace rpg

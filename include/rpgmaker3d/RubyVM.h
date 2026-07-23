@@ -46,6 +46,9 @@ public:
     /// Interne Bruecke fuer UI.open_list_menu: ruft den per Block
     /// uebergebenen Ruby-Callback mit dem gewaehlten Index (-1 = Abbruch).
     void CallListMenuBlock(int index);
+    /// Interne Bruecke fuer UI.open_name_input: ruft den per Block
+    /// uebergebenen Ruby-Callback mit dem eingegebenen Namen auf.
+    void CallNameInputResult(const std::string& name);
 
     mrb_state* GetState() { return mMrb; }
 
