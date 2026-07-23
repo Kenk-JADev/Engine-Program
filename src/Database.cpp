@@ -1018,6 +1018,7 @@ bool Database::Save(const std::string& projectPath) const {
                 f << "  {\"id\":" << e.id
                   << ",\"name\":\"" << Escape(e.name) << "\""
                   << ",\"battlerName\":\"" << Escape(e.battlerName) << "\""
+                  << ",\"battlerHue\":" << e.battlerHue
                   << ",\"maxHp\":" << e.maxHp
                   << ",\"maxMp\":" << e.maxMp
                   << ",\"atk\":" << e.atk

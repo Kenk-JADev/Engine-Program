@@ -717,7 +717,7 @@ Editor, Spielansicht?"
   neben der exe liegendes `./Game/project.json` automatisch — ein
   Doppelklick auf Game.exe startet ohne Argumente.
 
-## PAKET 9 — Kampfszene (XP-Feinschliff) 🔧
+## PAKET 9 — Kampfszene (XP-Feinschliff) ✅ ERLEDIGT 2026-07-23
 
 Vorhandenes Fundament: Gegner-Bilder aus Graphics/Battlers/<battlerName>
 als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
@@ -764,10 +764,42 @@ als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
   Crit (1/16, dreifacher Schaden, Popup „KRITISCH! -x“ in Orange,
   groesser). Event-Befehle melden weiterhin Damage/Heal wie gehabt;
   das teilte sich die Verteilung (Popups/Flash) automatisch.
-- [ ] **battlerHue (Farbton 0..360)** wird beim Laden der Battler-Bilder
-  aktuell ignoriert (XP schiebt den Farbkreis; Engine koennte per
-  CPU-Pixel-Shift beim Erstladen loesen — Cache-Key inkl. hue; eigene
-  Runde: braucht Texture-CreateFromRGBA + Pixelmath).
+- [x] **battlerHue (Farbton 0..360):** CPU-Pixel-Shift beim Erstladen des
+  Battler-Bildes — `Texture::CreateFromRGBA(w, h, rgba)` (neu, ersetzt
+  bestehende GL-Textur) + `ApplyHueShiftRGBA` (HSL-Drehung pro Pixel,
+  Alpha und graue/farbton-neutrale Pixel bleiben unberuehrt) im
+  Picture-Cache-Namespace. `ScreenPicture` bekam `hue`,
+  `ShowPicture(...)` einen optionalen Parameter `int hue = 0` (beide
+  Ueberladungen — Ruby-Binding und alle Alt-Aufrufer bleiben unveraendert
+  kompatibel), `LoadPictureTexture` cached pro (Pfad, Farbton) mit Key
+  `path|hue=N` (hue == 0 benutzt weiterhin den reinen Pfad-Key). Die
+  Engine reicht `EnemyData::battlerHue` im `$battler`-Block durch.
+  Dazu gehoert der Editor: Gegner-Tab des Datenbank-Dialogs bekam den
+  XP-Regler **„Farbton" (0..360)** — und die Persistenz-Luecke wurde
+  geschlossen: `Enemies.json` speichert `battlerHue` jetzt auch (Laden
+  + RGSS `battler_hue` existierten schon, nur Speichern fehlte).
+
+## PAKET 10 — RmlUi-Ablösung der Menü-Anzeige 🔧 (Nutzer-priorisiert)
+
+Nutzer-Strategie (2026-07-23): „wenn alles fertig ist wird RmlUI nicht
+mehr benötigt." Mit PAKET 9 ist der letzte Feature-Block auf alter Basis
+abgeschlossen — die Menü-Anzeige wandert jetzt in den ImGui-Overlay-/
+RgssUI-Pfad, danach kann RmlUi als Abhängigkeit entfallen.
+
+- [ ] **MenuWindow auf ImGui-Overlay portieren:** `MenuWindow` (Basis für
+  Spielmenü (Esc), Gegenstandsliste, Speicherbildschirm (4 Slots), Shop
+  und alle Battle-Untermenüs) zeigt aktuell über RmlUi `#menu_box`; die
+  Tastatursteuerung läuft bereits in `GameUI::UpdateModalInput` und
+  bleibt. Ziel: Darstellung im Stil von `MessageWindow::Draw`/
+  `DrawBattleStatus` (WindowBg, randlos, NoTitleBar/NoResize/NoMove),
+  API unverändert (`Show(title, Entry{text,enabled}, onPick, cancelable)`,
+  `GetTitle()`, `GetCursor()`).
+- [ ] **Restliche RmlUi-Anzeigepfade inventarisieren + portieren:**
+  Titelbildschirm/Titelgrafik, HUD-Toggle (F9), ScreenPictures-<img>-
+  Overlays (RmlUiSystem.cpp ~676), qt_editor-Anbindung.
+- [ ] **RmlUi entfernen:** `RPGMAKER3D_ENABLE_RMLUI`-Pfade, `mRmlUi` in
+  Engine, third_party/rmlui(+glue), CMake/`#include`-Reste; Build in
+  beiden ImGui-Varianten gruen, CI-Lauf abwarten.
 
 ## Arbeitsregeln (für Agenten-Sessions)
 

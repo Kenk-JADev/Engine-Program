@@ -1255,14 +1255,17 @@ void Engine::Update(float dt) {
                     if (!e.isDead) {
                         if (!exists) {
                             std::string gfx;
-                            if (const auto* ed = Database::Get().GetEnemy(e.id))
+                            int hue = 0; // PAKET 9: XP-Farbton des Battler-Bildes
+                            if (const auto* ed = Database::Get().GetEnemy(e.id)) {
                                 gfx = ed->battlerName;
+                                hue = ed->battlerHue;
+                            }
                             if (gfx.empty()) gfx = "slime";
                             const float x = enemyCount > 1
                                 ? (0.25f + 0.5f * (float)i / (float)(enemyCount - 1))
                                 : 0.5f;
                             GameUI::Get().ShowPicture(gfx, tag, Vec2(x, 0.30f),
-                                                      1.5f, 1.0f, 0.0f);
+                                                      1.5f, 1.0f, 0.0f, hue);
                             mBattlerPicNames.push_back(tag);
                         }
                     } else {

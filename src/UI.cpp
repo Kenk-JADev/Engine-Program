@@ -1385,6 +1385,54 @@ namespace {
         }
         return filename;
     }
+
+    // --- PAKET 9: battlerHue (XP-Farbton 0..360 Grad) ---------------------
+    // CPU-Pixelshift als HSL-Drehung; Alpha-Kanal und farbton-neutrale
+    // (graue) Pixel bleiben unberuehrt — wie beim XP-Datenbankregler.
+    float HueToRgb(float p, float q, float t) {
+        if (t < 0.0f) t += 1.0f;
+        if (t > 1.0f) t -= 1.0f;
+        if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+        if (t < 1.0f / 2.0f) return q;
+        if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+        return p;
+    }
+
+    void ApplyHueShiftRGBA(std::vector<unsigned char>& px, int hue) {
+        hue %= 360;
+        if (hue < 0) hue += 360;
+        if (hue == 0) return;
+        auto to8 = [](float v) {
+            return (unsigned char)std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f);
+        };
+        for (size_t i = 0; i + 3 < px.size(); i += 4) {
+            if (px[i + 3] == 0) continue; // transparent: nicht anfassen
+            const float r = px[i + 0] / 255.0f;
+            const float g = px[i + 1] / 255.0f;
+            const float b = px[i + 2] / 255.0f;
+            const float mx = std::max(r, std::max(g, b));
+            const float mn = std::min(r, std::min(g, b));
+            const float l = (mx + mn) * 0.5f;
+            float h = 0.0f, s = 0.0f;
+            if (mx != mn) {
+                const float d = mx - mn;
+                s = (l > 0.5f) ? d / (2.0f - mx - mn) : d / (mx + mn);
+                if (mx == r)      h = (g - b) / d + (g < b ? 6.0f : 0.0f);
+                else if (mx == g) h = (b - r) / d + 2.0f;
+                else              h = (r - g) / d + 4.0f;
+                h *= 60.0f;
+            }
+            if (s <= 0.0f) continue; // Grau: kein Farbton vorhanden
+            h = std::fmod(h + (float)hue, 360.0f);
+            if (h < 0.0f) h += 360.0f;
+            const float q = (l < 0.5f) ? l * (1.0f + s) : l + s - l * s;
+            const float p = 2.0f * l - q;
+            const float hn = h / 360.0f;
+            px[i + 0] = to8(HueToRgb(p, q, hn + 1.0f / 3.0f));
+            px[i + 1] = to8(HueToRgb(p, q, hn));
+            px[i + 2] = to8(HueToRgb(p, q, hn - 1.0f / 3.0f));
+        }
+    }
 }
 
 void GameUI::SetPicturePathResolver(
@@ -1398,8 +1446,15 @@ std::string GameUI::ResolvePicturePath(const std::string& filename) { // static
 
 bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
     if (pic.filename.empty()) return false;
-    std::string path = ResolvePicturePath(pic.filename);
-    auto it = s_PictureCache.find(path);
+    const std::string path = ResolvePicturePath(pic.filename);
+    // PAKET 9 (battlerHue): dasselbe Bild kann in mehreren Farbtoenen
+    // vorkommen — der Cache-Key traegt den Farbton (0 = Originalpfad,
+    // bestehende Cache-Eintraege und Suchpfade bleiben unberuehrt).
+    const int hue = ((pic.hue % 360) + 360) % 360;
+    const std::string cacheKey = (hue != 0)
+        ? path + "|hue=" + std::to_string(hue)
+        : path;
+    auto it = s_PictureCache.find(cacheKey);
     std::shared_ptr<Texture> tex;
     if (it != s_PictureCache.end()) {
         tex = it->second;
@@ -1409,8 +1464,15 @@ bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
             // Try fallback checkerboard
             tex->CreateCheckerboard();
             RPG_LOG_WARN("Picture not found, using checkerboard: " + path);
+        } else if (hue != 0) {
+            // CPU-Farbton-Drehung (HSL), Alpha bleibt erhalten.
+            std::vector<unsigned char> px;
+            if (tex->ReadPixelsRGBA(px)) {
+                ApplyHueShiftRGBA(px, hue);
+                tex->CreateFromRGBA(tex->GetWidth(), tex->GetHeight(), px.data());
+            }
         }
-        s_PictureCache[path] = tex;
+        s_PictureCache[cacheKey] = tex;
     }
     pic.textureId = tex->GetID();
     pic.loaded = (pic.textureId != 0);
@@ -1419,11 +1481,11 @@ bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
     return pic.loaded;
 }
 
-int GameUI::ShowPicture(const std::string& filename, Vec2 screenPos, float scale, float opacity, float duration, const std::string& name) {
-    return ShowPicture(filename, name, screenPos, scale, opacity, duration);
+int GameUI::ShowPicture(const std::string& filename, Vec2 screenPos, float scale, float opacity, float duration, const std::string& name, int hue) {
+    return ShowPicture(filename, name, screenPos, scale, opacity, duration, hue);
 }
 
-int GameUI::ShowPicture(const std::string& filename, const std::string& name, Vec2 screenPos, float scale, float opacity, float duration) {
+int GameUI::ShowPicture(const std::string& filename, const std::string& name, Vec2 screenPos, float scale, float opacity, float duration, int hue) {
     ScreenPicture pic;
     pic.id = mNextPictureId++;
     pic.filename = filename;
@@ -1434,6 +1496,7 @@ int GameUI::ShowPicture(const std::string& filename, const std::string& name, Ve
     pic.duration = duration;
     pic.elapsed = 0.0f;
     pic.centered = true;
+    pic.hue = hue; // PAKET 9: XP-Farbton (Battler), wirkt beim Textur-Laden
     LoadPictureTexture(pic);
     mPictures.push_back(pic);
     RPG_LOG_INFO("ShowPicture id=" + std::to_string(pic.id) + " name=" + pic.name + " file=" + filename);

@@ -74,6 +74,9 @@ struct ScreenPicture {
     unsigned int textureId = 0; // loaded texture id
     bool loaded = false;
     std::string name; // picture name for reference
+    // PAKET 9: XP-Farbton (battlerHue), 0..360 Grad HSL-Drehung beim Laden;
+    // 0 = Original. Gecacht wird pro (Pfad, Farbton) — siehe LoadPictureTexture.
+    int hue = 0;
 
     // Tween animation
     Vec2 tweenStartPos{0.5f, 0.5f};
@@ -317,8 +320,9 @@ public:
     void TweenScreenText(int id, Vec2 targetPos, float targetScale, float duration, int easing = 2);
 
     // === Screen Picture / Sprite System (NEW) - for custom systems like original RPG Maker ===
-    int ShowPicture(const std::string& filename, Vec2 screenPos = Vec2(0.5f, 0.5f), float scale = 1.0f, float opacity = 1.0f, float duration = 0.0f, const std::string& name = "");
-    int ShowPicture(const std::string& filename, const std::string& name, Vec2 screenPos, float scale = 1.0f, float opacity = 1.0f, float duration = 0.0f);
+    // hue: optionaler XP-Farbton 0..360 (Battler-Grafiken, PAKET 9); 0 = Original.
+    int ShowPicture(const std::string& filename, Vec2 screenPos = Vec2(0.5f, 0.5f), float scale = 1.0f, float opacity = 1.0f, float duration = 0.0f, const std::string& name = "", int hue = 0);
+    int ShowPicture(const std::string& filename, const std::string& name, Vec2 screenPos, float scale = 1.0f, float opacity = 1.0f, float duration = 0.0f, int hue = 0);
     void MovePicture(int id, Vec2 targetPos, float duration = 1.0f, int easing = 2);
     void MovePicture(const std::string& name, Vec2 targetPos, float duration = 1.0f, int easing = 2);
     // Tween animations

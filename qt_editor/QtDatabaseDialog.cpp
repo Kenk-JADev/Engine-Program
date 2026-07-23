@@ -817,6 +817,7 @@ void QtDatabaseDialog::buildEnemiesTab() {
 
     auto* name = makeLine(formHost);
     auto* battler = makeLine(formHost);
+    auto* hue = makeSpin(0, 360, 0, formHost); // XP: Farbton des Battler-Bildes
     auto* mhp = makeSpin(1, 999999, 100, formHost);
     auto* mmp = makeSpin(0, 99999, 10, formHost);
     auto* atk = makeSpin(0, 999, 15, formHost);
@@ -832,6 +833,7 @@ void QtDatabaseDialog::buildEnemiesTab() {
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Battler-Grafik"), battler);
+    form->addRow(QL("Farbton"), hue);
     form->addRow(QL("Max. HP"), mhp);
     form->addRow(QL("Max. MP"), mmp);
     form->addRow(QL("Angriff"), atk);
@@ -852,11 +854,12 @@ void QtDatabaseDialog::buildEnemiesTab() {
         mEnemies.resize((size_t)n);
         for (size_t i = 0; i < mEnemies.size(); ++i) mEnemies[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, battler, mhp, mmp, atk, def, mat, mdf, agi, luk,
+    tp->loadForm = [this, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi, luk,
                     exp, gold, drops](int i) {
         auto& e = mEnemies[(size_t)i];
         name->setText(QString::fromStdString(e.name));
         battler->setText(QString::fromStdString(e.battlerName));
+        hue->setValue(e.battlerHue);
         mhp->setValue(e.maxHp);
         mmp->setValue(e.maxMp);
         atk->setValue(e.atk);
@@ -871,12 +874,13 @@ void QtDatabaseDialog::buildEnemiesTab() {
         for (int d : e.dropItems) ids << QString::number(d);
         drops->setText(ids.join(QLatin1Char(',')));
     };
-    tp->storeForm = [this, tp, name, battler, mhp, mmp, atk, def, mat, mdf, agi,
+    tp->storeForm = [this, tp, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi,
                      luk, exp, gold, drops](int i) {
         if ((size_t)i >= mEnemies.size()) return;
         auto& e = mEnemies[(size_t)i];
         e.name = name->text().toStdString();
         e.battlerName = battler->text().toStdString();
+        e.battlerHue = hue->value();
         e.maxHp = mhp->value();
         e.maxMp = mmp->value();
         e.atk = atk->value();
