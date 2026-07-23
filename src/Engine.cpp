@@ -12,6 +12,7 @@
 #include "rpgmaker3d/RmlUiSystem.h"
 #endif
 #include "rpgmaker3d/Model.h"
+#include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Framebuffer.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/CommandHistory.h"
@@ -41,6 +42,8 @@
 #include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
+#include <memory>
 
 namespace rpg {
 
@@ -1267,6 +1270,199 @@ void Engine::Render() {
     if (mWindow) RgssUI::Get().Render(mWindow->GetWidth(), mWindow->GetHeight());
 }
 
+// ===========================================================================
+// PAKET 8: XP-Charakter-Sprites in der Spielszene
+// ---------------------------------------------------------------------------
+// Loest die farbigen Quader-Marker ab, sobald das Projekt unter
+// Graphics/Characters/<Name>(.png/.jpg/.jpeg/.bmp) ein XP-Spritesheet
+// liefert. XP-Layout: 4 Richtungen x 4 Laufphasen (Zeile 0..3 =
+// down/left/right/up, Spalte 0..3 = Laufphase, 0 = Standbild). Events mit
+// graphicIndex > 0 nutzen ein 8er-Sheet (4x2 Unterbloecke a 4x4 Frames,
+// VX-Ace-Stil). Busch-Tiles (GameMap::IsBushAt) zeichnen die untere Haelfte
+// mit 45% Alpha ("im Gras stehen", wie zuvor die Quader-Fassung).
+// ===========================================================================
+namespace {
+
+struct CharacterSheetEntry {
+    bool tried = false;                    // Ladeversuch unternommen?
+    std::shared_ptr<Texture> tex;          // nullptr = Datei nicht gefunden
+};
+
+/// Laedt (einmalig) Graphics/Characters/<name> und cachet auch den
+/// Negativfall, damit fehlende Dateien keinen wiederholten Lade-Spam erzeugen.
+std::shared_ptr<Texture> LoadCharacterSheet(const std::string& graphicName) {
+    static std::unordered_map<std::string, CharacterSheetEntry> sCache;
+    if (graphicName.empty()) return nullptr;
+    auto it = sCache.find(graphicName);
+    if (it != sCache.end()) return it->second.tex;
+
+    CharacterSheetEntry entry;
+    entry.tried = true;
+    const std::string path = RgssResolveGraphic("Graphics/Characters/" + graphicName);
+    if (!path.empty()) {
+        auto t = std::make_shared<Texture>();
+        if (t->LoadFromFile(path)) {
+            if (t->GetWidth() >= 4 && t->GetHeight() >= 4) {
+                entry.tex = std::move(t);
+            } else {
+                RPG_LOG_WARN("Charakter-Sheet zu klein (erwarte 4x4 Frames): " + path);
+            }
+        } else {
+            RPG_LOG_WARN("Charakter-Sheet nicht lesbar: " + path);
+        }
+    }
+    return sCache.emplace(graphicName, std::move(entry)).first->second.tex;
+}
+
+/// Baut (und cachet) das Frame-Quad: Ursprung an den Fuessen (x zentriert),
+/// Weltgroesse = Framepixel / 32 (XP: 1 Tile = 32 px = 1 Welteinheit).
+/// Textur ist vertikal geflippt (stb) -> v=0 entspricht PNG-UNTEN.
+/// half: 0 = ganzer Frame, 1 = untere Haelfte, 2 = obere Haelfte (Busch).
+const Mesh& GetCharacterFrameQuad(unsigned int texId, int texW, int texH,
+                                  int graphicIndex, int row, int col, int half) {
+    const uint64_t key = (uint64_t)texId << 32
+                       | (uint64_t)((unsigned)graphicIndex & 0xFFu) << 16
+                       | (uint64_t)(row & 7) << 8
+                       | (uint64_t)(col & 3) << 4
+                       | (uint64_t)(half & 3);
+    static std::unordered_map<uint64_t, Mesh> sQuads;
+    auto it = sQuads.find(key);
+    if (it != sQuads.end()) return it->second;
+
+    // Frame-Geometrie im Sheet
+    int fw, fh, oxF = 0, oyF = 0;          // Framegroesse + Frame-Offset (in Frames)
+    if (graphicIndex > 0) {                // 8er-Sheet: 4x2 Sub-Bloecke a 4x4
+        fw = texW / 16; fh = texH / 8;
+        oxF = ((graphicIndex - 1) % 4) * 4;
+        oyF = ((graphicIndex - 1) / 4) * 4;
+    } else {                               // klassisches XP-Sheet: 4x4 Frames
+        fw = texW / 4; fh = texH / 4;
+    }
+    if (fw <= 0) fw = 1;
+    if (fh <= 0) fh = 1;
+
+    const float w = (float)fw * (1.0f / 32.0f);
+    const float h = (float)fh * (1.0f / 32.0f);
+    float y0 = 0.0f, y1 = h;
+    if (half == 1)      y1 = h * 0.5f;
+    else if (half == 2) y0 = h * 0.5f;
+
+    // PNG-Zeile py0..py0+fh (von OBEN gezaehlt) -> UV (geflippt geladen)
+    const float u0 = (float)((oxF + col) * fw) / (float)texW;
+    const float u1 = (float)((oxF + col + 1) * fw) / (float)texW;
+    const float vB = 1.0f - (float)((oyF + row + 1) * fh) / (float)texH;
+    const float vT = 1.0f - (float)((oyF + row) * fh) / (float)texH;
+    // Halbierte Quads fuehren den UV-Ausschnitt proportional mit
+    const float f0 = (float)(y0 / h);      // 0.0 bzw. 0.5
+    const float f1 = (float)(y1 / h);      // 1.0 bzw. 0.5
+    const float vLo = vB + (vT - vB) * f0;
+    const float vHi = vB + (vT - vB) * f1;
+
+    Mesh mesh;
+    mesh.vertices = {
+        {{-w * 0.5f, y0, 0.0f}, {0, 0, 1}, {u0, vLo}},
+        {{ w * 0.5f, y0, 0.0f}, {0, 0, 1}, {u1, vLo}},
+        {{ w * 0.5f, y1, 0.0f}, {0, 0, 1}, {u1, vHi}},
+        {{-w * 0.5f, y1, 0.0f}, {0, 0, 1}, {u0, vHi}}
+    };
+    mesh.indices = {0, 1, 2, 2, 3, 0};     // Winding wie MeshFactory::CreateQuad
+    mesh.BuildGPU();
+    return sQuads.emplace(key, std::move(mesh)).first->second;
+}
+
+/// XP-Sheet-Zeile aus der Laufzeit-Richtung (2/4/6/8 -> 0..3)
+int CharacterRowFromDir(int dir2d) {
+    switch (dir2d) {
+        case 4:  return 1;   // left
+        case 6:  return 2;   // right
+        case 8:  return 3;   // up
+        case 2:
+        default: return 0;   // down
+    }
+}
+
+/// Dominante 2D-Richtung aus dem Bewegungsvektor (Engine-Konvention:
+/// z- = hoch/8, z+ = runter/2, x- = links/4, x+ = rechts/6)
+int CharacterDir2DFromVec(const Vec3& d) {
+    if (std::fabs(d.x) >= std::fabs(d.z)) return d.x > 0.0f ? 6 : 4;
+    return d.z > 0.0f ? 2 : 8;
+}
+
+/// Animationszustand pro Charakter (XP: Phase 0..3, Takt ~0,13 s; 0 = Stand)
+struct CharacterAnimState {
+    int pattern = 0;
+    float t = 0.0f;
+    Vec3 lastPos{1.0e30f, 0.0f, 0.0f};
+};
+
+/// Phase weiterzaehlen. movingKnown: hat der Aufrufer die Bewegung bereits
+/// bestimmt (Player: IsMoving); sonst Positionsdelta als Bewegungsindikator.
+/// walkAnime=false -> XP: immer Standbild. stepAnime -> auch im Stand animieren.
+void CharacterAnimAdvance(CharacterAnimState& st, const Vec3& pos, bool movingKnown,
+                          bool walkAnime, bool stepAnime, float dt) {
+    bool moving = movingKnown;
+    if (!moving) {
+        const float dx = pos.x - st.lastPos.x;
+        const float dz = pos.z - st.lastPos.z;
+        moving = (dx * dx + dz * dz) > 1.0e-8f;
+    }
+    st.lastPos = pos;
+    if (!walkAnime) { st.pattern = 0; st.t = 0.0f; return; }
+    if (moving || stepAnime) {
+        st.t += dt;
+        if (st.t >= 0.13f) {               // ~5 Frames im XP-40fps-Takt
+            st.t = 0.0f;
+            st.pattern = (st.pattern + 1) & 3;
+        }
+    } else {
+        st.pattern = 0;
+        st.t = 0.0f;
+    }
+}
+
+/// Zeichnet einen Charakter als kamerazugewandtes, texturiertes Quad.
+/// Rueckgabe false = kein gueltiges Sheet (Aufrufer nimmt den Quader-Rueckfall).
+bool DrawCharacterSprite(Renderer& renderer, const Camera& camera,
+                         const std::shared_ptr<Texture>& tex,
+                         const Vec3& basePos, int dir2d, int pattern,
+                         int graphicIndex, float alpha, bool bush) {
+    if (!tex) return false;
+
+    // Billboard-Orientierung (Muster wie SpriteComponent; robust bei
+    // senkrechter Draufsicht: right faellt auf (1,0,0) zurueck)
+    Vec3 forward = camera.GetPosition() - basePos;
+    forward = glm::length(forward) > 1.0e-5f ? glm::normalize(forward) : Vec3(0, 0, 1);
+    Vec3 right = glm::cross(Vec3(0, 1, 0), forward);
+    right = glm::length(right) > 1.0e-5f ? glm::normalize(right) : Vec3(1, 0, 0);
+    Vec3 up = glm::cross(forward, right);
+    Mat4 rot(right.x, right.y, right.z, 0,
+             up.x, up.y, up.z, 0,
+             forward.x, forward.y, forward.z, 0,
+             0, 0, 0, 1);
+    Mat4 base = glm::translate(Mat4(1.0f), basePos) * rot;
+
+    const int row = CharacterRowFromDir(dir2d);
+    const int col = pattern & 3;
+    const unsigned int texId = tex->GetID();
+    const int tw = tex->GetWidth();
+    const int th = tex->GetHeight();
+
+    Color full(1.0f, 1.0f, 1.0f, alpha);
+    if (!bush) {
+        renderer.DrawMesh(GetCharacterFrameQuad(texId, tw, th, graphicIndex, row, col, 0),
+                          base, tex.get(), full);
+        return true;
+    }
+    Color lower = full; lower.a *= 0.45f;
+    renderer.DrawMesh(GetCharacterFrameQuad(texId, tw, th, graphicIndex, row, col, 1),
+                      base, tex.get(), lower);
+    renderer.DrawMesh(GetCharacterFrameQuad(texId, tw, th, graphicIndex, row, col, 2),
+                      base, tex.get(), full);
+    return true;
+}
+
+} // namespace
+
 void Engine::RenderScene() {
     // Bestimme aktive Kamera - vermeide goto und dangling pointer (MSVC mag goto nicht)
     Camera activeCam;
@@ -1454,7 +1650,8 @@ void Engine::RenderScene() {
         }
     }
 
-    // Player + Event markers in PlayMode
+    // Player + Event-Charaktere im PlayMode (PAKET 8: echte XP-Spritesheets
+    // aus Graphics/Characters; fehlt eine Datei, greift der Quader-Rueckfall)
     if (mPlayMode) {
         static Mesh playerMesh;
         static Mesh markerMesh;
@@ -1486,29 +1683,55 @@ void Engine::RenderScene() {
             mRenderer->DrawMesh(mesh, hi, nullptr, col);
         };
 
-        // Player (Transparent-Flag 208 -> halbtransparent; Busch -> untere
-        // Haelfte halbtransparent)
+        static CharacterAnimState sPlayerAnim;
+        static std::unordered_map<int, CharacterAnimState> sEventAnims;
+
+        // Player: Grafik = Party-Leader (XP: actors[0].character_name);
+        // laeuft -> Phase taktet, sonst Standbild. Rueckfall: Quader + Nase.
         Vec3 playerPos = Game::Get().Player().GetPosition();
         const float playerAlpha = Game::Get().Player().IsTransparent() ? 0.35f : 1.0f;
         const bool playerBush = Game::Get().Map().IsBushAt(playerPos);
-        drawCharCube(playerMesh, 0.7f, playerPos, 0.35f,
-                     Color(0.25f, 0.95f, 0.35f, playerAlpha), playerBush);
-        // Facing indicator
-        Vec3 dir = Game::Get().Player().GetDirection();
-        Mat4 nose = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0) + dir * 0.45f);
-        nose = glm::scale(nose, Vec3(0.2f, 0.2f, 0.2f));
-        mRenderer->DrawMesh(markerMesh, nose, nullptr, Color(1.0f, 1.0f, 0.2f, 1.0f));
+        CharacterAnimAdvance(sPlayerAnim, playerPos,
+                             Game::Get().Player().IsMoving(), true, false, mDeltaTime);
+        std::string playerGraphic;
+        if (!Game::Get().Party().Members().empty())
+            playerGraphic = Game::Get().Party().Members().front().graphicName;
+        const int playerDir = CharacterDir2DFromVec(Game::Get().Player().GetDirection());
+        if (!DrawCharacterSprite(*mRenderer, *camera, LoadCharacterSheet(playerGraphic),
+                                 playerPos, playerDir, sPlayerAnim.pattern, 0,
+                                 playerAlpha, playerBush)) {
+            drawCharCube(playerMesh, 0.7f, playerPos, 0.35f,
+                         Color(0.25f, 0.95f, 0.35f, playerAlpha), playerBush);
+            // Facing indicator (nur im Quader-Rueckfall)
+            Vec3 dir = Game::Get().Player().GetDirection();
+            Mat4 nose = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0) + dir * 0.45f);
+            nose = glm::scale(nose, Vec3(0.2f, 0.2f, 0.2f));
+            mRenderer->DrawMesh(markerMesh, nose, nullptr, Color(1.0f, 1.0f, 0.2f, 1.0f));
+        }
 
-        // Event NPC markers (Busch-Effekt auch hier — XP gilt fuer alle Charaktere)
+        // Events: Grafik + Animationsflags aus der AKTIVEN Seite
+        // (graphicName/graphicIndex/walkAnime/stepAnime), Blickrichtung =
+        // Laufzeit-direction (2/4/6/8). Bewegung per Positionsdelta erkannt.
         for (const auto& ev : EventSystem::Get().GetEvents()) {
             if (!ev.enabled || ev.erased) continue;
             Vec3 ep = ev.worldPos;
             if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
-            // Bob slightly
-            float bob = std::sin(mTime * 3.0f + ev.id) * 0.08f;
-            Color col = (ev.id == 1) ? Color(0.95f, 0.75f, 0.2f, 1.0f) : Color(0.4f, 0.7f, 1.0f, 1.0f);
-            drawCharCube(markerMesh, 0.45f, ep, 0.55f + bob, col,
-                         Game::Get().Map().IsBushAt(ep));
+            const EventPage* page = ev.GetCurrentPage();
+            const std::string gname = page ? page->graphicName : std::string();
+            const int gindex = page ? page->graphicIndex : 0;
+            const bool walkAnime = page ? page->walkAnime : true;
+            const bool stepAnime = page ? page->stepAnime : false;
+            auto sheet = LoadCharacterSheet(gname);
+            auto& anim = sEventAnims[ev.id];
+            if (sheet) CharacterAnimAdvance(anim, ep, false, walkAnime, stepAnime, mDeltaTime);
+            if (!DrawCharacterSprite(*mRenderer, *camera, sheet, ep,
+                                     ev.direction, anim.pattern, gindex, 1.0f,
+                                     Game::Get().Map().IsBushAt(ep))) {
+                float bob = std::sin(mTime * 3.0f + ev.id) * 0.08f;
+                Color col = (ev.id == 1) ? Color(0.95f, 0.75f, 0.2f, 1.0f) : Color(0.4f, 0.7f, 1.0f, 1.0f);
+                drawCharCube(markerMesh, 0.45f, ep, 0.55f + bob, col,
+                             Game::Get().Map().IsBushAt(ep));
+            }
         }
     }
 

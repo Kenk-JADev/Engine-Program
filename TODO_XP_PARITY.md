@@ -682,12 +682,22 @@ Editor, Spielansicht?"
   bleibt die 3D-Szene in den Seitenbereichen (bewusst: „2D-Welt auf
   3D-Unterlage", zur Engine-Identitaet passend und nicht schwarz
   zugekleistert).
-- [ ] **Charaktere als XP-Sprites statt Farb-Cubes (SICHTBARSTER
-  naechster Schritt):** PlayMode rendert Spieler/Events aktuell als
-  farbige Quader (drawCharCube). Ziel: Graphics/Characters-Bitmaps
-  (4x4-Frame-Layout wie XP, Richtung = Zeile, Laufphase = Spalte,
-  EventPage.graphicName/Actor character_name; Bush-Depth via
-  GameMap::IsBushAt — haengt direkt an Paket-1/6-Arbeit).
+- [x] **Charaktere als XP-Sprites statt Farb-Cubes (SICHTBARSTER
+  Schritt):** PlayMode rendert Spieler/Events jetzt als kamerazugewandte
+  (Billboard-)Quads mit dem XP-Spritesheet aus
+  `Graphics/Characters/<Name>` (4 Richtungen x 4 Laufphasen; Zeile =
+  Richtung 2/4/6/8, Spalte = Laufphase, 0 = Standbild, Takt ~0,13 s wie
+  XP@40fps). Quellen: Party-Leader (`Game_Actor#graphicName` ←
+  Datenbank-`characterName`) fuer den Spieler, AKTIVE Event-Seite
+  (`graphicName`, `graphicIndex`, `walkAnime`, `stepAnime`) fuer NPCs —
+  Laufzeitaenderungen per Event-Befehl 320 (Charaktergrafik aendern)
+  greifen sofort. `graphicIndex > 0` adressiert 8er-Sheets (4x2
+  Unterbloeecke a 4x4, VX-Ace-Stil). Weltgroesse = Framepx/32
+  (XP-Tile-Fuss), Busch-Tiles (GameMap::IsBushAt) zeichnen die untere
+  Haelfte mit 45% Alpha, Transparenz-Befehl 208 wirkt auf den Spieler.
+  Negativ-Fall gecacht (kein Lade-Spam); ohne Datei bleibt die bewaehrte
+  Quader-Darstellung (gruen Player / farbige NPCs + Bob) als Rueckfall
+  erhalten. Texturen/Quads werden gecacht (kein Per-Frame-Upload).
 - [ ] **Editor-QA-Liste (beim naechsten Windows-Lauf abhaken):**
   Playtest-Knopf → Player-Start dauert?, Kartenliste doppelklick →
   Map-Tab wechselt?, Datenbank-Tab Sounds (SoundTestDialog ok),
