@@ -37,6 +37,16 @@ public:
     void SetTitle(const std::string& title);
     void SetVSync(bool enabled);
 
+    /// Fenster-/Desktop-Vollbild umschalten (XP-Verhalten: Alt+Enter).
+    /// Im Foreign-Modus (Qt-Host eingebettetes Widget) bleibt das ein
+    /// No-op mit Rueckgabe false; bei SDL-Fehlschlag ebenfalls false.
+    bool SetFullscreen(bool fullscreen);
+    bool ToggleFullscreen() { return SetFullscreen(!mFullscreen); }
+    bool IsFullscreen() const { return mFullscreen; }
+    /// Fenster-Groesse zur Laufzeit aendern (Framebuffer folgt beim
+    /// naechsten Frame; mWidth/mHeight werden sofort synchronisiert).
+    void SetSize(int width, int height);
+
     bool IsEditorMode() const { return mEditorMode; }
 
 private:
@@ -47,6 +57,7 @@ private:
     bool mShouldClose = false;
     bool mEditorMode = true;
     bool mForeign = false;
+    bool mFullscreen = false;
 };
 
 } // namespace rpg

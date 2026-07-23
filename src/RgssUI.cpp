@@ -694,7 +694,10 @@ struct RgssUI::OverlayRenderer {
     std::unique_ptr<Shader> transShader;
     GLuint vao = 0, vbo = 0;
     std::vector<Vertex> verts;
-    int fbW = 640, fbH = 480;
+    // Viewport-Bereich im Framebuffer, auf den der 640x480-Canvas abgebildet
+    // wird (RPG-Maker-Seitenverhaeltnis 4:3, zentriert — kein Verzerren
+    // mehr auf 16:9-Fenster). Wird von RgssUI::Render via Begin gesetzt.
+    int viewX = 0, viewY = 0, viewW = 640, viewH = 480;
 
     // aktueller Batch-Zustand
     GLuint curTex = 0;
@@ -733,8 +736,9 @@ struct RgssUI::OverlayRenderer {
         return true;
     }
 
-    void Begin(int framebufferW, int framebufferH) {
-        fbW = framebufferW; fbH = framebufferH;
+    void Begin(int viewportX, int viewportY, int viewportW, int viewportH) {
+        viewX = viewportX; viewY = viewportY;
+        viewW = viewportW; viewH = viewportH;
         verts.clear();
         drawing = true;
         curTex = 0; curUseTex = false; curBlend = 0;
@@ -773,10 +777,12 @@ struct RgssUI::OverlayRenderer {
             if (clipOn) { glDisable(GL_SCISSOR_TEST); clipOn = false; }
             return;
         }
-        const float sx = rectLogical[0] / (float)kScreenW * fbW;
-        const float sy = (1.0f - (rectLogical[1] + rectLogical[3]) / (float)kScreenH) * fbH;
-        const float sw = rectLogical[2] / (float)kScreenW * fbW;
-        const float sh = rectLogical[3] / (float)kScreenH * fbH;
+        // Clip in Canvas-Koordinaten -> Framebuffer-Ausschnitt des
+        // 4:3-Viewports (viewX/viewY-Offset: Scissor ist framebuffer-absolut)
+        const float sx = viewX + rectLogical[0] / (float)kScreenW * viewW;
+        const float sy = viewY + (1.0f - (rectLogical[1] + rectLogical[3]) / (float)kScreenH) * viewH;
+        const float sw = rectLogical[2] / (float)kScreenW * viewW;
+        const float sh = rectLogical[3] / (float)kScreenH * viewH;
         clipOn = true;
         glEnable(GL_SCISSOR_TEST);
         glScissor((GLint)std::floor(sx), (GLint)std::floor(sy),
@@ -1757,13 +1763,23 @@ void RgssUI::Render(int screenWidth, int screenHeight) {
                 return a.seq < b.seq;
             });
 
-        glViewport(0, 0, screenWidth, screenHeight);
+        // RPG-Maker-Optik: der 640x480-Canvas wird mit korrektem 4:3-
+        // Seitenverhaeltnis ZENTRIERT abgebildet (vorher: aufs volle
+        // Fenster gestreckt — auf 16:9 in die Breite verzerrt).
+        int vw = screenWidth, vh = screenHeight;
+        if (vw * kScreenH > vh * kScreenW)
+            vw = vh * kScreenW / kScreenH;
+        else
+            vh = vw * kScreenH / kScreenW;
+        const int vx = (screenWidth - vw) / 2;
+        const int vy = (screenHeight - vh) / 2;
+        glViewport(vx, vy, vw, vh);
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        mRenderer->Begin(screenWidth, screenHeight);
+        mRenderer->Begin(vx, vy, vw, vh);
         int activeClipVp = -999999; // zuletzt gesetzter Clip-Viewport
         for (const auto& it : items) {
             if (it.kind == 0) {

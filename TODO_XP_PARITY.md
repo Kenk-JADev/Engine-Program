@@ -661,6 +661,42 @@ Merksatz für die nächsten Pakete: nach jedem Push **sofort CI grün machen**
 ---
 
 
+## PAKET 8 — Player & Spielansicht (Feinschliff nach XP-Paritaet) 🔧
+Adressiert die Nutzerfrage: „Was muss man unbedingt aendern — Player,
+Editor, Spielansicht?"
+
+- [x] **Vollbild (KRITISCH, war komplett wirkungslos):** `Window` kann
+  jetzt `SetFullscreen(bool)/ToggleFullscreen()/IsFullscreen()` (SDL
+  `_DESKTOP`-Vollbild, Foreign-Qt-Host = sauberer No-op, Fehler geloggt)
+  + `SetSize`. Der Player wendet endlich BEIDE Quellen an:
+  `project.json "fullscreen"` UND neues CLI-Flag `--fullscreen`; dazu
+  **Alt+Enter-Toggle im Engine::Update** (XP-Verhalten, beide Builds —
+  SDL-Player und Editor-/Qt-Pfad).
+- [x] **Seitenverhaeltnis der Spielansicht (KRITISCH):** Der RGSS-Canvas
+  (640x480) wurde bisher linear aufs volle Fenster gestreckt — auf einem
+  16:9-Standardfenster (1280x720) in die Breite gezerrt (x-Faktor 2,0 /
+  y-Faktor 1,5 = Kacheln nicht mehr quadratisch). `RgssUI::Render`
+  abbildet jetzt auf den groessten zentrierten 4:3-Ausschnitt
+  (glViewport-Letterbox); `RgssRenderer::SetClip` rechnet Scissor korrekt
+  in denselben Bereich um (view-Offset, framebuffer-absolut). Sichtbar
+  bleibt die 3D-Szene in den Seitenbereichen (bewusst: „2D-Welt auf
+  3D-Unterlage", zur Engine-Identitaet passend und nicht schwarz
+  zugekleistert).
+- [ ] **Charaktere als XP-Sprites statt Farb-Cubes (SICHTBARSTER
+  naechster Schritt):** PlayMode rendert Spieler/Events aktuell als
+  farbige Quader (drawCharCube). Ziel: Graphics/Characters-Bitmaps
+  (4x4-Frame-Layout wie XP, Richtung = Zeile, Laufphase = Spalte,
+  EventPage.graphicName/Actor character_name; Bush-Depth via
+  GameMap::IsBushAt — haengt direkt an Paket-1/6-Arbeit).
+- [ ] **Editor-QA-Liste (beim naechsten Windows-Lauf abhaken):**
+  Playtest-Knopf → Player-Start dauert?, Kartenliste doppelklick →
+  Map-Tab wechselt?, Datenbank-Tab Sounds (SoundTestDialog ok),
+  Event-Seiten-Editor: Grafikauswahl, Move-Route-Dialog.
+- [ ] **Editor-Bequemlichkeit:** zuletzt geoeffnete Projekte im
+  Datei-Menue (QSettings); „Spiel exportieren"-Knopf, der Player-exe +
+  Projektordner in ein Ziel kopiert (vc_redist-Hinweis steht schon im
+  README).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 1. **Nur** Branch `arena/019f6f2a-engine-program`; vor jedem Commit:
    `git log --oneline -1` + `git fetch origin arena/019f6f2a-engine-program -q`

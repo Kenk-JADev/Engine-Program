@@ -31,7 +31,7 @@ std::string ParseProjectPath(int argc, char* argv[]) {
             projectPath = argv[++i];
         } else if (a.rfind("--project=", 0) == 0) {
             projectPath = a.substr(10);
-        } else if (a == "--debug" || a == "--console") {
+        } else if (a == "--debug" || a == "--console" || a == "--fullscreen") {
             // Flags ohne Wert
         } else if (a == "--battletest") {
             // Kampftest: optionalen Zahlenwert dahinter konsumieren,
@@ -80,6 +80,14 @@ int ParseBattletestTroop(int argc, char* argv[]) {
         }
     }
     return 0;
+}
+
+// --fullscreen  ->  im Vollbild starten (zusaezlich oder statt der
+// project.json-Einstellung "fullscreen"; Alt+Enter schaltet jederzeit um).
+bool ParseFullscreenFlag(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--fullscreen") return true;
+    return false;
 }
 
 } // namespace
@@ -145,6 +153,13 @@ int main(int argc, char* argv[]) {
     std::string title = rpg::Database::Get().System().gameTitle;
     if (title.empty()) title = "RPG Maker 3D Player";
     engine.GetWindow().SetTitle(title);
+
+    // Vollbild: Projekteinstellung (project.json "fullscreen") und/oder
+    // --fullscreen-Flag anwenden — war bislang komplett wirkungslos.
+    if (ParseFullscreenFlag(argc, argv) ||
+        engine.GetProject().GetInfo().fullscreen) {
+        engine.GetWindow().SetFullscreen(true);
+    }
 
     // --- Ruby-Startpruefung: ALLE .rb-Dateien einmal auf Syntaxfehler
     // parsen (ohne Ausfuehrung). Fehler werden mit Datei + Zeile angezeigt,

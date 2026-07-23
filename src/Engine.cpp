@@ -795,6 +795,13 @@ static Key MapSDLKey(SDL_Scancode code) {
 void Engine::Update(float dt) {
     mInput->Update();
 
+    // XP-Verhalten: Alt+Enter schaltet Vollbild um. Window::ToggleFullscreen
+    // ist im Foreign-Modus (Qt-Host) ein No-op, bei SDL fehlschlagsfest.
+    if (mWindow &&
+        mInput->IsKeyDown(Key::LAlt) && mInput->IsKeyPressed(Key::Enter)) {
+        mWindow->ToggleFullscreen();
+    }
+
 #ifdef RPGMAKER3D_EDITOR_QT
     // Im Qt-Editor gibt es kein SDL-Fenster: Input kommt vom Qt-Widget
     // (ruft OnKeyChanged/OnMouseMoved direkt), RmlUi-Input ist hier (noch) nicht angeschlossen.
