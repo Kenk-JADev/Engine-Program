@@ -2672,13 +2672,17 @@ void Editor::LoadTilesetForMap(int tilesetId) {
         if (ts.id == tilesetId) {
             auto tileset = std::make_shared<Tileset>();
             std::string path = mEngine.GetProject().GetAssetPath("textures/" + ts.tilesetName);
-            if (tileset->Load(path, 32, 32)) {
-                mEngine.GetMap().SetTileset(tileset);
-                RPG_LOG_INFO("Tileset geladen: " + ts.name);
-            } else {
+            bool ok = tileset->Load(path, 32, 32);
+            if (!ok) {
                 // Fallback
                 tileset->Load("assets/textures/tileset_demo.png", 32, 32);
-                mEngine.GetMap().SetTileset(tileset);
+            }
+            // XP-Tileset-Flags (Durchgaengigkeit, 4-Dir, Prioritaet, ...)
+            // ans Runtime-Tileset koppeln - unabhaengig vom Grafik-Erfolg.
+            tileset->SetTilesetData(ts);
+            mEngine.GetMap().SetTileset(tileset);
+            if (ok) {
+                RPG_LOG_INFO("Tileset geladen: " + ts.name);
             }
             return;
         }

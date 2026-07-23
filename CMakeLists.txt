@@ -188,6 +188,7 @@ if(RPGMAKER3D_EDITOR_QT)
             qt_editor/QtEventCommandEditDialog.cpp
             qt_editor/QtEventEditorDialog.cpp
             qt_editor/QtAssetBrowserDock.cpp
+            qt_editor/QtTilesetGridWidget.cpp
             # Q_OBJECT-Header explizit auflisten, damit AUTOMOC sie findet
             qt_editor/QtEditorWindow.h
             qt_editor/QtGameViewWidget.h

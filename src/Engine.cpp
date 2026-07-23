@@ -310,22 +310,17 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         tileset->Load("assets/textures/tileset_demo.png", 32, 32); // wird checker fallback
     }
     mMap->SetTileset(tileset);
-    // Passability-Flags aus Database auf Tileset anwenden
+    // XP-Tileset-Flags aus der Datenbank ans Runtime-Tileset koppeln
+    // (Durchgaengigkeit, 4-Richtung, Prioritaet, Busch, Tresen, Terrain-Tag).
+    // Standard-Map benutzt Tileset 1, Cache-Fallback: erster Eintrag.
     try {
-        if (!Database::Get().Tilesets().empty()) {
-            const auto& flags = Database::Get().Tilesets()[0].flags;
-            for (size_t i = 0; i < flags.size(); ++i) {
-                if (flags[i]) {
-                    rpg::TileInfo ti;
-                    if (const auto* old = tileset->GetTileInfo((int)i)) ti = *old;
-                    ti.id = (int)i;
-                    ti.solid = true;
-                    tileset->SetTileInfo((int)i, ti);
-                }
-            }
-        }
+        const auto& sets = Database::Get().Tilesets();
+        const rpg::TilesetData* chosen = nullptr;
+        for (const auto& ts : sets) { if (ts.id == 1) { chosen = &ts; break; } }
+        if (!chosen && !sets.empty()) chosen = &sets.front();
+        if (chosen) tileset->SetTilesetData(*chosen);
     } catch (const std::exception& e) {
-        RPG_LOG_ERROR(std::string("Tileset-Passability anwenden fehlgeschlagen: ") + e.what());
+        RPG_LOG_ERROR(std::string("Tileset-Flags anwenden fehlgeschlagen: ") + e.what());
     }
 
     // Bind GameMap for collision checks

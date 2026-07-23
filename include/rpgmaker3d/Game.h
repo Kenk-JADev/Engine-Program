@@ -246,11 +246,15 @@ public:
     const Map* GetBoundMap() const { return mBoundMap; }
 
     // Grid-based passability (0..width-1, 0..height-1)
-    bool IsPassable(int x, int z) const;
+    // dirBit: XP-Richtungsbit (TilesetData::DirDown=1, Left=2, Right=4, Up=8),
+    // 0 = richtungslos (nur passage-Flag + solid)
+    bool IsPassable(int x, int z) const { return IsPassable(x, z, 0); }
+    bool IsPassable(int x, int z, int dirBit) const;
     // World-space passability (world coordinates as used by player)
     bool IsPassableWorld(float worldX, float worldZ) const;
     bool IsPassableWorld(const Vec3& worldPos) const { return IsPassableWorld(worldPos.x, worldPos.z); }
     bool IsPassableWithRadius(const Vec3& pos, float radius = 0.35f) const;
+    bool IsPassableWithRadius(const Vec3& pos, float radius, int dirBit) const;
 
     // Convert world position to map grid coordinates
     bool WorldToMap(float worldX, float worldZ, int& outX, int& outZ) const;

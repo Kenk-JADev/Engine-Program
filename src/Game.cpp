@@ -308,21 +308,32 @@ void GamePlayer::Update(float dt, Input& input) {
     // Collision handling via GameMap
     const GameMap& gameMap = Game::Get().Map();
 
+    // XP-Richtungsbit fuer diagonale Bewegung: dominanten Anteil waehlen
+    // (DirDown=1, DirLeft=2, DirRight=4, DirUp=8 - TilesetData::DirBit)
+    int dirBit = 0;
+    if (std::abs(move.x) >= std::abs(move.z)) {
+        dirBit = (move.x > 0.0f) ? 4 : 2;
+    } else {
+        dirBit = (move.z > 0.0f) ? 1 : 8;
+    }
+
     Vec3 current = mPosition;
     Vec3 desired = current + move;
 
     // Try full move first
-    if (gameMap.IsPassableWithRadius(desired)) {
+    if (gameMap.IsPassableWithRadius(desired, 0.35f, dirBit)) {
         Move(move);
         return;
     }
 
     // Slide: try X only
     Vec3 testX = Vec3(current.x + move.x, current.y, current.z);
-    bool xPassable = gameMap.IsPassableWithRadius(testX);
+    int dirX = (move.x > 0.0f) ? 4 : 2;
+    bool xPassable = gameMap.IsPassableWithRadius(testX, 0.35f, dirX);
     // Try Z only
     Vec3 testZ = Vec3(current.x, current.y, current.z + move.z);
-    bool zPassable = gameMap.IsPassableWithRadius(testZ);
+    int dirZ = (move.z > 0.0f) ? 1 : 8;
+    bool zPassable = gameMap.IsPassableWithRadius(testZ, 0.35f, dirZ);
 
     if (xPassable && !zPassable) {
         Move(Vec3(move.x, 0, 0));
@@ -407,7 +418,7 @@ bool GameMap::WorldToMap(float worldX, float worldZ, int& outX, int& outZ) const
     return true;
 }
 
-bool GameMap::IsPassable(int x, int z) const {
+bool GameMap::IsPassable(int x, int z, int dirBit) const {
     if (!mBoundMap) {
         // No map bound -> always passable (editor startup)
         return true;
@@ -434,26 +445,17 @@ bool GameMap::IsPassable(int x, int z) const {
         hasTile = true;
 
         if (tileset) {
-            const TileInfo* info = tileset->GetTileInfo(tileId);
-            if (info && info->solid) {
-                return false; // blocked by solid flag
+            // XP-Regel (Paket 1): passage-Flag blockiert komplett,
+            // passage4dir blockiert nur in der geprueften Richtung.
+            // Tileset kuemmert sich intern um DB-Daten vs. Legacy-solid.
+            if (!tileset->IsPassable(tileId, dirBit)) {
+                return false;
             }
         }
-
-        // Additional check via Database TilesetData flags if available
-        // For now, TileInfo solid is authoritative
     }
 
-    // If no tile at all (void), treat as blocked to prevent falling off map
-    // But allow if map is empty (during initialization)
-    if (!hasTile && !layers.empty()) {
-        // Check if ground layer exists and is empty -> consider blocked unless map is in initial state
-        // For safety, if there is at least one layer with data elsewhere, empty spot is blocked
-        // Here we assume empty = passable for flexibility (mapper can leave holes)
-        // Change to false if you want strict blocking:
-        return true;
-    }
-
+    // Leere Stelle: passierbar lassen (Mapper kann Loecher lassen)
+    (void)hasTile;
     return true;
 }
 

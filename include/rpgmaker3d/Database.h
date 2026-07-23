@@ -161,7 +161,57 @@ struct TilesetData {
     int id = 0;
     std::string name = "World";
     std::string tilesetName = "tileset_demo.png";
-    std::vector<int> flags; // passability flags per tile id
+
+    // ---- XP Tileset-Tab (Paket 1/2, TODO_XP_PARITY.md) ----
+    // Grafik-Zuordnungen (XP legt diese am TILESET fest, nicht an der Map)
+    std::string autotileNames[7];     // 7 Autotile-Slots ("" = leer)
+    std::string panoramaName;         // Panorama-Grafik
+    std::string fogName;              // Nebel-Grafik
+    std::string battlebackName;       // Kampfhintergrund
+
+    // Flag-Tabellen, Index = Tile-ID (= Zeilenindex im Tileset-Grid).
+    // Kurze/leere Vektoren sind erlaubt: Zugriff immer ueber die Getter
+    // (Default 0), niemals direkt per [] auf evtl. fehlende Eintraege!
+    std::vector<int> flags;          // "passage": 0 = begehbar, 1 = blockiert
+    std::vector<int> passage4dir;    // Bits 1=unten,2=links,4=rechts,8=oben;
+                                     // 0 = Default (alle Richtungen frei)
+    std::vector<int> priority;       // XP-Prioritaet 0..5
+    std::vector<int> bushFlags;      // 0/1 Durchwiese ("im Gras stehen")
+    std::vector<int> counterFlags;   // 0/1 Tresen (Event darueber hinweg ausloesen)
+    std::vector<int> terrainTags;    // 0..7 frei verwendbarer Boden-Tag
+
+    // Sichere Getter (Default wenn Vektor zu kurz)
+    static int VecGet(const std::vector<int>& v, int tileId, int def = 0) {
+        if (tileId < 0 || (size_t)tileId >= v.size()) return def;
+        return v[(size_t)tileId];
+    }
+    int GetPassage(int tileId)    const { return VecGet(flags, tileId); }
+    int GetPassage4Dir(int tileId)const { return VecGet(passage4dir, tileId); }
+    int GetPriority(int tileId)   const { return VecGet(priority, tileId); }
+    int GetBush(int tileId)       const { return VecGet(bushFlags, tileId); }
+    int GetCounter(int tileId)    const { return VecGet(counterFlags, tileId); }
+    int GetTerrainTag(int tileId) const { return VecGet(terrainTags, tileId); }
+
+    // Richtungsbits fuer passage4dir
+    enum DirBit { DirDown = 1, DirLeft = 2, DirRight = 4, DirUp = 8 };
+
+    // XP-Regel: 4Dir==0 -> alle Richtungen frei; sonst muss das Bit gesetzt sein
+    bool IsPassableDir(int tileId, int dirBit) const {
+        if (GetPassage(tileId) != 0) return false; // komplett blockiert
+        int d = GetPassage4Dir(tileId);
+        if (d == 0) return true;
+        return (d & dirBit) != 0;
+    }
+
+    // Vektor auf mindestens count Eintraege bringen (Editor-Komfort)
+    static void EnsureSize(std::vector<int>& v, size_t count) {
+        if (v.size() < count) v.resize(count, 0);
+    }
+    void EnsureFlagSizes(size_t count) {
+        EnsureSize(flags, count);        EnsureSize(passage4dir, count);
+        EnsureSize(priority, count);     EnsureSize(bushFlags, count);
+        EnsureSize(counterFlags, count); EnsureSize(terrainTags, count);
+    }
 };
 
 struct MapInfo {

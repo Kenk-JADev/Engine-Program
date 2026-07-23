@@ -2,6 +2,9 @@
 #include "QtEditorWindow.h" // qobject_cast fuer battleTestRequested-Verdrahtung
 
 #include "QtEventEditorDialog.h"
+#include "QtTilesetGridWidget.h"
+
+#include <QFile>
 
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Project.h"
@@ -1135,13 +1138,89 @@ void QtDatabaseDialog::buildTilesetsTab() {
     ListTab& t = addListTab(QL("Tilesets"));
     ListTab* tp = &t;
     auto* formHost = new QWidget(t.page);
-    auto* form = new QFormLayout(formHost);
     ((QScrollArea*)t.page->property("formWrap").value<QWidget*>())->setWidget(formHost);
+
+    auto* vbox = new QVBoxLayout(formHost);
+    vbox->setContentsMargins(0, 0, 0, 0);
+
+    auto* form = new QFormLayout();
+    vbox->addLayout(form);
 
     auto* name = makeLine(formHost);
     auto* file = makeLine(formHost);
     form->addRow(QL("Name"), name);
     form->addRow(QL("Tileset-Grafik"), file);
+    auto* note = new QLabel(QL("Datei aus dem Projektordner "
+                               "textures/ oder Graphics/Tilesets/"), formHost);
+    note->setStyleSheet(QL("color:#9aa;"));
+    form->addRow(note);
+
+    // ---- XP-Modus-Leiste (Durchgang | 4-Dir | Prioritaet | Busch | Tresen | Terrain)
+    auto* modeRow = new QHBoxLayout();
+    vbox->addLayout(modeRow);
+    modeRow->addWidget(new QLabel(QL("Modus:"), formHost));
+    QPushButton* modeBtns[6];
+    const char* modeNames[6] = {
+        "Durchgang", "4-Dir", "Priorität", "Busch", "Tresen", "Terrain-Tag"
+    };
+    auto* grid = new QtTilesetGridWidget(formHost);
+    QPushButton* btnsCopy[6];
+    for (int m = 0; m < 6; ++m) {
+        modeBtns[m] = new QPushButton(QString::fromUtf8(modeNames[m]), formHost);
+        modeBtns[m]->setCheckable(true);
+        btnsCopy[m] = modeBtns[m];
+        modeRow->addWidget(modeBtns[m]);
+    }
+    modeBtns[0]->setChecked(true);
+    modeRow->addStretch(1);
+    for (int m = 0; m < 6; ++m) {
+        connect(modeBtns[m], &QPushButton::clicked, formHost, [grid, btnsCopy, m]() {
+            for (int k = 0; k < 6; ++k) btnsCopy[k]->setChecked(k == m);
+            grid->setMode((QtTilesetGridWidget::Mode)m);
+        });
+    }
+
+    // ---- XP-Flag-Raster (Paket 2)
+    grid->setMinimumHeight(300);
+    vbox->addWidget(grid, 1);
+
+    auto* hint = new QLabel(QL("Linksklick = Flag ändern · Rechtsklick = zurücksetzen\n"
+                               "Durchgang: grüner Kreis = frei, rotes X = blockiert\n"
+                               "Busch = B · Tresen = C · Priorität/Terrain = Zahl"),
+                              formHost);
+    hint->setStyleSheet(QL("color:#9aa;"));
+    vbox->addWidget(hint);
+
+    // ---- Grafik-Zuordnungen (XP)
+    auto* grp = new QGroupBox(QL("Grafik-Zuordnung (XP)"), formHost);
+    auto* gform = new QFormLayout(grp);
+    vbox->addWidget(grp);
+    QLineEdit* autotile[7];
+    for (int a = 0; a < 7; ++a) {
+        autotile[a] = makeLine(grp);
+        gform->addRow(QL("Autotile %1").arg(a + 1), autotile[a]);
+    }
+    auto* panorama = makeLine(grp);
+    auto* fog = makeLine(grp);
+    auto* battleback = makeLine(grp);
+    gform->addRow(QL("Panorama"), panorama);
+    gform->addRow(QL("Nebel"), fog);
+    gform->addRow(QL("Kampfhintergrund"), battleback);
+
+    // loest das Tileset-Bild aus dem Projekt auf
+    auto resolveImage = [this](const std::string& fn) -> QString {
+        if (fn.empty() || !mEngine) return QString();
+        const std::string pp = mEngine->GetProject().GetProjectPath();
+        QStringList cands = {
+            QString::fromStdString(pp + "/textures/" + fn),
+            QString::fromStdString(pp + "/Graphics/Tilesets/" + fn),
+            QL("assets/textures/") + QString::fromStdString(fn)
+        };
+        QString s;
+        for (int ci = 0; ci < cands.size(); ++ci)
+            if (QFile::exists(cands[ci])) { s = cands[ci]; break; }
+        return s;
+    };
 
     tp->count = [this]() { return (int)mTilesets.size(); };
     tp->nameAt = [this](int i) {
@@ -1151,18 +1230,36 @@ void QtDatabaseDialog::buildTilesetsTab() {
         mTilesets.resize((size_t)n);
         for (size_t i = 0; i < mTilesets.size(); ++i) mTilesets[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, file](int i) {
+    tp->loadForm = [this, name, file, autotile, panorama, fog, battleback,
+                    grid, resolveImage](int i) {
         auto& ts = mTilesets[(size_t)i];
         name->setText(QString::fromStdString(ts.name));
         file->setText(QString::fromStdString(ts.tilesetName));
+        for (int a = 0; a < 7; ++a)
+            autotile[a]->setText(QString::fromStdString(ts.autotileNames[a]));
+        panorama->setText(QString::fromStdString(ts.panoramaName));
+        fog->setText(QString::fromStdString(ts.fogName));
+        battleback->setText(QString::fromStdString(ts.battlebackName));
+        grid->setData(&ts);
+        grid->loadImage(resolveImage(ts.tilesetName));
     };
-    tp->storeForm = [this, tp, name, file](int i) {
+    tp->storeForm = [this, tp, name, file, autotile, panorama, fog, battleback](int i) {
         if ((size_t)i >= mTilesets.size()) return;
         auto& ts = mTilesets[(size_t)i];
         ts.name = name->text().toStdString();
         ts.tilesetName = file->text().toStdString();
+        for (int a = 0; a < 7; ++a)
+            ts.autotileNames[a] = autotile[a]->text().toStdString();
+        ts.panoramaName = panorama->text().toStdString();
+        ts.fogName = fog->text().toStdString();
+        ts.battlebackName = battleback->text().toStdString();
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
+    // Aendern der Grafik-Datei -> Raster neu laden
+    connect(file, &QLineEdit::editingFinished, formHost, [tp, file, grid, resolveImage]() {
+        if (tp->current < 0) return;
+        grid->loadImage(resolveImage(file->text().toStdString()));
+    });
     rebuildList(t, 0);
 }
 

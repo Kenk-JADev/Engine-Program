@@ -399,6 +399,42 @@ rpg::SkillData ParseSkillObject(const std::string& obj) {
     return s;
 }
 
+// Liest ein Int-Array ("key":[1,2,...]) aus einem JSON-Objekt in out.
+// Gibt false zurueck, wenn der Schluessel fehlt (out bleibt dann leer).
+static bool ParseIntArrayInto(const std::string& obj, const char* key,
+                              std::vector<int>& out) {
+    using namespace rpg::JsonUtils;
+    std::string arr;
+    if (!FindArrayForKey(obj, key, 0, arr)) return false;
+    size_t start = arr.find('[');
+    size_t end = arr.rfind(']');
+    if (start == std::string::npos || end == std::string::npos) return false;
+    std::string inner = arr.substr(start + 1, end - start - 1);
+    std::stringstream ss(inner);
+    std::string token;
+    while (std::getline(ss, token, ',')) {
+        try {
+            size_t s = 0;
+            while (s < token.size() && std::isspace((unsigned char)token[s])) ++s;
+            size_t e = token.size();
+            while (e > s && std::isspace((unsigned char)token[e - 1])) --e;
+            if (s < e) out.push_back(std::stoi(token.substr(s, e - s)));
+        } catch (...) {}
+    }
+    return true;
+}
+
+// Schreibt ein Int-Array-Feld: ,"key":[1,2,...]
+static void WriteIntArray(std::ofstream& f, const char* key,
+                          const std::vector<int>& v) {
+    f << ",\"" << key << "\":[";
+    for (size_t j = 0; j < v.size(); ++j) {
+        if (j) f << ",";
+        f << v[j];
+    }
+    f << "]";
+}
+
 rpg::TilesetData ParseTilesetObject(const std::string& obj) {
     using namespace rpg::JsonUtils;
     rpg::TilesetData t;
@@ -408,30 +444,21 @@ rpg::TilesetData ParseTilesetObject(const std::string& obj) {
     if (TryParseString(obj, "name", 0, name)) t.name = name;
     if (TryParseString(obj, "tilesetName", 0, name)) t.tilesetName = name;
     else if (TryParseString(obj, "image", 0, name)) t.tilesetName = name;
-    // flags array
-    std::string flagsArr;
-    if (FindArrayForKey(obj, "flags", 0, flagsArr)) {
-        // parse ints inside
-        size_t pos = 0;
-        // Remove brackets
-        size_t start = flagsArr.find('[');
-        size_t end = flagsArr.rfind(']');
-        if (start != std::string::npos && end != std::string::npos) {
-            std::string inner = flagsArr.substr(start+1, end-start-1);
-            std::stringstream ss(inner);
-            std::string token;
-            while (std::getline(ss, token, ',')) {
-                try {
-                    // trim
-                    size_t s = 0;
-                    while (s < token.size() && std::isspace((unsigned char)token[s])) ++s;
-                    size_t e = token.size();
-                    while (e > s && std::isspace((unsigned char)token[e-1])) --e;
-                    if (s < e) t.flags.push_back(std::stoi(token.substr(s, e-s)));
-                } catch (...) {}
-            }
-        }
+    // ---- XP-Flag-Tabellen (Paket 1) ----
+    ParseIntArrayInto(obj, "flags", t.flags);
+    ParseIntArrayInto(obj, "flags4dir", t.passage4dir);
+    ParseIntArrayInto(obj, "priority", t.priority);
+    ParseIntArrayInto(obj, "bush", t.bushFlags);
+    ParseIntArrayInto(obj, "counter", t.counterFlags);
+    ParseIntArrayInto(obj, "terrain", t.terrainTags);
+    // ---- XP-Grafik-Zuordnungen ----
+    for (int i = 0; i < 7; ++i) {
+        std::string key = "autotile" + std::to_string(i + 1);
+        if (TryParseString(obj, key.c_str(), 0, name)) t.autotileNames[i] = name;
     }
+    if (TryParseString(obj, "panorama", 0, name)) t.panoramaName = name;
+    if (TryParseString(obj, "fog", 0, name)) t.fogName = name;
+    if (TryParseString(obj, "battleback", 0, name)) t.battlebackName = name;
     return t;
 }
 
@@ -1053,13 +1080,26 @@ bool Database::Save(const std::string& projectPath) const {
                 const auto& t = mTilesets[i];
                 f << "  {\"id\":" << t.id
                   << ",\"name\":\"" << Escape(t.name) << "\""
-                  << ",\"tilesetName\":\"" << Escape(t.tilesetName) << "\""
-                  << ",\"flags\":[";
-                for (size_t j=0;j<t.flags.size();++j) {
-                    if (j) f << ",";
-                    f << t.flags[j];
+                  << ",\"tilesetName\":\"" << Escape(t.tilesetName) << "\"";
+                // XP-Grafik-Zuordnungen (nur nicht-leere schreiben)
+                for (int a = 0; a < 7; ++a) {
+                    if (!t.autotileNames[a].empty())
+                        f << ",\"autotile" << (a + 1) << "\":\"" << Escape(t.autotileNames[a]) << "\"";
                 }
-                f << "]}";
+                if (!t.panoramaName.empty())
+                    f << ",\"panorama\":\"" << Escape(t.panoramaName) << "\"";
+                if (!t.fogName.empty())
+                    f << ",\"fog\":\"" << Escape(t.fogName) << "\"";
+                if (!t.battlebackName.empty())
+                    f << ",\"battleback\":\"" << Escape(t.battlebackName) << "\"";
+                // XP-Flag-Tabellen
+                WriteIntArray(f, "flags", t.flags);
+                WriteIntArray(f, "flags4dir", t.passage4dir);
+                WriteIntArray(f, "priority", t.priority);
+                WriteIntArray(f, "bush", t.bushFlags);
+                WriteIntArray(f, "counter", t.counterFlags);
+                WriteIntArray(f, "terrain", t.terrainTags);
+                f << "}";
                 if (i+1<mTilesets.size()) f << ",";
                 f << "\n";
             }
