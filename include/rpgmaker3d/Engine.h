@@ -22,6 +22,7 @@ class ScriptManager;
 class RmlUiSystem;
 
 class MeshFactory;
+struct Battler; // BattleSystem.h — fuer das Kampf-Feedback (PAKET 9)
 
 class Engine {
 public:
@@ -197,6 +198,11 @@ private:
     // Gegner-Grafiken im Kampf (Graphics/Battlers/, XP-Battler-Bilder):
     // Namen der aktiven $battler-Pictures, damit kein Flackern/Reload entsteht
     std::vector<std::string> mBattlerPicNames;
+
+    // PAKET 9: XP-fliegende Schadens-/Heilungszahlen ueber dem Ziel
+    // (Quelle: BattleSystem::onBattlerHpChanged, verdrahtet in Initialize;
+    //  amount > 0 = Schaden, < 0 = Heilung)
+    void SpawnBattleFeedbackPopup(const Battler& b, int amount);
 
     // Game Over: Anzeige laeuft, wartet auf Bestaetigung -> Titel/Stopp
     bool mGameOverPending = false;

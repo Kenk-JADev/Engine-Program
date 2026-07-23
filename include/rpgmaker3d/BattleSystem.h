@@ -99,6 +99,11 @@ public:
     // Callbacks für UI/Audio
     std::function<void(const std::string&)> onMessage;
     std::function<void(int enemyId)> onEnemyDefeated;
+    /// XP-Kampf-Feedback (PAKET 9): effektive HP-Aenderung eines Battlers.
+    /// Wird ZENTRAL aus Battler::ApplyDamage/Recover gemeldet und deckt so
+    /// Angriffe, Fertigkeiten, Items UND Kampf-Ereignis-Befehle ab.
+    /// amount > 0 = Schaden, < 0 = Heilung; Ziel via b.isActor + b.index.
+    std::function<void(const Battler& b, int amount)> onBattlerHpChanged;
     std::function<void()> onVictory;
     std::function<void()> onDefeat;
     /// XP "Game Over": bei Niederlage UND !canLose (nach onDefeat).

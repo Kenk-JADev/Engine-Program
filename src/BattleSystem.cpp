@@ -12,13 +12,26 @@ BattleSystem& BattleSystem::Get() {
 }
 
 void Battler::ApplyDamage(int dmg) {
+    const int before = hp;
     hp -= dmg;
     if (hp <= 0) { hp = 0; isDead = true; }
+    // PAKET 9: XP-Kampf-Feedback — effektive HP-Aenderung melden (>0 Schaden)
+    if (auto& hook = BattleSystem::Get().onBattlerHpChanged) {
+        const int eff = before - hp;
+        if (eff != 0) hook(*this, eff);
+    }
 }
 void Battler::Recover(int h, int m) {
+    const int before = hp;
     hp += h; if (hp > maxHp) hp = maxHp;
     mp += m; if (mp > maxMp) mp = maxMp;
     if (hp > 0) isDead = false;
+    // PAKET 9: Heilung als negative HP-Aenderung melden (nur wenn HP wirklich
+    // stiegen — reine MP-Heilung loest kein Popup aus)
+    if (auto& hook = BattleSystem::Get().onBattlerHpChanged) {
+        const int eff = hp - before;
+        if (eff != 0) hook(*this, -eff);
+    }
 }
 
 void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool canLose,

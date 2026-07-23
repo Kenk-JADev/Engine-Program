@@ -234,6 +234,13 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         if (mAudio) PlayEventAudio(Database::Get().System().gameoverMe, 2, false);
     };
 
+    // PAKET 9: XP-Kampf-Feedback — fliegende Schadens-/Heilungszahlen ueber
+    // dem Ziel. Quelle: zentraler Hook aus Battler::ApplyDamage/Recover
+    // (deckt auch Kampf-Ereignis-Befehle ab, nicht nur Angriff/Skill/Item).
+    BattleSystem::Get().onBattlerHpChanged = [this](const Battler& b, int amount) {
+        SpawnBattleFeedbackPopup(b, amount);
+    };
+
     // Bild-Pfadaufloeser fuer GameUI (UI.show_picture + Titelgrafik):
     // sucht in den XP-Projektordnern (Graphics/Pictures|Titles) usw.
     GameUI::SetPicturePathResolver([this](const std::string& filename) {
@@ -678,6 +685,8 @@ void Engine::PlayEventAudio(const std::string& name, int kind, bool loop) {
 
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
+    // PAKET 9: Kampf-Feedback-Hook loesen (haelt this)
+    BattleSystem::Get().onBattlerHpChanged = nullptr;
     mInitialized = false;
 // ImGui/Editor shutdown removed
     mGridMesh.Delete();
@@ -697,6 +706,39 @@ void Engine::Shutdown() {
     if (mWindow) mWindow.reset();
     mRunning = false;
     RPG_LOG_INFO("Engine shutdown complete");
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 9: XP-Kampf-Feedback — fliegende Schadens-/Heilungszahlen
+// ---------------------------------------------------------------------------
+// Effektive HP-Aenderung aus BattleSystem::onBattlerHpChanged (Angriff,
+// Fertigkeit, Item UND Kampf-Ereignis-Befehle). Die Zahl schwebt per
+// MoveScreenText-Tween (easeOutQuad) nach oben und fadet ueber ihre
+// Lebensdauer aus. Positionen: Gegner an derselben Verteilungsformel wie
+// ihre Battler-Bilder (Bild y=0.30 -> Popup knapp darueber), Akteure an
+// der Party-Statuszeile (y=0.10 -> Popup darunter).
+void Engine::SpawnBattleFeedbackPopup(const Battler& b, int amount) {
+    if (amount == 0) return;
+    const bool heal = amount < 0;
+    const int v = heal ? -amount : amount;
+    auto& bs = BattleSystem::Get();
+
+    float x, y;
+    if (b.isActor) {
+        const int n = (int)bs.Actors().size();
+        x = n > 1 ? (0.25f + 0.5f * (float)b.index / (float)(n - 1)) : 0.5f;
+        y = 0.155f;
+    } else {
+        const int n = (int)bs.Enemies().size();
+        x = n > 1 ? (0.25f + 0.5f * (float)b.index / (float)(n - 1)) : 0.5f;
+        y = 0.235f;
+    }
+    const Color col = heal ? Color(0.45f, 1.0f, 0.55f, 1.0f)
+                     : b.isActor ? Color(1.0f, 0.35f, 0.30f, 1.0f)
+                                 : Color(1.0f, 1.0f, 0.88f, 1.0f);
+    const std::string txt = (heal ? "+" : "-") + std::to_string(v);
+    const int id = GameUI::Get().AddScreenText(txt, Vec2(x, y), col, 0.95f, true, 1.5f);
+    GameUI::Get().MoveScreenText(id, Vec2(x, y - 0.055f), 0.9f, 2 /* easeOutQuad */);
 }
 
 void Engine::Run() {

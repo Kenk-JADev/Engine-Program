@@ -717,6 +717,37 @@ Editor, Spielansicht?"
   neben der exe liegendes `./Game/project.json` automatisch — ein
   Doppelklick auf Game.exe startet ohne Argumente.
 
+## PAKET 9 — Kampfszene (XP-Feinschliff) 🔧
+
+Vorhandenes Fundament: Gegner-Bilder aus Graphics/Battlers/<battlerName>
+als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
+
+- [x] **Fliegende Schadens-/Heilungszahlen (XP-Popups):** Neuer zentraler
+  Hook `BattleSystem::onBattlerHpChanged(const Battler&, int amount)` wird
+  aus `Battler::ApplyDamage`/`Recover` gemeldet (effektive HP-Aenderung,
+  >0 = Schaden, <0 = Heilung) und deckt damit Angriffe, Fertigkeiten,
+  Items UND Kampf-Ereignis-Befehle ab. Die Engine
+  (`SpawnBattleFeedbackPopup`) legt an der Position des Ziels (Gegner:
+  Verteilungsformel der Battler-Bilder, Bild y=0.30 -> Popup y=0.235;
+  Akteure: Party-Statuszeile y=0.10 -> Popup y=0.155) eine farbige Zahl
+  ab (Schaden Akteur rotstichig / Gegner weiss-gelb, Heilung gruen „+"),
+  die per `MoveScreenText`-Tween (easeOutQuad) nach oben schwebt und mit
+  ihrer Lebensdauer (0,95 s) fadet. Hook wird in `Engine::Shutdown`
+  geloest.
+- [ ] **XP-Statusfenster unten (nächste Runde):** Party-Textzeile durch
+  ein richtiges Statusfenster ersetzen — XP-Layout: 4 Slots, Name,
+  HP-Balken (gruen→rot), MP-Balken, K.O.-Markierung, Gesichter aus
+  Graphics/Faces/<faceName> (ActorData.faceName + faceIndex sind da,
+  XP 4x1-Face-Reihen).
+- [ ] **Treffer-Flash/Blink der Gegner-Bilder** (RgssDrawableState kann
+  flash; Picture-System muesste es durchreichen) + Zielmarkierung beim
+  Waehlen (XP: Gegner blinkt).
+- [ ] **battlerHue (Farbton 0..360)** wird beim Laden der Battler-Bilder
+  aktuell ignoriert (XP schiebt den Farbkreis; Engine koennte per
+  CPU-Pixel-Shift beim Erstladen loesen — Cache-Key inkl. hue).
+- [ ] **kritische Treffer/Miss** existieren als Kampfregel noch nicht —
+  Popups sind dafuer vorbereitet (eigene Farbe/Text).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 1. **Nur** Branch `arena/019f6f2a-engine-program`; vor jedem Commit:
    `git log --oneline -1` + `git fetch origin arena/019f6f2a-engine-program -q`
