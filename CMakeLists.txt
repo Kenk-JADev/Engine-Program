@@ -121,6 +121,7 @@ set(CORE_LIB_SOURCES
     src/UI.cpp
     src/Custom.cpp
     src/RgssUI.cpp
+    src/RubyRgss.cpp
 )
 
 if(RPGMAKER3D_ENABLE_RMLUI)

@@ -66,6 +66,11 @@ public:
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
     ScriptManager& GetScriptManager() { return *mScriptManager; }
+
+    /// Audio-Pfadaufloesung (XP-Struktur <Projekt>/Audio/<Art>/ u. a.)
+    /// kind: 0=BGM, 1=BGS, 2=ME, 3=SE. "" wenn nicht gefunden.
+    /// Public fuer die RGSS-Audio-Bindings (XP-Audio.*-API).
+    std::string ResolveAudioPath(const std::string& name, int kind) const;
     #ifdef RPGMAKER3D_ENABLE_RMLUI
     RmlUiSystem* GetRmlUi() { return mRmlUi.get(); }
 #else
@@ -126,7 +131,6 @@ private:
     /// <Projekt>/Audio/<Art>/ (XP-Struktur) und assets/audio/<Art>/ auf und
     /// spielt ueber den AudioManager ab. kind: 0=BGM,1=BGS,2=ME,3=SE.
     void PlayEventAudio(const std::string& name, int kind, bool loop);
-    std::string ResolveAudioPath(const std::string& name, int kind) const;
     /// Bild-Pfadaufloesung fuer UI.show_picture + Titelgrafik:
     /// <Projekt>/Graphics/Pictures|Titles/ (XP), Pictures/, assets/…
     std::string ResolvePicturePathFor(const std::string& filename) const;

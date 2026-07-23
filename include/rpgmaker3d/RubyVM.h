@@ -64,6 +64,12 @@ private:
     void BindGame();
     void BindUI();
     void BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
+    // RGSS-Vollset (RPG Maker XP-Paritaet) - in src/RubyRgss.cpp:
+    void BindRgssObjects();   // Rect/Color/Tone/Font/Table/Bitmap/Viewport
+    void BindRgssDrawables(); // Sprite/Plane/Tilemap (+Autotiles-Proxy)
+    void BindRgssGraphics();  // Graphics/Input(XP)/Audio(XP)
+    void BindRgssWindowEx();  // Window-Vollset (XP)
+    void LoadRgssPrelude();   // Ruby-Prelude (RPG::*-Datenklassen, Cache, ...)
 
     // Schreibt Exception-Text nach mLastError und loggt
     bool CaptureException(const std::string& context);

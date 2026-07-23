@@ -438,51 +438,65 @@ Fehlt eine Datei, gilt der eingebaute Standard; ist eine Custom-Datei
 fehlerhaft, fällt die Engine mit Warnung auf den Standard zurück (das Spiel
 startet immer). Skins werden beim Spielstart geladen.
 
-### 4. RGSS-Fenstersystem (reine Ruby-UI)
+### 4. RGSS (Ruby Game Scripting System) – komplette XP-Skriptschicht
 
-Zusätzlich zur RmlUi-Oberfläche gibt es ein **eigenes Fenstersystem nach
-XP-Vorbild**, das komplett aus Ruby gesteuert wird (Stichwort RGSS). Die
-Ruby-Fenster werden als eigene GL-Schicht **oberhalb von allem** (auch über
-der RmlUi-HUD) gezeichnet – RmlUi bleibt vorerst parallel bestehen.
+Die Engine enthält eine **vollständige RGSS-Schicht nach dem RGSS-Referenz-
+Handbuch des RPG Maker XP** – ein eigenes, RmlUi-unabhängiges 2D-System, das
+komplett aus Ruby gesteuert wird. Alles wird als GL-Overlay auf der
+**obersten Ebene** (auch über der RmlUi-HUD) im logischen **640×480-Raum**
+gezeichnet; RmlUi bleibt vorerst parallel bestehen.
 
+**Abgedeckte RGSS-Bibliothek (Spezifikation: RMXP-Hilfe):**
+
+| Bereich | Umfang |
+|---|---|
+| `Graphics` | `update`, `freeze`, `transition(dauer, datei, vague)` (Crossfade oder Masken-Grafik), `frame_reset`, `frame_rate` (10–120, Standard 40), `frame_count`, `width`/`height` (640×480) |
+| `Input` | `update`, `press?`, `trigger?`, `repeat?`, `dir4`, `dir8` + Konstanten `DOWN/LEFT/RIGHT/UP/A/B/C/X/Y/Z/L/R/SHIFT/CTRL/ALT/F5…F9` (XP-Belegung: C = Enter/Leertaste/C, B = Esc/X/Num0, A = Shift/Z …) |
+| `Audio` | `bgm/bgs/me/se_play(datei[, vol[, pitch]])` (0–100 / 50–150, auch `RPG::AudioFile`-Objekte), `bgm/bgs/me/se_stop`, `bgm/bgs/me_fade(ms)` – XP-Pfadauflösung (`Audio/BGM|BGS|ME|SE/<Name>.ogg|wav|mp3`) |
+| `Bitmap` | `new(datei)` / `new(b, h)`, `dispose`, `disposed?`, `width`, `height`, `rect`, `blt`, `stretch_blt`, `fill_rect`, `gradient_fill_rect`, `clear`, `clear_rect`, `get_pixel`, `set_pixel`, `hue_change`, `blur`, `radial_blur`, `draw_text` (beide Formen, mit automatischem 60 %-Stauchen), `text_size`, `font`, `clone`/`dup` |
+| `Font` | `name`, `size`, `bold`, `italic`, `color` + Klassenwerte `Font.default_name/size/bold/italic/color` und `Font.exist?` |
+| `Color`/`Tone`/`Rect` | `red/green/blue/alpha`, `gray`, `set`, `==` – **echte Referenz-Semantik** (`sprite.color.set(...)` und `font.color.red = ...` wirken sofort) |
+| `Sprite` | `bitmap`, `src_rect`, `x/y/z/ox/oy`, `zoom_x/y`, `angle`, `mirror`, `opacity`, `blend_type` (0/1/2), `bush_depth`, `color`, `tone`, `flash(farbe|nil, dauer)`, `viewport`, `dispose`/`disposed?`/`update` |
+| `Plane` | `bitmap`, `visible`, `z`, `ox/oy`, `zoom_x/y`, `opacity`, `blend_type`, `color`, `tone` (kachelt + scrollt, z. B. Panorama/Fog) |
+| `Viewport` | `new(x,y,b,h)` oder `new(rect)`, `rect`, `visible`, `z`, `ox/oy`, `color`, `tone`, `flash`, `dispose` – clippt Kinder sauber auf den Ausschnitt |
+| `Tilemap` | `tileset`, `autotiles[i]` (7 Slots), `map_data` (Table x×y×3), `flash_data`, `priorities`, `visible`, `ox/oy`, `update` – **echte XP-Autotile-Mustertabelle** (48 Muster), Autotile-Animation, Prioritäten-Z-Ordnung, pulsierende flash_data |
+| `Window` | `new([viewport])` (oder `new(x,y,b,h)`), `windowskin` (**Bitmap**, XP!), `contents` (automatische Bitmap), `stretch`, `cursor_rect`, `active` (Cursor-Blinken), `pause` (4-Frame-Pausenanimation), `x/y/z/width/height/ox/oy`, `openness` (0–255), `opacity`, `back_opacity`, `contents_opacity`, `visible`, `viewport`, `dispose`/`disposed?`/`update` |
+| `Table` | `new(x[, y[, z]])`, `[]`, `[]=`, `xsize/ysize/zsize`, `resize` (int16-Matrix mit Wrap-around) |
+| `RPG`-Modul | **alle Datenklassen** (`AudioFile`, `Map`, `MapInfo`, `Event`(+`Page`,`Condition`,`Graphic`), `EventCommand`, `MoveRoute`, `MoveCommand`, `Actor`, `Class`(+`Learning`), `Skill`, `Item`, `Weapon`, `Armor`, `Enemy`(+`Action`), `Troop`(+`Member`,`Page`,`Condition`), `State`, `Animation`(+`Frame`,`Timing`), `Tileset`, `CommonEvent`, `System`(+`Words`,`TestBattler`)) mit XP-Standardwerten |
+| `RPG::Cache` | `animation/autotile/battleback/battler/character/fog/gameover/icon/panorama/picture/tileset/title/transition/windowskin`, `tile`, `load_bitmap`, `clear` – plus Hue-Varianten pro Pfad |
+| `RPG::Sprite` | `whiten/appear/disappear/escape/collapse/damage/blink_on/off/animation/loop_animation/update` (als `::Sprite`-Subklasse) |
+| `RPG::Weather` | `type` (0 aus/1 Regen/2 Sturm/3 Schnee), `max`, `ox/oy`, `update`, `dispose` |
+| Sonstiges | `RGSSError`, `Reset`, `rgss_main`/`rgss_stop` |
+
+**Windowskin:** XP-Layout 192×128 (Hintergrund (0,0,128,128) gestreckt
+oder gekachelt via `stretch`, Rahmen (128,0,64,64), Cursor (128,64,32,32),
+Pause-Frames (160,64,32,32)). Gesucht wird in `Graphics/Windowskins/`,
+`Graphics/System/`, `Graphics/` bzw. dem Projektordner; ohne Zuweisung gilt
+der Name aus dem Datenbank-**System-Tab** (Standard `001-Blue01`).
+
+**Beispiel:**
 ```ruby
-@win = Window.new(80, 120, 480, 200)   # x, y, breite, hoehe
-@win.windowskin = "001-Blue01"         # Graphics/System/<Name>.png
-@win.text = "Mein Fenster\nZweite Zeile"
-@win.z = 100                           # hoeher = weiter vorne
-
-# spaeter: @win.dispose   bzw. alle Fenster: RGSS.clear_windows
+@win = Window.new(80, 120, 480, 200)
+@win.windowskin = RPG::Cache.windowskin("001-Blue01")
+@win.contents.font.color.set(255, 255, 0)
+@win.contents.draw_text(4, 4, 440, 32, "Hallo RGSS!")
 ```
 
-| Ruby | Wirkung |
-|---|---|
-| `Window.new(x, y, breite, hoehe)` | Fenster erzeugen (Koordinaten im logischen 640×480-Raum wie XP) |
-| `x`, `y`, `width`, `height`, `z` | Position/Größe/Ebene (lesen & schreiben) |
-| `openness` (0–255) | XP-Öffnen-Animation: 0 = zu, 255 = offen |
-| `visible` | Fenster ein-/ausblenden |
-| `windowskin = "Name"` | Windowskin-Datei (s. u.) – ohne Zuweisung gilt der System-Standard |
-| `text = "..."` | Fenstertext, `\n` = Zeilenumbruch (mit automatischem Wrap) |
-| `text_color = [r, g, b, a]` | Textfarbe, Werte 0.0–1.0 |
-| `dispose` / `disposed?` | Fenster freigeben / prüfen |
-| `update` | vorhanden (Kompatibilität, derzeit ohne Funktion) |
-| `RGSS.clear_windows` | alle Ruby-Fenster entfernen (passiert auch automatisch beim Spielstopp) |
+**Bewusste Näherungen (funktional, visuell leicht anders als das Original):**
+`Graphics.update`/`Input.update`/`Sprites#update` ticken framebasiert (die
+Engine rendert im Hauptloop statt in Skriptschleifen); Transitions laufen
+nicht-blockierend nebenbei; Viewport-Farbe/Ton wird als Overlay angenähert;
+Text nutzt den eingebauten 8×8-Bitmap-Font (Public Domain, Daniel Hepper)
+inkl. deutscher Umlaute statt System-TTFs.
 
-**Windowskin:** Gesucht wird `<Projekt>/Graphics/System/<Name>.png` wie beim
-XP; gefunden wird der Skin auch in `Graphics/Windowskins/`, `Graphics/` oder
-im Projektordner selbst. Ohne `windowskin=`-Zuweisung gilt der Name aus dem
-Datenbank-System-Tab (Standard **001-Blue01**). Skins werden gecacht und der
-Cache bei Projektwechsel geleert. Fehlt die Datei komplett, zeichnet die
-Engine ein schlichtes dunkles Panel als Fallback (das Spiel läuft weiter).
+**Bekannte Grenzen:** `load_data`/`save_data` und `Marshal` (rxdata) werden
+nicht unterstützt – Datenbank = Engine-JSON, Laufzeitdaten über die
+`$game_*`-Objekte, Spielstände über `Game.save(slot)`/`Game.load(slot)`.
 
-Der Fensterinhalt wird mit einem eingebauten 8×8-Bitmap-Font gerendert
-(Public Domain, Daniel Hepper) – inklusive deutscher Umlaute (ä ö ü Ä Ö Ü ß).
-Fenster leben in der Ruby-VM: Beim Stoppen des Playtests werden sie
-automatisch aufgeräumt (`ClearAll`).
-
-Der Skript-Editor enthält fertige Vorlagen: Snippets **„Eigenes Menue
-(custom)"**, **„Eigene Kampfszene (custom)"**, **„Kampf mit eigener
-Gegnerliste"**, **„Eigener Titel (custom)"** und **„RGSS-Fenster (reine
-Ruby-UI)"**.
+Der Skript-Editor enthält fertige Vorlagen: **„Eigenes Menue (custom)"**,
+**„Eigene Kampfszene (custom)"**, **„Kampf mit eigener Gegnerliste"**,
+**„Eigener Titel (custom)"**, **„RGSS-Fenster (XP-Stil)"**, **„RGSS: Bitmap &
+Sprite"** und **„RGSS: Viewport & Tilemap"**.
 
 ## Datenbank (XP-Dialog)
 

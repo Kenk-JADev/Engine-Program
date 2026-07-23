@@ -97,6 +97,11 @@ bool RubyVM::Initialize(Engine* engine) {
     BindCamera();
     BindUI();
     BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
+    BindRgssObjects();   // RGSS-XP: Rect/Color/Tone/Font/Table/Bitmap/Viewport
+    BindRgssDrawables(); // RGSS-XP: Sprite/Plane/Tilemap
+    BindRgssGraphics();  // RGSS-XP: Graphics/Input(XP)/Audio(XP)
+    BindRgssWindowEx();  // RGSS-XP: Window-Vollset
+    LoadRgssPrelude();   // RGSS-XP: RPG::*-Datenklassen, RPG::Cache, ...
 
     RPG_LOG_INFO("Ruby VM initialized");
     return true;

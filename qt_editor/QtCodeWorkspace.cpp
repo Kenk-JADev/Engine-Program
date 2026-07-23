@@ -131,16 +131,38 @@ const char* kRubySnippets[][2] = {
      "    end\n"
      "  end\n"
      "end\n"},
-    {"RGSS-Fenster (reine Ruby-UI)",
-     "# Eigenes Fenstersystem wie im RPG Maker XP - laeuft komplett in Ruby,\n"
-     "# die Fenster liegen auf der obersten Ebene (auch ueber der RmlUi-HUD).\n"
-     "@win = Window.new(80, 120, 480, 200)   # x, y, breite, hoehe (640x480-Raum)\n"
-     "@win.windowskin = \"001-Blue01\"         # Graphics/System/<Name>.png\n"
-     "@win.text = \"Mein Fenster\\nZweite Zeile mit ae/oe/ue/sz\"\n"
-     "@win.z = 100                            # hoeher = weiter vorne\n"
-     "# Weitere Attribute: x, y, width, height, openness (0..255), visible,\n"
-     "# text_color = [rot, gruen, blau, alpha]  (0.0 .. 1.0)\n"
-     "# Aufraeumen: @win.dispose  bzw. alle: RGSS.clear_windows\n"},
+    {"RGSS-Fenster (XP-Stil)",
+     "# Fenster wie im RPG Maker XP (volles RGSS-Fenstersystem aus Ruby):\n"
+     "@win = Window.new\n"
+     "@win.x = 80; @win.y = 120; @win.width = 480; @win.height = 200\n"
+     "@win.windowskin = RPG::Cache.windowskin(\"001-Blue01\")  # XP: Bitmap!\n"
+     "@win.contents.font.color.set(255, 255, 0)              # Referenz-Semantik\n"
+     "@win.contents.draw_text(4, 4, 440, 32, \"Hallo RGSS!\")\n"
+     "@win.z = 100\n"
+     "# openness (0..255), active, pause, opacity, back_opacity,\n"
+     "# contents_opacity, stretch, cursor_rect, ox/oy (Scrollen)\n"
+     "# Aufraeumen: @win.dispose\n"},
+    {"RGSS: Bitmap & Sprite",
+     "# Grafik laden und als Sprite anzeigen (640x480-Raum):\n"
+     "@bmp = RPG::Cache.picture(\"titel_hintergrund\")   # Graphics/Pictures/\n"
+     "@spr = Sprite.new\n"
+     "@spr.bitmap = @bmp\n"
+     "@spr.src_rect = Rect.new(0, 0, @bmp.width, @bmp.height)\n"
+     "@spr.x = 40; @spr.y = 60; @spr.z = 10\n"
+     "# zoom_x/zoom_y, angle, mirror, opacity, blend_type (0 normal/1 add/2 sub),\n"
+     "# bush_depth, color (mischen), tone (Farbton), flash(Color.new(..), dauer)\n"
+     "# Bitmap-Pixel: bmp.fill_rect, gradient_fill_rect, blt, stretch_blt,\n"
+     "# get_pixel/set_pixel, hue_change, blur/radial_blur, draw_text, text_size\n"},
+    {"RGSS: Viewport & Tilemap",
+     "# Viewport = Ausschnitt mit eigener Ebene (Clip + Scroll-Offset):\n"
+     "@vp = Viewport.new(0, 0, 640, 480)\n"
+     "@spr2 = Sprite.new(@vp)\n"
+     "# Vollwertige Karte (Editordaten wie im XP: 3 Ebenen + Autotiles):\n"
+     "@tm = Tilemap.new(@vp)\n"
+     "@tm.tileset = RPG::Cache.tileset(\"001-Grossstadt01\")\n"
+     "@tm.map_data = Table.new(20, 15, 3)\n"
+     "# Spalten/Zeilen fuellen: @tm.map_data[x, y, ebene] = tile_id\n"
+     "# tile_id < 384: Autotile (48er-Muster wie XP), sonst tileset-Kachel.\n"},
 };
 
 const char* kCppSnippets[][2] = {
