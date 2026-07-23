@@ -341,9 +341,18 @@ am Ziel ab und wartet bis zum Ende.
   Abschnitt „Fehlersuche: Player/Editor startet nicht (Windows)" erklärt
   die Schließt-sofort-Historie (vc_redist) + Vorschläge (installieren,
   statisch linken, engine.log [FATAL-STARTUP] lesen).
-- [~] **XP_Scripts/ schrittweise lauffähig (IN ARBEIT, Stufe 1 am
-  2026-07-23):** die 90 Original-Skripte gegen unsere RGSS-Implementierung
-  laufen lassen; jedes noch-fehlende API hier eintragen.
+- [~] **XP_Scripts/ schrittweise lauffähig (WEITGEHEND ERLEDIGT
+  2026-07-23; Rest = dokumentierte Grenzen):** die 90 Original-Skripte
+  gegen unsere RGSS-Implementierung laufen lassen. **Endstatus der
+  Stufenliste: (a)+(b)+(c) load_data komplett [Stufen 1-3 inkl. BT_-
+  Fallback]; (d) Marshal = bewusste Grenze (unser Slot-System); (e) zwei
+  Wahrheiten vermieden (Opt-in-Vorgehen); (f) $game_map-Klasse [Stufe 4f];
+  (g) $game_actors/$game_party/$game_troop/$game_screen + Name-Input +
+  $game_temp/$game_system [Stufen 4g Teile 1-5]; (h) Scene-Framework als
+  Opt-in (Scene_Base/$scene-Tick); (i) Trockenlauf-Evaluation gemacht +
+  Rundung Teile 1-2 eingebaut. Verbleibende, bewusst ehrliche Grenzen
+  sind unten pro Punkt markiert (Marshal, Interpreter-Übernahme,
+  snap_to_bitmap, Font#shadow-/Wave-Render, events-Hash).**
   **Stufe 1 ERLEDIGT — `load_data`-JSON-Bruecke:** RubyRgss.cpp hat neu
   `__engine_db_fetch(kind)` (privater Kernel-Helfer, Release-`Database::Get()`
   als generische Ruby-Hashes; mruby-4.0-Fallen behoben: `mrb_intern` ist
