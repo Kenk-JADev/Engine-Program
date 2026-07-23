@@ -724,6 +724,254 @@ end
 $game_screen = Game_Screen.new
 
 # ---------------------------------------------------------------------------
+# XP $game_temp (Stufe 4g Teil 5): In RPGXP ist Game_Temp eine REINE Ruby-
+# Datenhalde ohne Engine-Kopplung — darum hier 1:1 als Ruby-Klasse, ganz
+# ohne native Bruecke (kein Zwei-Wahrheiten-Risiko). Attributliste = die
+# XP-1.03-Liste vereinigt mit den tatsaechlich in den 90 Originalskripten
+# genutzten Zugriffen (beweisgefuehrt per grep '$game_temp.<attr>').
+# ---------------------------------------------------------------------------
+class Game_Temp
+  attr_accessor :map_interpreter, :battle_interpreter
+  attr_accessor :message_text, :message_proc, :message_window_showing
+  attr_accessor :choice_start, :choice_max, :choice_cancel_type, :choice_proc
+  attr_accessor :num_input_start, :num_input_digits_max, :num_input_variable_id
+  attr_accessor :transition_processing, :transition_name
+  attr_accessor :gameover, :to_title, :last_file_index
+  attr_accessor :debug_calling, :debug_index, :debug_top_row
+  attr_accessor :player_transferring, :player_new_map_id
+  attr_accessor :player_new_x, :player_new_y, :player_new_direction
+  attr_accessor :battle_calling, :battle_troop_id, :battle_can_escape
+  attr_accessor :battle_can_lose, :battle_abort, :battle_main_phase
+  attr_accessor :battleback_name, :battle_actors, :battle_event_flags
+  attr_accessor :battle_proc, :battle_turn, :forcing_battler
+  attr_accessor :in_battle, :map_bgm
+  attr_accessor :shop_calling, :shop_goods
+  attr_accessor :name_calling, :name_actor_id, :name_max_char
+  attr_accessor :menu_calling, :menu_beep
+  attr_accessor :save_calling, :save_index, :save_bgm
+  attr_accessor :common_event_id
+  def initialize
+    @map_interpreter = nil
+    @battle_interpreter = nil
+    @message_text = nil
+    @message_proc = nil
+    @message_window_showing = false
+    @choice_start = 99
+    @choice_max = 0
+    @choice_cancel_type = 0
+    @choice_proc = nil
+    @num_input_start = 99
+    @num_input_digits_max = 0
+    @num_input_variable_id = 0
+    @transition_processing = false
+    @transition_name = ""
+    @gameover = false
+    @to_title = false
+    @last_file_index = 0
+    @debug_calling = false
+    @debug_index = 0
+    @debug_top_row = 0
+    @player_transferring = false
+    @player_new_map_id = 0
+    @player_new_x = 0
+    @player_new_y = 0
+    @player_new_direction = 0
+    @battle_calling = false
+    @battle_troop_id = 0
+    @battle_can_escape = false
+    @battle_can_lose = false
+    @battle_abort = false
+    @battle_main_phase = false
+    @battleback_name = ""
+    @battle_actors = nil
+    @battle_event_flags = {}
+    @battle_proc = nil
+    @battle_turn = 0
+    @forcing_battler = nil
+    @in_battle = false
+    @map_bgm = nil
+    @shop_calling = false
+    @shop_goods = nil
+    @name_calling = false
+    @name_actor_id = 0
+    @name_max_char = 0
+    @menu_calling = false
+    @menu_beep = false
+    @save_calling = false
+    @save_index = 0
+    @save_bgm = nil
+    @common_event_id = 0
+  end
+end
+$game_temp = Game_Temp.new
+
+# ---------------------------------------------------------------------------
+# XP Interpreter als minimale Datenhalde (Stufe 4g Teil 5): Game_System
+# instanziiert zwei Exemplare; die Befehlsmethoden (command_xxx) werden
+# bewusst NICHT bereitgestellt — PAKET 6 Punkt (i): unser nativer
+# EventSystem-Interpreter bleibt fuehrend, XP-Aufrufe schlagen laut fehl
+# (ehrlich statt still falschem Verhalten).
+# ---------------------------------------------------------------------------
+class Interpreter
+  attr_accessor :depth, :main
+  def initialize(depth = 0, main = false)
+    @depth = depth
+    @main = main
+  end
+end
+
+# ---------------------------------------------------------------------------
+# XP $game_system (Stufe 4g Teil 5): API 1:1 aus Game_System.rb (1.03).
+# Zwei begruendete Abweichungen: (1) die $data_system-Fallbacks lesen lazy
+# ueber unsere load_data-Bruecke ($__engine_db_system-Cache, Muster wie
+# $__engine_db_items & Co.) — $data_system selbst setzen wir nicht, weil
+# der Prelude beim VM-Start noch keine Projekt-Datenbank sieht; (2)
+# Audio-Pfade gehen durch die Engine-Aufloesung (ResolveAudioPath findet
+# "Audio/BGM/<name>" samt Klein-/Grossschreib-Varianten) — die String-
+# Pfade bleiben exakt XP.
+# ---------------------------------------------------------------------------
+class Game_System
+  attr_reader   :map_interpreter          # map event interpreter
+  attr_reader   :battle_interpreter       # battle event interpreter
+  attr_accessor :timer                    # timer
+  attr_accessor :timer_working            # timer working flag
+  attr_accessor :save_disabled            # save forbidden
+  attr_accessor :menu_disabled            # menu forbidden
+  attr_accessor :encounter_disabled       # encounter forbidden
+  attr_accessor :message_position         # text option: positioning
+  attr_accessor :message_frame            # text option: window frame
+  attr_accessor :save_count               # save count
+  attr_accessor :magic_number             # magic number
+  def initialize
+    @map_interpreter = Interpreter.new(0, true)
+    @battle_interpreter = Interpreter.new(0, false)
+    @timer = 0
+    @timer_working = false
+    @save_disabled = false
+    @menu_disabled = false
+    @encounter_disabled = false
+    @message_position = 2
+    @message_frame = 0
+    @save_count = 0
+    @magic_number = 0
+    @playing_bgm = nil
+    @playing_bgs = nil
+    @memorized_bgm = nil
+    @memorized_bgs = nil
+    @windowskin_name = nil
+    @battle_bgm = nil
+    @battle_end_me = nil
+  end
+  # lazy $data_system-Ersatz (siehe Kopfkommentar)
+  def __db
+    $__engine_db_system ||= load_data("Data/System.rxdata")
+  end
+  private :__db
+  def bgm_play(bgm)
+    @playing_bgm = bgm
+    if bgm != nil and bgm.name != ""
+      Audio.bgm_play("Audio/BGM/" + bgm.name, bgm.volume, bgm.pitch)
+    else
+      Audio.bgm_stop
+    end
+    Graphics.frame_reset
+  end
+  def bgm_stop
+    Audio.bgm_stop
+  end
+  def bgm_fade(time)
+    @playing_bgm = nil
+    Audio.bgm_fade(time * 1000)
+  end
+  def bgm_memorize
+    @memorized_bgm = @playing_bgm
+  end
+  def bgm_restore
+    bgm_play(@memorized_bgm)
+  end
+  def bgs_play(bgs)
+    @playing_bgs = bgs
+    if bgs != nil and bgs.name != ""
+      Audio.bgs_play("Audio/BGS/" + bgs.name, bgs.volume, bgs.pitch)
+    else
+      Audio.bgs_stop
+    end
+    Graphics.frame_reset
+  end
+  def bgs_fade(time)
+    @playing_bgs = nil
+    Audio.bgs_fade(time * 1000)
+  end
+  def bgs_memorize
+    @memorized_bgs = @playing_bgs
+  end
+  def bgs_restore
+    bgs_play(@memorized_bgs)
+  end
+  def me_play(me)
+    if me != nil and me.name != ""
+      Audio.me_play("Audio/ME/" + me.name, me.volume, me.pitch)
+    else
+      Audio.me_stop
+    end
+    Graphics.frame_reset
+  end
+  def se_play(se)
+    if se != nil and se.name != ""
+      Audio.se_play("Audio/SE/" + se.name, se.volume, se.pitch)
+    end
+  end
+  def se_stop
+    Audio.se_stop
+  end
+  def playing_bgm
+    return @playing_bgm
+  end
+  def playing_bgs
+    return @playing_bgs
+  end
+  def windowskin_name
+    if @windowskin_name == nil
+      n = __db.windowskin_name
+      return (n != nil and n != "") ? n : "Window"
+    else
+      return @windowskin_name
+    end
+  end
+  def windowskin_name=(windowskin_name)
+    @windowskin_name = windowskin_name
+  end
+  def battle_bgm
+    if @battle_bgm == nil
+      return __db.battle_bgm
+    else
+      return @battle_bgm
+    end
+  end
+  def battle_bgm=(battle_bgm)
+    @battle_bgm = battle_bgm
+  end
+  def battle_end_me
+    if @battle_end_me == nil
+      return __db.battle_end_me
+    else
+      return @battle_end_me
+    end
+  end
+  def battle_end_me=(battle_end_me)
+    @battle_end_me = battle_end_me
+  end
+  # Timer-Countdown (XP Game_System#update — im XP-Modus ruft die Scene
+  # das pro Frame auf; im nativen Modus steht der Aufruf frei)
+  def update
+    if @timer_working and @timer > 0
+      @timer -= 1
+    end
+  end
+end
+$game_system = Game_System.new
+
+# ---------------------------------------------------------------------------
 # XP Szenen-Framework (PAKET 6/h, Opt-in): Aktivierung mit
 #   UI.xp_scene_mode = true      (oder Game.ini: XpSceneMode=1)
 # Dann tickt die ENGINE pro Frame $scene.__engine_frame: start genau einmal,

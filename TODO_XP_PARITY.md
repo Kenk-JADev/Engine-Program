@@ -473,6 +473,21 @@ am Ziel ab und wartet bis zum Ende.
       (Muster wie UI.open_list_menu), Rueckruf ueber neue public
       RubyVM::CallNameInputResult (Stub-Zweig mitgeliefert + nm-geprueft).
       Damit sind ALLE (g)-Punkte abgeschlossen.
+  (g) **TEIL 5 erledigt 2026-07-23: `$game_temp` + `$game_system`:**
+      Game_Temp 1:1 als reine Ruby-Datenhalde im Prelude (in XP genauso
+      — kein nativer Gegenpart, kein Zwei-Wahrheiten-Risiko); Attribut-
+      liste = XP-1.03 vereinigt mit den per grep beweisgefuehrten
+      Zugriffen der 90 Originalskripte (inkl. choice_*/num_input_*/
+      forcing_battler/in_battle/map_bgm/battle_proc/...). Game_System
+      API 1:1 aus der 1.03-Datei uebernommen: zwei Interpreter-Instanzen
+      (neue Interpreter-Datenhalde — Befehle bewusst NICHT, s. Punkt i),
+      timer/save/menu/encounter-Disabled/message_position/-frame/
+      save_count/magic_number, bgm/bgs/me/se _play/_stop/_fade/
+      _memorize/_restore (String-Pfade exakt XP, Aufloesung via
+      ResolveAudioPath), playing_bgm/bgs; windowskin_name/battle_bgm/
+      battle_end_me mit EIGENEM Override (attr) + Lazy-$data_system-
+      Ersatz via load_data-Bruecke ($__engine_db_system-Cache — lazy,
+      weil der Prelude beim VM-Start noch keine Projekt-DB sieht.
   (h) ~~Scene_*-Framework~~ **ERLEDIGT 2026-07-23 (Opt-in XP-Modus, wie
       im Eintrag festgelegte Architektur):** Aktivierung `UI.xp_scene_mode
       = true` oder Game.ini `XpSceneMode=1` (CustomConfig.xpSceneMode,
@@ -488,9 +503,44 @@ am Ziel ab und wartet bis zum Ende.
       verwendet werden (Engine ownet den Frame-Loop; main = 1 Tick als
       Kompat-Fassade) — im Prelude-Kommentar dokumentiert.
   (i) interpreter 1-7: bewusst NICHT uebernehmen (unser nativer
-      EventSystem-Interpreter bleibt fuehrend); Windows_*/Sprite_* der
-      Originalskripte sind gegen RgssUI weitgehend API-kompatibel und
-      werden beim ersten Trockenlauf evaluiert.
+      EventSystem-Interpreter bleibt fuehrend); **TROCKENLAUF-EVALUATION
+      2026-07-23 (statisch, API-Abgleich gegen Bindings/Prelude):**
+      - **Window-Schicht startklar:** BindRgssWindowEx liefert das XP-
+        Vollset (contents, cursor_rect, active/pause/stretch, opacities,
+        ox/oy, viewport, windowskin als Bitmap, XP-initialize), Bitmap-
+        API breit (blt/stretch_blt/fill_rect/draw_text/text_size/font/
+        hue_change/...), Input-XP voll (update/press?/trigger?/repeat?/
+        dir4/dir8 + alle Tasten), Font.default_* im Prelude, nativer
+        Renderer zeichnet das volle XP-Windowskin 192x128 (Hintergrund,
+        Rahmen, Cursor inkl. Blinken/Aktiv-Halb, Pause-Indikator).
+        Damit API-seitig uneingeschraenkt startbar: Window_Base,
+        _Selectable, _Command, _Help, _Gold, _PlayTime, _Steps,
+        _MenuStatus, _InputNumber, _NameEdit/_NameInput, _DebugL/R,
+        _Skill/_SkillStatus/_Item/_Status/_Target, _Equip*, _Shop*,
+        _BattleResult/_BattleStatus, _PartyCommand, _Message
+        ($game_temp seit Teil 5 vorhanden).
+      - **BLOCKIERT:** Window_SaveFile + Scene_File/Save/Load
+        (Marshal — Grenze d; unser Slot-System stattdessen).
+      - **Sprite/Spriteset startbar:** Sprite_Character/_Picture/
+        _Timer/_Battler, Spriteset_Map (Plane/Tilemap nativ, $game_map.
+        data) — ABER $game_map.events ist bewusst leer: NPC-Sprites
+        fehlen im Ruby-Spriteset (native Darstellung laeuft ausserhalb);
+        Spriteset_Battle findet jetzt $game_troop.members, ohne
+        Animations-IDs am Enemy (0).
+      - **Bekannte Fehlstellen (klein):** Font#shadow; Sprite wave_*;
+        Graphics.snap_to_bitmap/snap/wait; Arrow_* brauchen Battler-
+        Bildschirmpositionen (im nativen Kampf nicht abgebildet —
+        Luecke, falls Kampfpfeile gewuenscht); Bitmap-Argumentformen
+        (Rect- vs 4-Int-Form bei fill_rect/draw_text) im Live-Lauf zu
+        pruefen (Risiko: mittel).
+      - **NICHT portieren:** Scene_Battle 1-4 (Game_BattleAction/
+        Animation/Arrow-Abhaengigkeiten — unser nativer Kampf +
+        Battle-Custom-API); Main.rb-Blockierschleife (XP-Modus Ticket h
+        nutzt Scene_Base-Tick stattdessen); Interpreter 1-7 (nativ).
+      - **Startbar mit Sinn nur im XP-Modus:** Scene_Title/Menu/Item/
+        Skill/Equip/Status/Name/Shop/Debug/End/Gameover — als volle
+        XP-Nachbildungen auf unserem $game_*/$data_*-Rueckgrat; dop-
+        pelte native Oberflaechen dann abschalten (UI.native_*).
 - [x] **Animations-Ziel (param1) beachten (ERLEDIGT 2026-07-23):**
   `EventSystem` loest param1 jetzt XP-konform auf (-1 Spieler / 0 dieses
   Event via `mEventId` / >0 Event-ID via `EventSystem::Get().GetEvent`,
