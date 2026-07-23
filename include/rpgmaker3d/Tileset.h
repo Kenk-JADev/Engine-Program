@@ -46,6 +46,9 @@ public:
     int GetPassage(int tileId) const;     // 0=frei, 1=blockiert
     int GetPassage4Dir(int tileId) const; // Bits s. TilesetData::DirBit
     int GetPriority(int tileId) const;
+    /// Groesste belegte Prioritaet (0..5) aus den DB-Daten, 0 ohne Daten.
+    /// (Paket 6: RGSS z-Sortierung braucht den Maximalwert.)
+    int GetMaxPriority() const;
     int GetBush(int tileId) const;
     int GetCounter(int tileId) const;
     int GetTerrainTag(int tileId) const;

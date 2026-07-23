@@ -1,5 +1,6 @@
 #include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/Texture.h"
+#include <algorithm>
 #include <glad/gl.h>
 
 namespace rpg {
@@ -115,6 +116,14 @@ int Tileset::GetPassage4Dir(int tileId) const {
 
 int Tileset::GetPriority(int tileId) const {
     return mHasData ? mData.GetPriority(tileId) : 0;
+}
+
+int Tileset::GetMaxPriority() const {
+    if (!mHasData) return 0;
+    int mx = 0;
+    for (int v : mData.priority)
+        mx = std::max(mx, v);
+    return mx;
 }
 
 int Tileset::GetBush(int tileId) const {

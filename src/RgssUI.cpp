@@ -1198,6 +1198,23 @@ void RgssUI::DrawPlane(RgssDrawableState& p, const RgssViewportState* vp) {
 }
 
 // ---------------------------------------------------------------------------
+// Paket 6: Prioritaets-Hooks (werden von der Engine einmalig verdrahtet)
+static std::function<int(int)> s_prioOfHook;
+static std::function<int()>    s_prioMaxHook;
+void RgssSetTilePriorityHooks(std::function<int(int)> prioOf,
+                              std::function<int()> maxPrio) {
+    s_prioOfHook = std::move(prioOf);
+    s_prioMaxHook = std::move(maxPrio);
+}
+
+static std::function<std::string(int)> s_stepForHook;
+static std::function<void(const std::string&)> s_stepPlayHook;
+void RgssSetFootstepHooks(std::function<std::string(int)> stepFor,
+                          std::function<void(const std::string&)> play) {
+    s_stepForHook = std::move(stepFor);
+    s_stepPlayHook = std::move(play);
+}
+
 // Tilemap zeichnen (3 Ebenen, XP-Autotile-Muster, Prioritaeten, flash_data)
 // ---------------------------------------------------------------------------
 namespace {
@@ -1251,12 +1268,35 @@ void RgssUI::DrawTilemap(RgssDrawableState& t, const RgssViewportState* vp) {
 
     const int xs = mapData->xs, ys = mapData->ys;
     const int layers = std::min(3, mapData->zs);
+
+    // Paket 6 (Terrain-Tag/Schritt-SE): In groben Abstaenden (2,4 s) einen
+    // Schritt-Ton abspielen, solange die Tilemap zeichnet. Quelle ist der
+    // oberste Tile unter der Bildschirmmitte (Spieler steht dort).
+    if (s_stepForHook) {
+        static float s_stepTimer = 0.0f;
+        s_stepTimer += 1.0f / 60.0f; // Frame-Taktung (~60 fps)
+        if (s_stepTimer >= 2.4f) {
+            s_stepTimer = 0.0f;
+            const int cx = std::clamp((int)std::floor((320.0f - offX) / 32.0f), 0, xs - 1);
+            const int cy = std::clamp((int)std::floor((240.0f - offY) / 32.0f), 0, ys - 1);
+            int id = 0;
+            for (int l = layers - 1; l >= 0 && id <= 0; --l)
+                id = mapData->data[((size_t)l * ys + cy) * xs + cx];
+            if (id > 0) {
+                const std::string nm = s_stepForHook(id);
+                if (s_stepPlayHook && !nm.empty()) s_stepPlayHook(nm);
+            }
+        }
+    }
     const auto mapAt = [&](int x, int y, int l) -> int {
         if (x < 0 || y < 0 || x >= xs || y >= ys) return 0;
         return mapData->data[((size_t)l * ys + y) * xs + x];
     };
-    const int maxPrio = priorities && (int)priorities->data.size() > 0
-        ? *std::max_element(priorities->data.begin(), priorities->data.end()) : 0;
+    int maxPrio = 0;
+    if (priorities && (int)priorities->data.size() > 0)
+        maxPrio = *std::max_element(priorities->data.begin(), priorities->data.end());
+    else if (s_prioMaxHook)
+        maxPrio = s_prioMaxHook(); // Paket 6: DB-Fallback
     const int elevatedZ = 32 + std::max(0, maxPrio) * 32 + 32 * std::min(ys, 17);
 
     // Wir zeichnen in zwei Durchgaengen: pass 0 = Boden (z=0-Yordnung),
@@ -1292,8 +1332,11 @@ void RgssUI::DrawTilemap(RgssDrawableState& t, const RgssViewportState* vp) {
             for (int x = xStart; x <= xEnd; ++x) {
                 const int id = mapAt(x, y, l);
                 if (id <= 0) continue;
-                const int prio = (priorities && id < (int)priorities->data.size())
-                    ? priorities->data[id] : 0;
+                int prio = (priorities && id < (int)priorities->data.size())
+                    ? priorities->data[id]
+                    : (s_prioOfHook ? s_prioOfHook(id) : 0); // Paket 6: DB-Fallback
+                const bool bushed = prio >= 128; // Bit7 = Busch-Flag (nur DB-Pfad)
+                prio &= 127;
                 const bool elevated = prio > 0;
                 if ((t.z == 1) != elevated) continue; // z missbraucht als Pass-Schluessel
                 const float dx = x * 32.0f + offX;
@@ -1307,6 +1350,8 @@ void RgssUI::DrawTilemap(RgssDrawableState& t, const RgssViewportState* vp) {
                     const int frames = std::max(1, atW[atIdx] / 96);
                     const int frame = frames > 1 ? (int)((s_graphics.frameCount / 16) % frames) : 0;
                     const float baseX = (float)(frame * 96);
+                    // Busch (Paket 6): untere Tile-Haelfte transparent (XP)
+                    const bool bThis = bushed;
                     setTex(tex);
                     for (int q = 0; q < 4; ++q) {
                         const float qx = kAutotilePatterns[pattern][q][0];
@@ -1315,8 +1360,10 @@ void RgssUI::DrawTilemap(RgssDrawableState& t, const RgssViewportState* vp) {
                         const float v0 = qy / atH[atIdx];
                         const float u1 = (baseX + qx + 16) / atW[atIdx];
                         const float v1 = (qy + 16) / atH[atIdx];
+                        const bool lower = (q / 2) == 1; // untere Subkachel-Zeile
+                        const float aHalf = (bThis && lower) ? 0.45f : 1.0f;
                         mRenderer->Quad(dx + (q % 2) * 16.0f, dy + (q / 2) * 16.0f,
-                                        16, 16, u0, v0, u1, v1, 1, 1, 1, 1);
+                                        16, 16, u0, v0, u1, v1, 1, 1, 1, aHalf);
                     }
                 } else {
                     if (!tsTex) continue;
@@ -1325,10 +1372,20 @@ void RgssUI::DrawTilemap(RgssDrawableState& t, const RgssViewportState* vp) {
                     const float su = (float)((tId % 8) * 32);
                     const float sv = (float)((tId / 8) * 32);
                     if ((int)sv >= tilesetBmp->height) continue;
-                    mRenderer->Quad(dx, dy, 32, 32,
-                                    su / tilesetBmp->width, sv / tilesetBmp->height,
-                                    (su + 32) / tilesetBmp->width, (sv + 32) / tilesetBmp->height,
-                                    1, 1, 1, 1);
+                    if (bushed) {
+                        // Busch (Paket 6): weicher Verlauf zur halben
+                        // Deckkraft nach unten (XP-Optik "Stehen im Gras")
+                        const float white[4][3] = { {1,1,1}, {1,1,1}, {1,1,1}, {1,1,1} };
+                        mRenderer->Quad4(dx, dy, 32, 32,
+                                         su / tilesetBmp->width, sv / tilesetBmp->height,
+                                         (su + 32) / tilesetBmp->width, (sv + 32) / tilesetBmp->height,
+                                         white, 1.0f, 1.0f, 0.45f, 0.45f);
+                    } else {
+                        mRenderer->Quad(dx, dy, 32, 32,
+                                        su / tilesetBmp->width, sv / tilesetBmp->height,
+                                        (su + 32) / tilesetBmp->width, (sv + 32) / tilesetBmp->height,
+                                        1, 1, 1, 1);
+                    }
                 }
             }
         flushBatch();
@@ -1677,6 +1734,8 @@ void RgssUI::Render(int screenWidth, int screenHeight) {
             int maxPrio = 0, rows = 17;
             if (auto* prio = s_tables.Get(d.prioritiesId))
                 for (auto v : prio->data) maxPrio = std::max(maxPrio, (int)v);
+            if (maxPrio <= 0 && s_prioMaxHook)
+                maxPrio = s_prioMaxHook(); // Paket 6: DB-Fallback
             if (auto* md = s_tables.Get(d.mapDataId)) rows = std::min(md->ys, 17);
             if (maxPrio > 0) {
                 const long long key2 =

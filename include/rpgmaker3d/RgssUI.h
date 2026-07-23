@@ -28,6 +28,7 @@
 
 #include "Types.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -230,6 +231,23 @@ struct RgssWindowState {
     float contentsOx = 0, contentsOy = 0; // Ruby ox/oy (Scrollen des Inhalts)
     std::uint64_t seq = 0;
 };
+
+/// Paket 6 (XP-Prioritaet): Fallback-Hooks, wenn ein Tilemap-Drawable KEINE
+/// priorities-Table traegt. XP holt die Prioritaeten dann aus den Tileset-
+/// Daten ($data_tilesets) - die Engine verdrahtet hier die Paket-1-Tables
+/// (TilesetData) der aktiven Karte. prioOf bekommt die RGSS-Tile-ID
+/// (0..383 = Autotile-Slots, 384+ = Standard-Tiles); maxPrio liefert den
+/// Maximalwert fuer die z-Sortierung (0 = kein erhoehter Durchgang).
+void RgssSetTilePriorityHooks(std::function<int(int)> prioOf,
+                              std::function<int()> maxPrio);
+
+/// Paket 6 (Terrain-Tag/Schritt-SE): Footstep-Hooks, von der Engine
+/// verdrahtet. stepFor(rgssTileId) -> "grass"/"stone"/"water" oder ""
+/// (kein Terrain-Tag bzw. generisches Gerdausch); play(name) spielt den
+/// Soundeffekt ab. Tag-Semantik (von der Engine implementiert):
+/// 1 = Gras, 2 = Stein, 3 = Wasser, Tag 0 = kein Ton.
+void RgssSetFootstepHooks(std::function<std::string(int)> stepFor,
+                          std::function<void(const std::string&)> play);
 
 /// Singleton-Verwaltung + eigene GL-Render-Schicht der RGSS-Objekte.
 class RgssUI {

@@ -1005,6 +1005,59 @@ void Engine::Update(float dt) {
             };
         }
 
+        // Prioritaet (Paket 6): Paket-1-Tables als RGSS-Fallback verdrahten,
+        // damit Tilemap-Drawables ohne eigene priorities-Table die
+        // TilesetData-Prioritaeten der aktiven Karte nutzen (XP liest sie aus
+        // $data_tilesets). RGSS-Id-Raum: 0..383 = Autotile-Slots (ohne
+        // Paket-1-Prio), 384+ -> visueller Index (id-384).
+        RgssSetTilePriorityHooks(
+            [](int rgssId) -> int {
+                const Map* bound = Game::Get().Map().GetBoundMap();
+                auto ts = bound ? bound->GetTileset() : nullptr;
+                if (!ts || !ts->HasTilesetData()) return 0;
+                if (rgssId < 384) return 0; // Autotile-Slot: keine Paket-1-Daten
+                const int visual = rgssId - 384;
+                // Kodierung: Bits 0..6 = Prioritaet (0..5), Bit 7 = Busch-Flag
+                return ts->GetPriority(visual) + (ts->GetBush(visual) ? 128 : 0);
+            },
+            []() -> int {
+                const Map* bound = Game::Get().Map().GetBoundMap();
+                auto ts = bound ? bound->GetTileset() : nullptr;
+                return (ts && ts->HasTilesetData()) ? ts->GetMaxPriority() : 0;
+            });
+
+        // Schritt-SE nach Terrain-Tag (Paket 6): stepFor liest den Tag des
+        // Tiles unter dem Spieler, play spielt footsteps/<name> aus dem
+        // Audio/SE-Baum (Fallback: <name> direkt). Tag 0/lautlos: nichts.
+        RgssSetFootstepHooks(
+            [](int rgssId) -> std::string {
+                if (rgssId < 384) return ""; // Autotile: vorerst kein Tag
+                const Map* bound = Game::Get().Map().GetBoundMap();
+                auto ts = bound ? bound->GetTileset() : nullptr;
+                if (!ts || !ts->HasTilesetData()) return "";
+                switch (ts->GetTerrainTag(rgssId - 384)) {
+                case 1: return "grass";
+                case 2: return "stone";
+                case 3: return "water";
+                default: return "";
+                }
+            },
+            [this](const std::string& name) {
+                if (!mAudio) return;
+                // Nur bei Bewegung: Stillstand soll still sein (XP-Feeling).
+                static Vec3 s_lastPos(0.0f);
+                static bool s_hasLast = false;
+                const Vec3 now = Game::Get().Player().GetPosition();
+                const bool moved = !s_hasLast || glm::length(now - s_lastPos) > 0.25f;
+                s_lastPos = now; s_hasLast = true;
+                if (!moved) return;
+                std::string p = ResolveAudioPath("footsteps/" + name, 3);
+                if (p.empty()) p = ResolveAudioPath("footsteps/" + name + ".wav", 3);
+                if (p.empty()) p = ResolveAudioPath(name, 3);
+                if (p.empty()) p = ResolveAudioPath(name + ".wav", 3);
+                if (!p.empty()) mAudio->PlaySE(p, false, 0.6f, 1.0f);
+            });
+
         Game::Get().Update(dt);
         if (!GameUI::Get().Menu().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);

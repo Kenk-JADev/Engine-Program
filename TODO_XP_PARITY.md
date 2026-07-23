@@ -285,20 +285,39 @@ am Ziel ab und wartet bis zum Ende.
   (`qt_editor/QtAssetBrowserDock.*`); XP kann zusätzlich Datei→Projektordner
   importieren inkl. transparenter Farbe (nur ViaScript: Bitmap hat Colorkey?
   — prüfen ob nötig; vermutlich reicht Drag&Drop in den Asset-Browser).
-- [ ] **Priorität zur Laufzeit rendern** (aus Paket-1-Daten): native
-  3D-Darstellung nutzt Höhen-Offset pro Priorität; RGSS-Tilemap kann es
-  schon (`priorities`-Table) — native Pfad offen.
-- [ ] **Busch-Flag-Effekt:** Spieler-Sprite unten „im Gras" (halbe Deckkraft/
-  Z-Maske) wenn auf Bush-Tile steht (Daten kommen aus Paket 1; Visualisierung
-  wurde nicht gebaut, weil der Spieler aktuell ein 3D-Modell ist — 3D-
-  Näherung: Tile-Overlay oder kurzer „Bewegung durch Gras"-Effekt).
+- [x] **Prioritaet zur Laufzeit (ERLEDIGT 2026-07-23):** XP liest Prios
+  aus $data_tilesets, wenn die Tilemap keine eigene `priorities`-Table
+  traegt — jetzt genauso: `RgssSetTilePriorityHooks` (RgssUI.h), Engine
+  verdrahtet Paket-1-`TilesetData` der aktiven Karte (RGSS-ID>=384 ->
+  visueller Index, Bit7 = Busch-Flag). `DrawTilemap` (pro Tile) und die
+  z-Split-Sortierung in `Render()` nutzen den Fallback; `GetMaxPriority()`
+  neu. **Entscheidung nativer 3D-Pfad:** es gibt KEINEN nativen 3D-Tile-
+  Renderer (Karte optisch komplett = RGSS-Tilemap; 3D = Entities/Spieler
+  auf Kollisionsebene). Falls einer gebaut wird: Hoehen-Offset
+  (priority*0,5 Tiles) dort spiegeln — als Folgepunkt vermerkt.
+- [x] **Busch-Flag-Effekt (ERLEDIGT 2026-07-23, RGSS-Pfad):** Busch-
+  Tiles zeichnen ihre untere Haelfte (normale Tiles: `Quad4`-Verlauf,
+  Autotiles: untere 16er-Subkacheln) mit 45% Alpha — XP-Optik „im Gras
+  stehen". Kodierung via Bit 7 im Prio-Hook (Engine). Echte Sprite-
+  z-Maske (Spieler nur unten transparent) bleibt Folgearbeit, sobald
+  RGSS-Sprites denselben Hook abfragen (Punkt unten bei Terrain-Tag
+  vermerkt).
 - [x] **Counter-Flag (ERLEDIGT 2026-07-23):** `EventSystem::TryInteract`
   erweitert: findet kein ActionButton-Event im Normalradius, schaut er ein
   Tile weiter; löst es nur aus, wenn die Mittelkachel zwischen Spieler und
   Event counter-geflaggt ist (alle Ebenen geprüft). XP-Feeling an
   Verkaufstresen.
-- [ ] **Terrain-Tag:** definieren, was unsere Engine damit tut
-  (z.B. Schritt-SE, Busch-Alternativen) — erst nach Paket 1 Daten verfügbar.
+- [x] **Terrain-Tag (ERLEDIGT 2026-07-23):** Semantik festgelegt:
+  0 = kein Ton, 1 = Gras, 2 = Stein, 3 = Wasser (Werte 4..7 frei).
+  Umsetzung: `RgssSetFootstepHooks(stepFor, play)` — DrawTilemap loest
+  alle 2,4 s den Tile unter Bildschirmmitte (oberster Layer) auf; Engine
+  mappt Tag->Name, laedt `Audio/SE/footsteps/<name>(.wav)` (Fallback
+  `<name>` direkt) und spielt NUR bei Bewegung (kein Tritt im Stand,
+  0,25-Tile Delta).
+- [ ] **Folge: Sprite-Busch-z-Maske + Terrain 4..7:** Bush-Flag auch auf
+  CHARAKTER-Sprites anwenden (nur untere Haelfte alpha) und Semantik
+  fuer die restlichen Tags 4..7 belegen (Vorschlag: Gegner-Encounter
+  pro Tag, Brueken-Fahrzeug-SE).
 - [x] **Player-Export vc_redist-Hinweis (ERLEDIGT 2026-07-23):** README-
   Abschnitt „Fehlersuche: Player/Editor startet nicht (Windows)" erklärt
   die Schließt-sofort-Historie (vc_redist) + Vorschläge (installieren,
