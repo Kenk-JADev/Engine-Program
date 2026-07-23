@@ -359,6 +359,19 @@ grün — alles Windows-spezifische Fallen). Fixes:
    definiert sind. Merksatz: nach dem Syntaxcheck neu eingeführte
    Member-Definitionen kurz mit `nm -C` auf Vorhandensein prüfen.
 
+7. **Qt-Download im Workflow (CI-Lauf 4):** kein Codefehler — der
+   aqt-Download von Qt 6.9.1 brach mit `Bad7zFile` bei qtdeclarative ab
+   (korruptes Archiv vom Windows-Mirror). Workflow gehärtet:
+   `aqtinstall==3.1.*` gepinnt, Download auf qtbase/qtsvg/qttools/
+   qttranslations beschränkt (`--modules` + `--archives`; qtdeclarative
+   brauchen wir nicht — Editor nutzt nur Widgets/OpenGLWidgets aus qtbase)
+   und 1 Retry mit aufgeräumtem Zielverzeichnis bei Fehlschlag.
+   WICHTIG: Bot darf KEINE Workflow-Dateien pushen (fehlende workflows-
+   Permission) → gehärteter Stand liegt als Vorlage in
+   **`ci/Main.yml.template`**; Maintainer muss ihn nach
+   `.github/workflows/Main.yml` kopieren (oder im Web-Editor einfügen),
+   sonst läuft der CI weiter mit der alten Qt-Installationsroutine.
+
 Merksatz für die nächsten Pakete: nach jedem Push **sofort CI grün machen**
 (4 Commits waren ungetestet gestapelt).
 

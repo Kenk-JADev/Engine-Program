@@ -1,0 +1,307 @@
+# ============================================================================
+# TEMPLATE: Inhalt von .github/workflows/Main.yml (Qt-Editor CI)
+# ----------------------------------------------------------------------------
+# Der Arena-Bot darf Workflow-Dateien nicht pushen (fehlende "workflows"-
+# Permission des GitHub-App-Tokens -> "refusing to allow a GitHub App to
+# create or update workflow"). Deshalb liegt der aktuelle Stand HIER als
+# Vorlage.
+# MAINTAINER: Um die Aenderungen zu aktivieren, diese Datei 1:1 nach
+#   .github/workflows/Main.yml
+# kopieren und mit einem normalen User-Account committen+pushen
+# (oder im GitHub-Web-Editor einfuegen).
+# Letzte inhaltliche Aenderung (2026-07-23): Qt-Download gehaertet -
+# aqtinstall==3.1.* gepinnt, Archivliste reduziert (kein qtdeclarative mehr,
+# das war das korrupte Bad7zFile-Archiv 2026-07-23), 1 Retry bei Spiegel-
+# Fehlern. Details: TODO_XP_PARITY.md, PAKET 7 Punkt 7.
+# ============================================================================
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Ruby (required by mruby build)
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Setup MSVC (für mruby MSVC Build)
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install Qt for editor
+        shell: pwsh
+        run: |
+          # aqt auf die als stabil geltende Serie pinnen (kein Stillstand durch
+          # brandneue aqt-Releases mit ungetesteten Qt-Paket-Layouts).
+          python -m pip install "aqtinstall==3.1.*"
+          # Windows-Mirror lieferte schon mehrfach korrupte 7z-Archive aus
+          # (Bad7zFile / "Specified path is bad: mkspecs/features/qtquickcompiler.prf").
+          # Deshalb: 1) weniger Archive laden (qtdeclarative & Co. brauchen wir
+          # nicht - der Editor nutzt nur Widgets/OpenGLWidgets aus qtbase),
+          # was die Angriffsflaeche fuer korrupte Downloads deutlich senkt, und
+          # 2) ein Retry mit sauberem Zielverzeichnis, falls doch ein Archiv
+          # defekt ankommt.
+          $attempt = 0
+          while ($attempt -lt 2) {
+            $attempt++
+            Write-Host "aqt install attempt $attempt"
+            if ($attempt -gt 1 -and (Test-Path "$env:GITHUB_WORKSPACE/qt")) {
+              Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE/qt" -ErrorAction SilentlyContinue
+            }
+            # --modules: Metadaten/Doku dieser Module; --archives: nur diese
+            # 7z-Bibliotheksarchive herunterladen & entpacken. qtbase/qtsvg/
+            # qttools/qttranslations = der Satz, den Build & Deployment brauchen
+            # (windeployqt liegt in qttools, Plattform-Plugins in qtbase);
+            # opengl32sw/d3dcompiler bleiben dabei, damit windeployqt weiter
+            # den Software-GL-Fallback mit ausliefern kann.
+            aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --modules qtbase qtsvg qttools qttranslations --archives qtbase qtsvg qttools qttranslations opengl32sw d3dcompiler
+            if ($LASTEXITCODE -eq 0) { break }
+            Write-Host "aqt attempt $attempt failed (exit $LASTEXITCODE)"
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "Qt installation failed after retries"
+          }
+          $qtDir = "$env:GITHUB_WORKSPACE/qt/6.9.1/msvc2022_64"
+          if (-not (Test-Path "$qtDir/bin/qmake.exe")) {
+            throw "Qt installation missing: $qtDir"
+          }
+          echo "QT_DIR=$qtDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Qt installed at $qtDir"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/vcpkg
+            ${{ github.workspace }}/vcpkg_installed
+          key: vcpkg-${{ runner.os }}-sdl2-glm-x64-windows-md-v1-ruby-msvc
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
+
+      - name: Install vcpkg and dependencies
+        shell: pwsh
+        run: |
+          if (-not (Test-Path vcpkg)) {
+            git clone https://github.com/Microsoft/vcpkg.git
+            .\vcpkg\bootstrap-vcpkg.bat
+          }
+          # Dynamisches Triplet (/MD) – kompatibel mit Qt-DLLs
+          .\vcpkg\vcpkg.exe install sdl2:x64-windows glm:x64-windows
+
+      - name: Build mruby with MSVC
+        shell: pwsh
+        run: |
+          # Kein CC/CXX=cl setzen: Das würde mruby fälschlich auf GCC schalten.
+          $mrubyTag = "4.0.0"
+
+          if (Test-Path third_party/mruby) {
+            Remove-Item -Recurse -Force third_party/mruby
+          }
+
+          git clone --branch $mrubyTag --depth 1 https://github.com/mruby/mruby.git third_party/mruby
+          if ($LASTEXITCODE -ne 0) {
+            throw "mruby $mrubyTag konnte nicht geklont werden."
+          }
+
+          Push-Location third_party/mruby
+          try {
+            $msvcBin = Split-Path -Parent (Get-Command cl.exe -CommandType Application -ErrorAction Stop).Source
+            $msvcLinker = Join-Path $msvcBin "link.exe"
+            $msvcArchiver = Join-Path $msvcBin "lib.exe"
+
+            if (-not (Test-Path $msvcLinker) -or -not (Test-Path $msvcArchiver)) {
+              throw "MSVC Linker oder Archiver fehlt in $msvcBin"
+            }
+
+            # Git for Windows kann seinen GNU-Linker vor MSVC im PATH haben.
+            $env:PATH = "$msvcBin;$env:PATH"
+            $env:LD = "link.exe"
+            $env:AR = "lib.exe"
+
+            # /MD = gleiche CRT wie Qt-DLLs und vcpkg x64-windows
+            $env:CFLAGS = "/nologo /W3 /MD /O2 /D_CRT_SECURE_NO_WARNINGS /we4013"
+            $env:CXXFLAGS = "/nologo /W3 /MD /O2 /D_CRT_SECURE_NO_WARNINGS /EHs"
+
+            Write-Host "MSVC Compiler: $(where.exe cl)"
+            Write-Host "MSVC Linker: $((Get-Command link.exe -CommandType Application -ErrorAction Stop).Source)"
+
+            $env:MRUBY_CONFIG = "ci/msvc"
+            Write-Host "Baue mruby $mrubyTag mit der offiziellen MSVC-Konfiguration..."
+
+            & ruby minirake 2>&1 | Tee-Object -FilePath "$env:GITHUB_WORKSPACE/mruby_build.log"
+            $mrubyExitCode = $LASTEXITCODE
+
+            if ($mrubyExitCode -ne 0) {
+              throw "mruby Build fehlgeschlagen (Exit-Code $mrubyExitCode)."
+            }
+
+            $requiredFiles = @(
+              "build/host/lib/libmruby.lib",
+              "build/host/lib/libmruby_core.lib",
+              "build/host/include/mruby/presym/id.h",
+              "build/host/include/mruby/presym/table.h"
+            )
+
+            $missingFiles = $requiredFiles | Where-Object { -not (Test-Path $_) }
+            if ($missingFiles) {
+              Write-Host "mruby Ausgabe:"
+              Get-ChildItem build/host -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host $_.FullName }
+
+              throw "mruby Build unvollständig. Fehlend: $($missingFiles -join ', ')"
+            }
+
+            New-Item -ItemType Directory -Path "include/mruby/presym" -Force | Out-Null
+            Copy-Item "build/host/include/mruby/presym/id.h" "include/mruby/presym/id.h" -Force
+            Copy-Item "build/host/include/mruby/presym/table.h" "include/mruby/presym/table.h" -Force
+
+            Write-Host "mruby Bibliotheken erfolgreich gebaut:"
+            Get-ChildItem build/host/lib/*.lib | ForEach-Object { Write-Host $_.FullName }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Generate OpenGL loader (glad)
+        shell: pwsh
+        run: |
+          python -m pip install glad2
+          python -m glad --api gl:core=3.3 --out-path third_party/glad_generated c
+
+      - name: Configure CMake (Qt-Editor + Ruby ON)
+        shell: pwsh
+        run: |
+          if (-not $env:QT_DIR) { throw "QT_DIR not set" }
+          cmake -B build -S . `
+            -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows" `
+            -DCMAKE_PREFIX_PATH="$env:QT_DIR" `
+            -DRPGMAKER3D_EDITOR_QT=ON `
+            -DRPGMAKER3D_BUILD_EDITOR=ON `
+            -DRPGMAKER3D_ENABLE_IMGUI=OFF `
+            -DRPGMAKER3D_ENABLE_RUBY=ON `
+            -DRPGMAKER3D_BUILD_PLAYER=ON `
+            -DRPGMAKER3D_ENABLE_CONSOLE=ON `
+            -DMRUBY_ROOT="${{ github.workspace }}/third_party/mruby" `
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: pwsh
+        run: |
+          Write-Host "=== Build mit Qt-Editor + Ruby ON ==="
+          cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_first.log
+          $firstResult = $LASTEXITCODE
+
+          Get-Content build_first.log | Select-Object -Last 200 | ForEach-Object { Write-Host $_ }
+
+          if ($firstResult -ne 0) {
+            Write-Host "Build mit Ruby ON fehlgeschlagen, Fallback Ruby OFF (Qt bleibt an)..."
+
+            cmake -B build -S . `
+              -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+              -DVCPKG_TARGET_TRIPLET=x64-windows `
+              -DSDL2_ROOT="${{ github.workspace }}/vcpkg/installed/x64-windows" `
+              -DCMAKE_PREFIX_PATH="$env:QT_DIR" `
+              -DRPGMAKER3D_EDITOR_QT=ON `
+              -DRPGMAKER3D_BUILD_EDITOR=ON `
+              -DRPGMAKER3D_ENABLE_IMGUI=OFF `
+              -DRPGMAKER3D_ENABLE_RUBY=OFF `
+              -DRPGMAKER3D_BUILD_PLAYER=ON `
+              -DRPGMAKER3D_ENABLE_CONSOLE=ON `
+              -DCMAKE_BUILD_TYPE=Release
+
+            cmake --build build --config Release --parallel --verbose 2>&1 | Tee-Object -FilePath build_second.log
+            Get-Content build_second.log | Select-Object -Last 300 | ForEach-Object { Write-Host $_ }
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "Auch Fallback fehlgeschlagen!"
+              exit 1
+            }
+          }
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            mruby_build.log
+            build_first.log
+            build_second.log
+            build/CMakeFiles/**/*.log
+            build/**/*.log
+
+      - name: Prepare package
+        shell: pwsh
+        run: |
+          $out = "build/Release"
+          if (-not (Test-Path $out)) { throw "Release output missing: $out" }
+
+          if (Test-Path assets) { Copy-Item -Recurse -Force assets $out/assets }
+          if (Test-Path SampleProject) { Copy-Item -Recurse -Force SampleProject $out/SampleProject -ErrorAction SilentlyContinue }
+          if (Test-Path ruby) { Copy-Item -Recurse -Force ruby $out/ruby -ErrorAction SilentlyContinue }
+          if (Test-Path docs) { Copy-Item -Recurse -Force docs $out/docs -ErrorAction SilentlyContinue }
+          if (Test-Path resources/icon.ico) { Copy-Item -Force resources/icon.ico $out/ -ErrorAction SilentlyContinue }
+
+          # Qt-DLLs + Plugins neben die Editor-EXE
+          $windeploy = Join-Path $env:QT_DIR "bin\windeployqt.exe"
+          $editorExe = Join-Path $out "RPGMaker3D.exe"
+          if ((Test-Path $windeploy) -and (Test-Path $editorExe)) {
+            Write-Host "Running windeployqt on $editorExe"
+            & $windeploy --release --no-translations --compiler-runtime $editorExe
+          } else {
+            Write-Host "WARN: windeployqt skipped (windeploy=$windeploy editor=$editorExe)"
+          }
+
+          # SDL2 DLL (x64-windows dynamic)
+          $sdlDll = "${{ github.workspace }}/vcpkg/installed/x64-windows/bin/SDL2.dll"
+          if (Test-Path $sdlDll) {
+            Copy-Item -Force $sdlDll $out/
+            Write-Host "Copied SDL2.dll"
+          }
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPGMaker3D-Windows-x64
+          path: |
+            build/Release/RPGMaker3D.exe
+            build/Release/RPGMaker3D_Player.exe
+            build/Release/*.dll
+            build/Release/platforms
+            build/Release/styles
+            build/Release/imageformats
+            build/Release/iconengines
+            build/Release/tls
+            build/Release/networkinformation
+            build/Release/generic
+            build/Release/assets
+            build/Release/SampleProject
+            build/Release/ruby
+
+      - name: Create ZIP
+        shell: pwsh
+        run: Compress-Archive -Path build/Release/* -DestinationPath RPGMaker3D-Windows-x64.zip -Force
+
+      - name: Upload ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: RPGMaker3D-Windows-x64-ZIP
+          path: RPGMaker3D-Windows-x64.zip
