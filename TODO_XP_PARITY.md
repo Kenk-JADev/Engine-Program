@@ -326,10 +326,22 @@ am Ziel ab und wartet bis zum Ende.
   mappt Tag->Name, laedt `Audio/SE/footsteps/<name>(.wav)` (Fallback
   `<name>` direkt) und spielt NUR bei Bewegung (kein Tritt im Stand,
   0,25-Tile Delta).
-- [ ] **Folge: Sprite-Busch-z-Maske + Terrain 4..7:** Bush-Flag auch auf
-  CHARAKTER-Sprites anwenden (nur untere Haelfte alpha) und Semantik
-  fuer die restlichen Tags 4..7 belegen (Vorschlag: Gegner-Encounter
-  pro Tag, Brueken-Fahrzeug-SE).
+- [x] **Folge: Sprite-Busch-z-Maske + Terrain 4..7 (ERLEDIGT 2026-07-23):**
+  Neu in GameMap: `IsBushAt(worldPos)` (irgendeine Ebene busch-geflaggt)
+  und `GetTerrainTagAt(worldPos)` (oberste Ebene mit Tag != 0 gewinnt),
+  Game.cpp — `nm -C`-Symbolprobe bestanden (LNK2019-Lektion). **Busch auf
+  Charakteren:** PlayMode-Charakter-Marker (Spieler + alle Events) werden
+  bei Busch-Tile halbiert gezeichnet — untere Haelfte 45% Alpha, obere
+  opak (`drawCharCube`-Lambda in Engine::RenderScene). 3D-Adaption der
+  XP-bush_depth-Maske: wir haben keine 2D-Charakter-Sprites im Playmode,
+  der Halbschnitt des 3D-Markers ist die getreueste Entsprechung
+  (Transparent-Flag 208 multipliziert sich weiter auf beide Haelften).
+  **Terrain-Tag-Belegung 0..7 (Defaults, XP-Tags sind frei):** 0 lautlos,
+  1 Gras, 2 Stein, 3 Wasser, 4 „hohes Gras" (Sound wie Gras + Encounter-
+  Zaehler tickt doppelt so schnell, Game.cpp), 5 Sand, 6 Holz/Bruecke,
+  7 Eis; Footstep-Mapping in Engine.cpp erweitert, Dateien weiterhin
+  `Audio/SE/footsteps/<name>(.wav)`. Offen bleibt bewusst: Eis-Rutsch-
+  Physik (Tag 7) als moegliche Folgearbeit — hier nur der Sound.
 - [x] **Player-Export vc_redist-Hinweis (ERLEDIGT 2026-07-23):** README-
   Abschnitt „Fehlersuche: Player/Editor startet nicht (Windows)" erklärt
   die Schließt-sofort-Historie (vc_redist) + Vorschläge (installieren,

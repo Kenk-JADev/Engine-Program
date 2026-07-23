@@ -1035,10 +1035,19 @@ void Engine::Update(float dt) {
                 const Map* bound = Game::Get().Map().GetBoundMap();
                 auto ts = bound ? bound->GetTileset() : nullptr;
                 if (!ts || !ts->HasTilesetData()) return "";
+                // Paket-6-Belegung (XP: Tags sind frei verwendbar — wir
+                // belegen sie mit Defaults, Datei Audio/SE/footsteps/<name>):
+                // 0 = lautlos, 1 Gras, 2 Stein, 3 Wasser, 4 hohes Gras
+                // (klingt wie Gras; Encounter-Rate verdoppelt, s. Game.cpp),
+                // 5 Sand, 6 Holz/Bruecke, 7 Eis.
                 switch (ts->GetTerrainTag(rgssId - 384)) {
                 case 1: return "grass";
                 case 2: return "stone";
                 case 3: return "water";
+                case 4: return "grass"; // hohes Gras
+                case 5: return "sand";
+                case 6: return "wood";
+                case 7: return "ice";
                 default: return "";
                 }
             },
@@ -1448,28 +1457,51 @@ void Engine::RenderScene() {
             markerMesh = MeshFactory::CreateCube(0.45f);
             meshesInit = true;
         }
-        // Player (Transparent-Flag 208 -> halbtransparent)
+        // Charakter-Wuerfel mit XP-Busch-Effekt (Paket 6 Folge): steht der
+        // Charakter auf einem Busch-geflaggten Tile (GameMap::IsBushAt),
+        // wird die UNTERE Haelfte mit 45% Alpha gezeichnet — die XP-Optik
+        // „im Gras stehen" (XP loest das als bush_depth-Maske des 2D-
+        // Sprites; wir spiegeln es als Halbschnitt des 3D-Markers, die
+        // Tile-Ebene macht seit dem Vortag das untere Quad4 halbtransparent).
+        auto drawCharCube = [&](const Mesh& mesh, float meshSize, const Vec3& basePos,
+                                float yCenter, const Color& col, bool bush) {
+            if (!bush) {
+                Mat4 m = glm::translate(Mat4(1.0f), basePos + Vec3(0, yCenter, 0));
+                mRenderer->DrawMesh(mesh, m, nullptr, col);
+                return;
+            }
+            Color lower = col; lower.a *= 0.45f;
+            Mat4 lo = glm::translate(Mat4(1.0f), basePos + Vec3(0, yCenter - meshSize * 0.25f, 0));
+            lo = glm::scale(lo, Vec3(1.0f, 0.5f, 1.0f));
+            mRenderer->DrawMesh(mesh, lo, nullptr, lower);
+            Mat4 hi = glm::translate(Mat4(1.0f), basePos + Vec3(0, yCenter + meshSize * 0.25f, 0));
+            hi = glm::scale(hi, Vec3(1.0f, 0.5f, 1.0f));
+            mRenderer->DrawMesh(mesh, hi, nullptr, col);
+        };
+
+        // Player (Transparent-Flag 208 -> halbtransparent; Busch -> untere
+        // Haelfte halbtransparent)
         Vec3 playerPos = Game::Get().Player().GetPosition();
-        Mat4 playerMat = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0));
         const float playerAlpha = Game::Get().Player().IsTransparent() ? 0.35f : 1.0f;
-        mRenderer->DrawMesh(playerMesh, playerMat, nullptr, Color(0.25f, 0.95f, 0.35f, playerAlpha));
+        const bool playerBush = Game::Get().Map().IsBushAt(playerPos);
+        drawCharCube(playerMesh, 0.7f, playerPos, 0.35f,
+                     Color(0.25f, 0.95f, 0.35f, playerAlpha), playerBush);
         // Facing indicator
         Vec3 dir = Game::Get().Player().GetDirection();
         Mat4 nose = glm::translate(Mat4(1.0f), playerPos + Vec3(0, 0.35f, 0) + dir * 0.45f);
         nose = glm::scale(nose, Vec3(0.2f, 0.2f, 0.2f));
         mRenderer->DrawMesh(markerMesh, nose, nullptr, Color(1.0f, 1.0f, 0.2f, 1.0f));
 
-        // Event NPC markers
+        // Event NPC markers (Busch-Effekt auch hier — XP gilt fuer alle Charaktere)
         for (const auto& ev : EventSystem::Get().GetEvents()) {
             if (!ev.enabled || ev.erased) continue;
             Vec3 ep = ev.worldPos;
             if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
-            Mat4 em = glm::translate(Mat4(1.0f), ep + Vec3(0, 0.55f, 0));
             // Bob slightly
             float bob = std::sin(mTime * 3.0f + ev.id) * 0.08f;
-            em = glm::translate(em, Vec3(0, bob, 0));
             Color col = (ev.id == 1) ? Color(0.95f, 0.75f, 0.2f, 1.0f) : Color(0.4f, 0.7f, 1.0f, 1.0f);
-            mRenderer->DrawMesh(markerMesh, em, nullptr, col);
+            drawCharCube(markerMesh, 0.45f, ep, 0.55f + bob, col,
+                         Game::Get().Map().IsBushAt(ep));
         }
     }
 

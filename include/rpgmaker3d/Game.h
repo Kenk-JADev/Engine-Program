@@ -256,6 +256,13 @@ public:
     bool IsPassableWithRadius(const Vec3& pos, float radius = 0.35f) const;
     bool IsPassableWithRadius(const Vec3& pos, float radius, int dirBit) const;
 
+    // XP-Busch-/Terrain-Abfrage unter einer Weltposition (Paket 6 Folge):
+    // IsBushAt = irgendeine Ebene des Tiles traegt das Busch-Flag
+    // (TilesetData::bushFlags, Paket 1) -> Charakter steht "im Gras".
+    // GetTerrainTagAt = Tag des obersten Tiles mit Tag != 0 (0 = keiner).
+    bool IsBushAt(const Vec3& worldPos) const;
+    int GetTerrainTagAt(const Vec3& worldPos) const;
+
     // Convert world position to map grid coordinates
     bool WorldToMap(float worldX, float worldZ, int& outX, int& outZ) const;
 

@@ -466,6 +466,57 @@ bool GameMap::IsPassableWorld(float worldX, float worldZ) const {
     return IsPassable(mx, mz);
 }
 
+bool GameMap::IsBushAt(const Vec3& worldPos) const {
+    if (!mBoundMap) return false;
+    int mx, mz;
+    WorldToMap(worldPos.x, worldPos.z, mx, mz);
+    const int w = mBoundMap->GetWidth();
+    const int h = mBoundMap->GetHeight();
+    if (mx < 0 || mx >= w || mz < 0 || mz >= h) return false;
+
+    auto tileset = mBoundMap->GetTileset();
+    if (!tileset) return false;
+
+    // Jede Ebene zaehlt: steht auch nur ein Busch-Tile unter der Position,
+    // gilt der Charakter als "im Gras" (XP: bush? ueber alle Layer).
+    for (const auto& layer : mBoundMap->GetLayers()) {
+        if (mx >= layer.width || mz >= layer.height) continue;
+        const int idx = mz * layer.width + mx;
+        if (idx < 0 || idx >= (int)layer.tiles.size()) continue;
+        const int tileId = layer.tiles[idx];
+        if (tileId < 0) continue;
+        if (tileset->GetBush(tileId)) return true;
+    }
+    return false;
+}
+
+int GameMap::GetTerrainTagAt(const Vec3& worldPos) const {
+    if (!mBoundMap) return 0;
+    int mx, mz;
+    WorldToMap(worldPos.x, worldPos.z, mx, mz);
+    const int w = mBoundMap->GetWidth();
+    const int h = mBoundMap->GetHeight();
+    if (mx < 0 || mx >= w || mz < 0 || mz >= h) return 0;
+
+    auto tileset = mBoundMap->GetTileset();
+    if (!tileset) return 0;
+
+    // Oberste Ebene zuerst: der erste Tag != 0 von oben gewinnt
+    // (Deck-Tiles ueberdecken Boden-Tags, wie im XP-Maker-Gefuehl).
+    const auto& layers = mBoundMap->GetLayers();
+    for (auto it = layers.rbegin(); it != layers.rend(); ++it) {
+        const auto& layer = *it;
+        if (mx >= layer.width || mz >= layer.height) continue;
+        const int idx = mz * layer.width + mx;
+        if (idx < 0 || idx >= (int)layer.tiles.size()) continue;
+        const int tileId = layer.tiles[idx];
+        if (tileId < 0) continue;
+        const int tag = tileset->GetTerrainTag(tileId);
+        if (tag != 0) return tag;
+    }
+    return 0;
+}
+
 bool GameMap::IsPassableWithRadius(const Vec3& pos, float radius) const {
     // First check map border - strict enforcement
     if (!IsInsideMapBounds(pos, radius)) return false;
@@ -1021,7 +1072,10 @@ void Game::Update(float dt) {
                     // Zufalls-Abstand 50%..150% von encounterStep
                     s_stepsToEncounter = step / 2 + (int)(step * (0.5f + (float)(rand() % 100) / 100.f));
                 }
-                s_stepsToEncounter--;
+                // Terrain-Tag 4 („hohes Gras", Paket-6-Belegung): Zaehler
+                // tickt doppelt so schnell -> spuerbar mehr Zufallskaempfe
+                // im hohen Gras. Andere Tags beeinflussen die Rate nicht.
+                s_stepsToEncounter -= (mMap.GetTerrainTagAt(pos) == 4) ? 2 : 1;
                 if (s_stepsToEncounter <= 0) {
                     // Troop aus Map encounterList oder Default-Troop 1
                     int troopId = 1;
