@@ -65,6 +65,9 @@ private slots:
     void actionSaveProject();
     void actionSaveSceneAs();
     void actionLoadSceneFrom();
+    /// „Spiel exportieren": Player-exe (als Game.exe) + Projektordner (als
+    /// Unterordner „Game") + nebenliegende DLLs in einen Zielordner kopieren.
+    void actionExportGame();
     /// Projekt aus einem konkreten Pfad öffnen (Dialog, Zuletzt-Liste, Willkommen)
     void openProjectPath(const QString& path);
 

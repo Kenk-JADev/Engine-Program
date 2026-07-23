@@ -702,10 +702,20 @@ Editor, Spielansicht?"
   Playtest-Knopf → Player-Start dauert?, Kartenliste doppelklick →
   Map-Tab wechselt?, Datenbank-Tab Sounds (SoundTestDialog ok),
   Event-Seiten-Editor: Grafikauswahl, Move-Route-Dialog.
-- [ ] **Editor-Bequemlichkeit:** zuletzt geoeffnete Projekte im
-  Datei-Menue (QSettings); „Spiel exportieren"-Knopf, der Player-exe +
-  Projektordner in ein Ziel kopiert (vc_redist-Hinweis steht schon im
-  README).
+- [x] **Editor-Bequemlichkeit:** Zuletzt geoeffnete Projekte im
+  Datei-Menue waren bereits fertig (QSettings, max 8, Validierung mit
+  Warnsymbol, „Liste leeren"). Neu hinzugekommen ist **„Spiel
+  exportieren"** (Datei-Menuepunkt + Ribbon-Knopf im Datei-Tab):
+  kopiert die Player-exe als `Game.exe` (XP-Anmutung), den Projektordner
+  als `Game/` (Top-Level ohne `saves/` und `.git/`), alle neben der
+  Player-exe liegenden DLLs (Qt-DLLs ausgenommen – die gehoeren nur zum
+  Editor) und eine `LIESMICH.txt` (Start + vc_redist-Hinweis) nach
+  `<Ziel>/<Spielname aus project.json>/`. Vorher Speicherfrage
+  (Export liest die Festplatte), Ordnername wird windowstauglich
+  bereinigt, Existiert-schon-Rueckfrage, Fehlerzaehlung mit
+  Log/Meldung. Spielerseite dazu: `ParseProjectPath` im Player erkennt
+  neben der exe liegendes `./Game/project.json` automatisch — ein
+  Doppelklick auf Game.exe startet ohne Argumente.
 
 ## Arbeitsregeln (für Agenten-Sessions)
 1. **Nur** Branch `arena/019f6f2a-engine-program`; vor jedem Commit:

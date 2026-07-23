@@ -32,6 +32,7 @@
 #include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QElapsedTimer>
@@ -52,6 +53,7 @@
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QShortcut>
 #include <QStatusBar>
@@ -105,7 +107,70 @@ QStyle::StandardPixmap iconForText(const QString& text) {
     if (t.contains(QStringLiteral("Tastenkürzel")))      return QStyle::SP_FileDialogDetailedView;
     if (t.contains(QStringLiteral("ber RPG Maker")))     return QStyle::SP_MessageBoxInformation;
     if (t.contains(QStringLiteral("Willkommens")))       return QStyle::SP_TitleBarMenuButton;
+    if (t.contains(QStringLiteral("exportieren")))       return QStyle::SP_DriveHDIcon;
     return QStyle::SP_CustomBase; // kein Symbol vorhanden
+}
+
+// ---------------------------------------------------------------------------
+// Helfer fuer „Spiel exportieren" (QtEditorWindow::actionExportGame)
+// ---------------------------------------------------------------------------
+
+/// Elternordner von filePath sicher anlegen (QFile::copy erzeugt keine
+/// Verzeichnisse).
+bool ensureParentDir(const QString& filePath) {
+    return QDir().mkpath(QFileInfo(filePath).absolutePath());
+}
+
+/// Rekursives Kopieren eines Verzeichnisses. Auf der Projektwurzel-Ebene
+/// (topLevel=true) werden saves/ (Spielstaende des Entwicklers gehoeren
+/// nicht in eine Auslieferung) und .git/ ausgelassen.
+void copyProjectRecursive(const QString& srcPath, const QString& dstPath,
+                          int& copied, int& failed, bool topLevel) {
+    const QDir src(srcPath);
+    const QFileInfoList entries = src.entryInfoList(
+        QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    for (const QFileInfo& e : entries) {
+        if (topLevel && e.isDir() &&
+            (e.fileName().compare(QStringLiteral("saves"), Qt::CaseInsensitive) == 0 ||
+             e.fileName() == QStringLiteral(".git")))
+            continue;
+        const QString to = dstPath + QStringLiteral("/") + e.fileName();
+        if (e.isDir()) {
+            copyProjectRecursive(e.absoluteFilePath(), to, copied, failed, false);
+        } else {
+            if (!ensureParentDir(to)) { ++failed; continue; }
+            QFile::remove(to); // QFile::copy ueberschreibt nicht
+            if (QFile::copy(e.absoluteFilePath(), to)) ++copied; else ++failed;
+        }
+    }
+}
+
+/// Ordnersicherer Spielname (Windows-Verbote: \/:*?"<>| ; keine Leerzeichen
+/// oder Punkte am Ende).
+QString exportGameFolderName(const QString& rawName) {
+    QString name = rawName.trimmed();
+    static const QRegularExpression kBad(QStringLiteral("[\\\\/:*?\"<>|]"));
+    name.replace(kBad, QStringLiteral("_"));
+    while (name.endsWith(QLatin1Char(' ')) || name.endsWith(QLatin1Char('.')))
+        name.chop(1);
+    return name.isEmpty() ? QStringLiteral("MeinSpiel") : name;
+}
+
+/// Kurzanleitung (Start + vc_redist-Hinweis) neben die Game.exe legen (UTF-8).
+void writeExportReadme(const QString& outDir) {
+    QFile f(outDir + QStringLiteral("/LIESMICH.txt"));
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+    const QString text = QStringLiteral(
+        "Start: Game.exe doppelklicken - das Spiel liegt im Ordner \u201eGame\u201c daneben.\n"
+        "\n"
+        "Startet Game.exe nicht (Fehlermeldung \u00fcber eine fehlende DLL bzw.\n"
+        "VCRUNTIME/MSVCP), fehlt auf diesem PC die Microsoft Visual C++\n"
+        "Redistributable (x64, VS 2022) - einmalig installieren:\n"
+        "https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
+        "\n"
+        "Die neben Game.exe mitgelieferten DLLs kommen aus dem Engine-Build\n"
+        "und m\u00fcssen im selben Ordner bleiben.\n");
+    f.write(text.toUtf8());
 }
 } // namespace
 
@@ -385,6 +450,10 @@ void QtEditorWindow::buildMenus() {
     mFile->addAction(QStringLiteral("Skripte speichern"), this, [this]() {
         if (mCode) mCode->saveAll();
     });
+    // Easy-to-use: fertige Auslieferung (Player-exe + Projekt) in einem Rutsch
+    mFile->addAction(stdIcon(this, QStyle::SP_DriveHDIcon),
+                     QStringLiteral("Spiel &exportieren …"),
+                     this, [this]() { actionExportGame(); });
     mFile->addSeparator();
     mFile->addAction(stdIcon(this, QStyle::SP_DialogCloseButton),
                      QStringLiteral("&Beenden"), this, &QWidget::close);
@@ -750,6 +819,9 @@ void QtEditorWindow::buildRibbon() {
                      [this]() { actionSaveProject(); });
         ribbonButton(p, QStringLiteral("Skripte\nspeichern"), QStringLiteral("Nur Skripte speichern"),
                      [this]() { if (mCode) mCode->saveAll(); });
+        ribbonButton(p, QStringLiteral("Spiel\nexportieren"),
+                     QStringLiteral("Fertiges Spiel exportieren (Game.exe + Projektordner „Game“)"),
+                     [this]() { actionExportGame(); });
         ribbonButton(p, QStringLiteral("Beenden"), QStringLiteral("Editor schließen"),
                      [this]() { close(); });
     }
@@ -1045,6 +1117,128 @@ void QtEditorWindow::actionPlaytestPlayer() {
         QMessageBox::warning(this, QStringLiteral("Playtest (Player-exe)"),
             QStringLiteral("Der Player konnte nicht gestartet werden:\n%1").arg(exe));
         log(QStringLiteral("Playtest FEHLER: Player-exe startete nicht: %1").arg(exe));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// „Spiel exportieren" (PAKET 8): fertige Auslieferung bauen
+//   <Ziel>/<Spielname>/Game.exe   = Player-exe (umbenannt, XP-Anmutung)
+//   <Ziel>/<Spielname>/Game/      = Projektordner (ohne saves/ und .git/)
+//   <Ziel>/<Spielname>/*.dll      = neben der Player-exe liegende DLLs
+//                                   (Qt6-DLLs ausgenommen – die braucht nur
+//                                   der Editor)
+//   <Ziel>/<Spielname>/LIESMICH.txt = Start- + vc_redist-Hinweis
+// Die Game.exe findet „./Game/project.json" automatisch (player_main.cpp
+// ParseProjectPath – kein Kommandozeilen-Argument noetig, XP-Gefuehl).
+// ---------------------------------------------------------------------------
+void QtEditorWindow::actionExportGame() {
+    if (!mView || !mView->IsEngineReady()) return;
+    const std::string projectPath = mEngine->GetProject().GetProjectPath();
+    if (projectPath.empty()) {
+        QMessageBox::information(this, QStringLiteral("Spiel exportieren"),
+            QStringLiteral("Kein Projekt geladen.\n"
+                           "Bitte zuerst ein Projekt öffnen oder anlegen."));
+        return;
+    }
+
+    // Der Export kopiert die Dateien von der Festplatte -> Speicherfrage
+    QMessageBox box(this);
+    box.setWindowTitle(QStringLiteral("Spiel exportieren"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(QStringLiteral("Das Projekt vor dem Export speichern?"));
+    box.setInformativeText(QStringLiteral(
+        "Der Export enthält den Stand auf der Festplatte –\n"
+        "ohne Speichern fehlen die letzten Änderungen."));
+    auto* saveBtn = box.addButton(QStringLiteral("Speichern && Exportieren"),
+                                  QMessageBox::AcceptRole);
+    auto* skipBtn = box.addButton(QStringLiteral("Ohne Speichern exportieren"),
+                                  QMessageBox::DestructiveRole);
+    box.addButton(QStringLiteral("Abbrechen"), QMessageBox::RejectRole);
+    box.setDefaultButton(saveBtn);
+    box.exec();
+    if (box.clickedButton() == saveBtn) {
+        saveAllForPlaytest();
+    } else if (box.clickedButton() != skipBtn) {
+        log(QStringLiteral("Export abgebrochen (Speicherfrage)."));
+        return;
+    }
+
+    // Ohne Player-exe waere das exportierte Spiel nicht startbar -> Abbruch.
+    const QString exe = findPlayerExecutable();
+    if (exe.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Spiel exportieren"),
+            QStringLiteral("Die Player-exe wurde nicht gefunden – ohne sie wäre der\n"
+                           "Export nicht spielbar.\n\n"
+                           "Baue das CMake-Target 'RPGMaker3D_Player' und versuche es erneut."));
+        log(QStringLiteral("Export abgebrochen: Player-exe fehlt (Build-Target RPGMaker3D_Player)."));
+        return;
+    }
+
+    const QString targetRoot = QFileDialog::getExistingDirectory(this,
+        QStringLiteral("Zielordner für den Export wählen"));
+    if (targetRoot.isEmpty()) return;
+
+    // Ordnername aus dem Spielnamen (project.json -> info.name)
+    const QString folderName = exportGameFolderName(
+        QString::fromStdString(mEngine->GetProject().GetInfo().name));
+    const QString outDir = targetRoot + QStringLiteral("/") + folderName;
+    if (QFileInfo::exists(outDir)) {
+        const auto ret = QMessageBox::question(this, QStringLiteral("Spiel exportieren"),
+            QStringLiteral("Der Ordner existiert bereits:\n%1\n\n"
+                           "Dateien werden aktualisiert bzw. überschrieben. Fortfahren?")
+                .arg(outDir));
+        if (ret != QMessageBox::Yes) return;
+    }
+    log(QStringLiteral("Exportiere Spiel nach %1 …").arg(outDir));
+
+    int copied = 0, failed = 0;
+
+    // 1) Projektordner -> <ziel>/<name>/Game/ (Top-Level ohne saves/ + .git/)
+    copyProjectRecursive(QString::fromStdString(projectPath),
+                         outDir + QStringLiteral("/Game"), copied, failed, true);
+
+    // 2) Player-exe -> <ziel>/<name>/Game.exe
+    const QFileInfo exeInfo(exe);
+    const bool isExe = exeInfo.suffix().compare(QStringLiteral("exe"),
+                                                Qt::CaseInsensitive) == 0;
+    const QString gameExe = outDir + (isExe ? QStringLiteral("/Game.exe")
+                                            : QStringLiteral("/Game"));
+    if (!ensureParentDir(gameExe)) {
+        ++failed;
+    } else {
+        QFile::remove(gameExe); // QFile::copy ueberschreibt nicht
+        if (QFile::copy(exe, gameExe)) ++copied; else ++failed;
+    }
+
+    // 3) DLLs neben der Player-exe mitnehmen (SDL2.dll & Co). Qt-DLLs
+    //    ausgenommen – die gehoeren zum Editor, nicht zum Spiel.
+    const QDir exeDir = exeInfo.absoluteDir();
+    const QStringList dlls = exeDir.entryList({QStringLiteral("*.dll")}, QDir::Files);
+    for (const QString& dll : dlls) {
+        if (dll.startsWith(QStringLiteral("Qt"), Qt::CaseInsensitive)) continue;
+        const QString to = outDir + QStringLiteral("/") + dll;
+        QFile::remove(to);
+        if (QFile::copy(exeDir.absoluteFilePath(dll), to)) ++copied; else ++failed;
+    }
+
+    // 4) LIESMICH (Start + vc_redist-Hinweis)
+    writeExportReadme(outDir);
+
+    if (failed == 0) {
+        log(QStringLiteral("Spiel exportiert: %1 (%2 Dateien kopiert).")
+                .arg(outDir).arg(copied));
+        statusBar()->showMessage(QStringLiteral("Export fertig: %1").arg(outDir), 8000);
+        QMessageBox::information(this, QStringLiteral("Spiel exportieren"),
+            QStringLiteral("Das Spiel wurde exportiert nach:\n%1\n\n"
+                           "Start: Game.exe – das Projekt liegt im Ordner „Game“ daneben.\n"
+                           "Auf anderen PCs ist ggf. die VC++-Laufzeit (vc_redist) nötig,\n"
+                           "siehe LIESMICH.txt im Exportordner.").arg(outDir));
+    } else {
+        log(QStringLiteral("Export mit FEHLERN abgeschlossen: %1 kopiert, %2 fehlgeschlagen (%3).")
+                .arg(copied).arg(failed).arg(outDir));
+        QMessageBox::warning(this, QStringLiteral("Spiel exportieren"),
+            QStringLiteral("Der Export lief, aber %1 Datei(en) konnten nicht kopiert werden\n"
+                           "(Details in der Konsole). Ziel:\n%2").arg(failed).arg(outDir));
     }
 }
 

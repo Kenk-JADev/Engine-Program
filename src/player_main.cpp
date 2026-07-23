@@ -47,6 +47,11 @@ std::string ParseProjectPath(int argc, char* argv[]) {
             projectPath = a; // erstes Argument ohne "--" = Projektpfad
         }
     }
+    // Kein Argument: Zuerst das XP-Export-Layout des Editors pruefen
+    // („Spiel exportieren" legt die Game.exe neben einen Projektordner
+    // „Game/" ab — so startet ein Doppelklick auf Game.exe ohne Argumente).
+    if (projectPath.empty() && std::filesystem::exists("./Game/project.json"))
+        projectPath = "./Game";
     if (projectPath.empty()) projectPath = "./SampleProject";
     // Abschliessende Slashs entfernen
     while (projectPath.size() > 1 &&
