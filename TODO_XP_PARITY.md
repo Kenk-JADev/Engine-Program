@@ -312,6 +312,43 @@ am Ziel ab und wartet bis zum Ende.
 
 ---
 
+## PAKET 7 — CI-Build-Fixes (Windows/MSVC + mruby 4.0.0) ✅ ERLEDIGT 2026-07-23
+Der erste CI-Lauf nach Paket 1–6 schlug auf Windows fehl (Linux-g++ lokal war
+grün — alles Windows-spezifische Fallen). Fixes:
+
+1. **`CreateWindow` ↔ windows.h-Makro:** Unter Windows expandiert das Makro
+   `CreateWindow`→`CreateWindowW` und zerbricht `RgssUI::CreateWindow`
+   (C4003/C2059 in RgssUI.h, Engine.cpp, RubyVM.cpp, RubyRgss.cpp).
+   Methode umbenannt zu **`RgssUI::MakeWindow`** (Deklaration RgssUI.h,
+   Definition RgssUI.cpp, Aufrufe: Engine.cpp (F10-Debug), RubyVM.cpp
+   (`Window.new` Groovy-Pfad), RubyRgss.cpp (`Window.new` RGSS-Pfad)).
+   Regel: NIEMALS Member `CreateWindow` nennen — windows.h-Makro.
+2. **mruby 4.0.0: `mrb_integer_value` entfernt** → heißt jetzt
+   `mrb_int_value(mrb, i)`. Neuer Header **`include/rpgmaker3d/RubyCompat.h`**
+   mit `RPG_MRB_INT_VALUE(...)` (1- oder 2-Arg-Form; bei 1 Arg wird der State
+   aus `mrb` gezogen — Achtung: im Install-Scope heißt er `mMrb`, dort 2-Arg
+   verwenden!). Alle ~79 Aufrufstellen umgestellt. Kompat: mruby 4.x
+   `mrb_int_value`, 3.x `mrb_integer_value`, ≤2.x `mrb_fixnum_value`.
+   Lokal verifiziert gegen echte mruby-4.0.0-Header (geklont nach /tmp,
+   `-fsyntax-only`, beide Dateien sauber: RUBY-Zweig UND Stub-Zweig).
+3. **`M_PI` unter MSVC:** `src/RgssUI.cpp` definiert M_PI jetzt selbst
+   (MSVC braucht sonst `_USE_MATH_DEFINES`).
+4. **Qt-Includes im Namespace (Editor-Build-Totalschaden):**
+   `QtDatabaseDialog.cpp` hatte `#include <QPainter>/<QMouseEvent>/<cmath>`
+   INNERHALB von `namespace qt_editor {` → MSVC parste danach alle Qt-Header
+   als `qt_editor::*`, >100 Kaskadenfehler (C1003). Includes nach ganz oben
+   verschoben. Regel: KEINE Includes hinter `namespace qt_editor {`.
+5. **`QtTilesetGridWidget`:** Header nutzte nicht-existentes `mTiles`
+   (`tileCount()` inline) → jetzt `mTilesX * mTilesY`; fehlende Deklaration
+   von `tileAt()` ergänzt (+`#include <QPoint>`); doppelten `tileCount()`-
+   Body im .cpp entfernt (C2084).
+
+Merksatz für die nächsten Pakete: nach jedem Push **sofort CI grün machen**
+(4 Commits waren ungetestet gestapelt).
+
+---
+
+
 ## Arbeitsregeln (für Agenten-Sessions)
 1. **Nur** Branch `arena/019f6f2a-engine-program`; vor jedem Commit:
    `git log --oneline -1` + `git fetch origin arena/019f6f2a-engine-program -q`

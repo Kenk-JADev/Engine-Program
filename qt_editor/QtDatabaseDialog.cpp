@@ -27,20 +27,20 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QVariant>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace qt_editor {
 
 #ifndef QL
 #define QL(x) QStringLiteral(x)
 #endif
-
-#include <QPainter>
-#include <QMouseEvent>
-#include <cmath>
 
 namespace {
 

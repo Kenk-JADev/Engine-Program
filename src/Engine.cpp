@@ -1794,7 +1794,7 @@ void Engine::ToggleDebugWindow() {
     }
     // Fenster (neu) erzeugen
     auto& ui = RgssUI::Get();
-    mDbgWindowId = ui.CreateWindow(8, 8, 624, 464);
+    mDbgWindowId = ui.MakeWindow(8, 8, 624, 464);
     if (auto* w = ui.GetWindow(mDbgWindowId)) {
         w->z = 9000;            // immer oben
         w->opacity = 235;       // Spiel leicht durchscheinen lassen

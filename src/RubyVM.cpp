@@ -50,6 +50,7 @@ typedef std::intptr_t ssize_t;
 #include <mruby/variable.h>
 #include <mruby/error.h>
 #include <mruby/hash.h>
+#include "rpgmaker3d/RubyCompat.h"
 
 // mruby 4.0.0 compatibility fallbacks – define AFTER includes to avoid redefinition warnings
 #ifndef mrb_int_p
@@ -1744,8 +1745,8 @@ static rpg::RgssWindowState* RgssWinFrom(mrb_state* mrb, mrb_value self) {
 static mrb_value rb_win_init(mrb_state* mrb, mrb_value self) {
     mrb_float x = 0, y = 0, w = 0, h = 0;
     mrb_get_args(mrb, "|ffff", &x, &y, &w, &h);
-    const int id = rpg::RgssUI::Get().CreateWindow((float)x, (float)y, (float)w, (float)h);
-    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_id"), mrb_integer_value(id));
+    const int id = rpg::RgssUI::Get().MakeWindow((float)x, (float)y, (float)w, (float)h);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_id"), RPG_MRB_INT_VALUE(id));
     return self;
 }
 
@@ -1766,13 +1767,13 @@ RGSS_WIN_FATTR(height, height)
 RGSS_WIN_FATTR(openness, openness)
 
 static mrb_value rb_win_z_get(mrb_state* mrb, mrb_value self) {
-    if (auto* w = RgssWinFrom(mrb, self)) return mrb_integer_value(w->z);
+    if (auto* w = RgssWinFrom(mrb, self)) return RPG_MRB_INT_VALUE(w->z);
     return mrb_nil_value();
 }
 static mrb_value rb_win_z_set(mrb_state* mrb, mrb_value self) {
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);
     if (auto* w = RgssWinFrom(mrb, self)) w->z = (int)v;
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 
 static mrb_value rb_win_visible_get(mrb_state* mrb, mrb_value self) {

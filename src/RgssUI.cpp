@@ -26,6 +26,11 @@
 #include <filesystem>
 #include <unordered_map>
 
+// MSVC definiert M_PI nur mit _USE_MATH_DEFINES -- robust selbst definieren.
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace rpg {
 
 // Projekt-Basispfad (von der Engine beim Projekt-Laden gesetzt)
@@ -919,7 +924,7 @@ RgssUI& RgssUI::Get() {
     return inst;
 }
 
-int RgssUI::CreateWindow(float x, float y, float w, float h) {
+int RgssUI::MakeWindow(float x, float y, float w, float h) {
     RgssWindowState wnd;
     wnd.id = mNextId++;
     wnd.x = x; wnd.y = y; wnd.width = w; wnd.height = h;

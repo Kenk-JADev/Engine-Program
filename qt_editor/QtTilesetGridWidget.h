@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <QImage>
+#include <QPoint>
 #include <QWidget>
 
 #include "rpgmaker3d/Database.h"
@@ -43,13 +44,16 @@ public:
     /// Aktiver Bearbeitungsmodus (Klick-Verhalten + Overlay).
     void setMode(Mode m);
 
-    int tileCount() const { return (int)mTiles.size(); }
+    int tileCount() const { return mTilesX * mTilesY; }
 
 signals:
     /// Ein Flag wurde per Klick geaendert -> Parent kann "geaendert" markieren.
     void flagsChanged();
 
 private:
+    // Tile-ID an einer Widget-Position (oder -1 ausserhalb)
+    int tileAt(const QPoint& pos) const;
+
     // Klick-Verhalten pro Modus (Rechtsklick = rueckgaengig/Standard)
     void applyLeftClick(int tileId);
     void applyRightClick(int tileId);

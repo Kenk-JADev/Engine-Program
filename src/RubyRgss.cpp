@@ -39,6 +39,7 @@ typedef std::intptr_t ssize_t;
 #include <mruby/variable.h>
 #include <mruby/error.h>
 #include <mruby/value.h>
+#include "rpgmaker3d/RubyCompat.h"
 
 #ifndef mrb_int_p
   #ifdef mrb_integer_p
@@ -76,7 +77,7 @@ static mrb_value RgssWrapById(mrb_state* mrb, const char* className,
     struct RClass* k = mrb_class_get(mrb, className);
     mrb_value obj = mrb_obj_value(mrb_obj_alloc(mrb, MRB_TT_OBJECT, k));
     if (id > 0)
-        mrb_iv_set(mrb, obj, mrb_intern_cstr(mrb, ivarName), mrb_integer_value(id));
+        mrb_iv_set(mrb, obj, mrb_intern_cstr(mrb, ivarName), RPG_MRB_INT_VALUE(id));
     return obj;
 }
 
@@ -134,7 +135,7 @@ static mrb_value rb_rect_init(mrb_state* mrb, mrb_value self) {
         }
     }
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_rect_id"),
-               mrb_integer_value(RgssRectCreate(x, y, w, h)));
+               RPG_MRB_INT_VALUE(RgssRectCreate(x, y, w, h)));
     return self;
 }
 
@@ -193,7 +194,7 @@ static mrb_value rb_color_init(mrb_state* mrb, mrb_value self) {
         if (argc >= 4) a = RgssToFloat(mrb, argv[3]);
     }
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_color_id"),
-               mrb_integer_value(RgssColorCreate(r, g, b, a)));
+               RPG_MRB_INT_VALUE(RgssColorCreate(r, g, b, a)));
     return self;
 }
 
@@ -248,7 +249,7 @@ static mrb_value rb_tone_init(mrb_state* mrb, mrb_value self) {
         if (argc >= 4) gray = RgssToFloat(mrb, argv[3]);
     }
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_tone_id"),
-               mrb_integer_value(RgssToneCreate(r, g, b, gray)));
+               RPG_MRB_INT_VALUE(RgssToneCreate(r, g, b, gray)));
     return self;
 }
 
@@ -302,7 +303,7 @@ static mrb_value rb_table_init(mrb_state* mrb, mrb_value self) {
     if (argc >= 2) ys = (int)RgssToInt(mrb, argv[1]);
     if (argc >= 3) zs = (int)RgssToInt(mrb, argv[2]);
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_table_id"),
-               mrb_integer_value(RgssTableCreate(xs, ys, zs)));
+               RPG_MRB_INT_VALUE(RgssTableCreate(xs, ys, zs)));
     return self;
 }
 
@@ -318,11 +319,11 @@ static mrb_value rb_table_get(mrb_state* mrb, mrb_value self) {
     mrb_int argc = 0;
     mrb_get_args(mrb, "*", &argv, &argc);
     auto* t = RgssTableFrom(mrb, self);
-    if (!t || argc < 1) return mrb_integer_value(0);
+    if (!t || argc < 1) return RPG_MRB_INT_VALUE(0);
     const int x = (int)RgssToInt(mrb, argv[0]);
     const int y = argc >= 2 ? (int)RgssToInt(mrb, argv[1]) : 0;
     const int z = argc >= 3 ? (int)RgssToInt(mrb, argv[2]) : 0;
-    return mrb_integer_value(t->data[TableIndex(t, x, y, z)]);
+    return RPG_MRB_INT_VALUE(t->data[TableIndex(t, x, y, z)]);
 }
 
 static mrb_value rb_table_set(mrb_state* mrb, mrb_value self) {
@@ -330,20 +331,20 @@ static mrb_value rb_table_set(mrb_state* mrb, mrb_value self) {
     mrb_int argc = 0;
     mrb_get_args(mrb, "*", &argv, &argc);
     auto* t = RgssTableFrom(mrb, self);
-    if (!t || argc < 2) return mrb_integer_value(0);
+    if (!t || argc < 2) return RPG_MRB_INT_VALUE(0);
     const int x = (int)RgssToInt(mrb, argv[0]);
     const int y = argc >= 3 ? (int)RgssToInt(mrb, argv[1]) : 0;
     const int z = argc >= 4 ? (int)RgssToInt(mrb, argv[2]) : 0;
     const mrb_int v = RgssToInt(mrb, argv[argc - 1]);
     const int16_t sv = (int16_t)(uint16_t)(v & 0xFFFF); // XP: Wrap-around
     t->data[TableIndex(t, x, y, z)] = sv;
-    return mrb_integer_value(sv);
+    return RPG_MRB_INT_VALUE(sv);
 }
 
 #define RGSS_TABLE_SIZE(rname, field)                                             \
 static mrb_value rb_table_##rname(mrb_state* mrb, mrb_value self) {              \
-    if (auto* t = RgssTableFrom(mrb, self)) return mrb_integer_value(t->field);  \
-    return mrb_integer_value(0);                                                  \
+    if (auto* t = RgssTableFrom(mrb, self)) return RPG_MRB_INT_VALUE(t->field);  \
+    return RPG_MRB_INT_VALUE(0);                                                  \
 }
 RGSS_TABLE_SIZE(xsize, xs)
 RGSS_TABLE_SIZE(ysize, ys)
@@ -391,7 +392,7 @@ static mrb_value rb_font_init(mrb_state* mrb, mrb_value self) {
         }
         if (argc >= 2) f->size = std::clamp((int)RgssToInt(mrb, argv[1]), 6, 96);
     }
-    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_font_id"), mrb_integer_value(id));
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_font_id"), RPG_MRB_INT_VALUE(id));
     return self;
 }
 
@@ -410,13 +411,13 @@ static mrb_value rb_font_name_set(mrb_state* mrb, mrb_value self) {
     return v;
 }
 static mrb_value rb_font_size_get(mrb_state* mrb, mrb_value self) {
-    if (auto* f = RgssFontFrom(mrb, self)) return mrb_integer_value(f->size);
-    return mrb_integer_value(22);
+    if (auto* f = RgssFontFrom(mrb, self)) return RPG_MRB_INT_VALUE(f->size);
+    return RPG_MRB_INT_VALUE(22);
 }
 static mrb_value rb_font_size_set(mrb_state* mrb, mrb_value self) {
     mrb_int v = 22; mrb_get_args(mrb, "i", &v);
     if (auto* f = RgssFontFrom(mrb, self)) f->size = std::clamp((int)v, 6, 96);
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 static mrb_value rb_font_bold_get(mrb_state* mrb, mrb_value self) {
     if (auto* f = RgssFontFrom(mrb, self)) return mrb_bool_value(f->bold);
@@ -462,12 +463,12 @@ static mrb_value rb_fdef_name_set(mrb_state* mrb, mrb_value) {
     return v;
 }
 static mrb_value rb_fdef_size_get(mrb_state* mrb, mrb_value) {
-    (void)mrb; return mrb_integer_value(RgssFontDefaults().size);
+    (void)mrb; return RPG_MRB_INT_VALUE(RgssFontDefaults().size);
 }
 static mrb_value rb_fdef_size_set(mrb_state* mrb, mrb_value) {
     mrb_int v = 22; mrb_get_args(mrb, "i", &v);
     RgssFontDefaults().size = std::clamp((int)v, 6, 96);
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 static mrb_value rb_fdef_bold_get(mrb_state* mrb, mrb_value) {
     (void)mrb; return mrb_bool_value(RgssFontDefaults().bold);
@@ -521,7 +522,7 @@ static mrb_value rb_bmp_init(mrb_state* mrb, mrb_value self) {
         mrb_raise(mrb, E_ARGUMENT_ERROR,
                   "Bitmap.new erwartet (filename) oder (width, height)");
     }
-    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_bmp_id"), mrb_integer_value(id));
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_bmp_id"), RPG_MRB_INT_VALUE(id));
     return self;
 }
 
@@ -539,11 +540,11 @@ static mrb_value rb_bmp_disposed_p(mrb_state* mrb, mrb_value self) {
 }
 static mrb_value rb_bmp_width(mrb_state* mrb, mrb_value self) {
     auto* b = RgssBmpFrom(mrb, self);
-    return mrb_integer_value(b ? b->width : 0);
+    return RPG_MRB_INT_VALUE(b ? b->width : 0);
 }
 static mrb_value rb_bmp_height(mrb_state* mrb, mrb_value self) {
     auto* b = RgssBmpFrom(mrb, self);
-    return mrb_integer_value(b ? b->height : 0);
+    return RPG_MRB_INT_VALUE(b ? b->height : 0);
 }
 static mrb_value rb_bmp_rect(mrb_state* mrb, mrb_value self) {
     auto* b = RgssBmpFrom(mrb, self);
@@ -777,7 +778,7 @@ static mrb_value rb_vp_init(mrb_state* mrb, mrb_value self) {
         }
     }
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_vp_id"),
-               mrb_integer_value(RgssVpCreate(x, y, w, h)));
+               RPG_MRB_INT_VALUE(RgssVpCreate(x, y, w, h)));
     return self;
 }
 
@@ -814,13 +815,13 @@ static mrb_value rb_vp_visible_set(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(v);
 }
 static mrb_value rb_vp_z_get(mrb_state* mrb, mrb_value self) {
-    if (auto* v = RgssVpFrom(mrb, self)) return mrb_integer_value(v->z);
-    return mrb_integer_value(0);
+    if (auto* v = RgssVpFrom(mrb, self)) return RPG_MRB_INT_VALUE(v->z);
+    return RPG_MRB_INT_VALUE(0);
 }
 static mrb_value rb_vp_z_set(mrb_state* mrb, mrb_value self) {
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);
     if (auto* vp = RgssVpFrom(mrb, self)) vp->z = (int)v;
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 
 #define RGSS_VP_FATTR(rname, field)                                                \
@@ -910,13 +911,13 @@ static mrb_value rb_drw_visible_set(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(v);
 }
 static mrb_value rb_drw_z_get(mrb_state* mrb, mrb_value self) {
-    if (auto* d = RgssDrwFrom(mrb, self)) return mrb_integer_value(d->z);
-    return mrb_integer_value(0);
+    if (auto* d = RgssDrwFrom(mrb, self)) return RPG_MRB_INT_VALUE(d->z);
+    return RPG_MRB_INT_VALUE(0);
 }
 static mrb_value rb_drw_z_set(mrb_state* mrb, mrb_value self) {
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);
     if (auto* d = RgssDrwFrom(mrb, self)) d->z = (int)v;
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 
 #define RGSS_DRW_FATTR(rname, field)                                               \
@@ -948,22 +949,22 @@ static mrb_value rb_drw_mirror_set(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(v);
 }
 static mrb_value rb_drw_opacity_get(mrb_state* mrb, mrb_value self) {
-    if (auto* d = RgssDrwFrom(mrb, self)) return mrb_integer_value(d->opacity);
-    return mrb_integer_value(0);
+    if (auto* d = RgssDrwFrom(mrb, self)) return RPG_MRB_INT_VALUE(d->opacity);
+    return RPG_MRB_INT_VALUE(0);
 }
 static mrb_value rb_drw_opacity_set(mrb_state* mrb, mrb_value self) {
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);
     if (auto* d = RgssDrwFrom(mrb, self)) d->opacity = std::clamp((int)v, 0, 255);
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 static mrb_value rb_drw_blend_type_get(mrb_state* mrb, mrb_value self) {
-    if (auto* d = RgssDrwFrom(mrb, self)) return mrb_integer_value(d->blendType);
-    return mrb_integer_value(0);
+    if (auto* d = RgssDrwFrom(mrb, self)) return RPG_MRB_INT_VALUE(d->blendType);
+    return RPG_MRB_INT_VALUE(0);
 }
 static mrb_value rb_drw_blend_type_set(mrb_state* mrb, mrb_value self) {
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);
     if (auto* d = RgssDrwFrom(mrb, self)) d->blendType = std::clamp((int)v, 0, 2);
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 static mrb_value rb_drw_color_get(mrb_state* mrb, mrb_value self) {
     if (auto* d = RgssDrwFrom(mrb, self); d && d->colorId > 0)
@@ -1006,7 +1007,7 @@ static mrb_value rb_sprite_init(mrb_state* mrb, mrb_value self) {
     mrb_get_args(mrb, "*", &argv, &argc);
     const int vpId = argc >= 1 ? RgssVpIdOf(mrb, argv[0]) : 0;
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_drw_id"),
-               mrb_integer_value(RgssDrawableCreate(RgssDrawableType::Sprite, vpId)));
+               RPG_MRB_INT_VALUE(RgssDrawableCreate(RgssDrawableType::Sprite, vpId)));
     return self;
 }
 static mrb_value rb_sprite_src_rect_get(mrb_state* mrb, mrb_value self) {
@@ -1052,7 +1053,7 @@ static mrb_value rb_plane_init(mrb_state* mrb, mrb_value self) {
     mrb_get_args(mrb, "*", &argv, &argc);
     const int vpId = argc >= 1 ? RgssVpIdOf(mrb, argv[0]) : 0;
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_drw_id"),
-               mrb_integer_value(RgssDrawableCreate(RgssDrawableType::Plane, vpId)));
+               RPG_MRB_INT_VALUE(RgssDrawableCreate(RgssDrawableType::Plane, vpId)));
     return self;
 }
 
@@ -1063,7 +1064,7 @@ static mrb_value rb_tilemap_init(mrb_state* mrb, mrb_value self) {
     mrb_get_args(mrb, "*", &argv, &argc);
     const int vpId = argc >= 1 ? RgssVpIdOf(mrb, argv[0]) : 0;
     mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_drw_id"),
-               mrb_integer_value(RgssDrawableCreate(RgssDrawableType::Tilemap, vpId)));
+               RPG_MRB_INT_VALUE(RgssDrawableCreate(RgssDrawableType::Tilemap, vpId)));
     return self;
 }
 static mrb_value rb_tilemap_tileset_get(mrb_state* mrb, mrb_value self) {
@@ -1160,11 +1161,11 @@ static mrb_value rb_win_init_xp(mrb_state* mrb, mrb_value self) {
     } else if (argc == 1) {
         vpId = RgssVpIdOf(mrb, argv[0]);
     }
-    const int id = RgssUI::Get().CreateWindow(x, y, w, h);
+    const int id = RgssUI::Get().MakeWindow(x, y, w, h);
     if (auto* win = RgssUI::Get().GetWindow(id)) win->viewportId = vpId;
     // XP-Startwerte
     if (auto* win = RgssUI::Get().GetWindow(id)) win->openness = 255.0f;
-    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_id"), mrb_integer_value(id));
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_id"), RPG_MRB_INT_VALUE(id));
     return self;
 }
 
@@ -1251,14 +1252,14 @@ RGSS_WIN_BPROP(stretch, stretch)
 
 #define RGSS_WIN_IPROP(rname, field)                                               \
 static mrb_value rb_win_##rname##_get(mrb_state* mrb, mrb_value self) {           \
-    if (auto* w = RgssWinFrom2(mrb, self)) return mrb_integer_value(w->field);    \
-    return mrb_integer_value(0);                                                   \
+    if (auto* w = RgssWinFrom2(mrb, self)) return RPG_MRB_INT_VALUE(w->field);    \
+    return RPG_MRB_INT_VALUE(0);                                                   \
 }                                                                                 \
 static mrb_value rb_win_##rname##_set(mrb_state* mrb, mrb_value self) {           \
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);                                    \
     if (auto* w = RgssWinFrom2(mrb, self))                                        \
         w->field = std::clamp((int)v, 0, 255);                                    \
-    return mrb_integer_value(v);                                                   \
+    return RPG_MRB_INT_VALUE(v);                                                   \
 }
 RGSS_WIN_IPROP(opacity, opacity)
 RGSS_WIN_IPROP(back_opacity, backOpacity)
@@ -1315,31 +1316,31 @@ static mrb_value rb_graphics_frame_reset(mrb_state* mrb, mrb_value self) {
 }
 static mrb_value rb_graphics_frame_rate_get(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
-    return mrb_integer_value(RgssGraphics().frameRate);
+    return RPG_MRB_INT_VALUE(RgssGraphics().frameRate);
 }
 static mrb_value rb_graphics_frame_rate_set(mrb_state* mrb, mrb_value self) {
     (void)self;
     mrb_int v = 40; mrb_get_args(mrb, "i", &v);
     RgssGraphics().frameRate = std::clamp((int)v, 10, 120);
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 static mrb_value rb_graphics_frame_count_get(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
-    return mrb_integer_value((mrb_int)RgssGraphics().frameCount);
+    return RPG_MRB_INT_VALUE((mrb_int)RgssGraphics().frameCount);
 }
 static mrb_value rb_graphics_frame_count_set(mrb_state* mrb, mrb_value self) {
     (void)self;
     mrb_int v = 0; mrb_get_args(mrb, "i", &v);
     RgssGraphics().frameCount = v;
-    return mrb_integer_value(v);
+    return RPG_MRB_INT_VALUE(v);
 }
 static mrb_value rb_graphics_width(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
-    return mrb_integer_value(640);
+    return RPG_MRB_INT_VALUE(640);
 }
 static mrb_value rb_graphics_height(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
-    return mrb_integer_value(480);
+    return RPG_MRB_INT_VALUE(480);
 }
 
 // ---------------------------------------------------------------------------
@@ -1431,22 +1432,22 @@ static mrb_value rb_input_repeat_p(mrb_state* mrb, mrb_value self) {
 static mrb_value rb_input_dir4(mrb_state* mrb, mrb_value self) {
     (void)self;
     XpInputTick(mrb);
-    if (XpKeyDown(mrb, 8)) return mrb_integer_value(8);
-    if (XpKeyDown(mrb, 6)) return mrb_integer_value(6);
-    if (XpKeyDown(mrb, 4)) return mrb_integer_value(4);
-    if (XpKeyDown(mrb, 2)) return mrb_integer_value(2);
-    return mrb_integer_value(0);
+    if (XpKeyDown(mrb, 8)) return RPG_MRB_INT_VALUE(8);
+    if (XpKeyDown(mrb, 6)) return RPG_MRB_INT_VALUE(6);
+    if (XpKeyDown(mrb, 4)) return RPG_MRB_INT_VALUE(4);
+    if (XpKeyDown(mrb, 2)) return RPG_MRB_INT_VALUE(2);
+    return RPG_MRB_INT_VALUE(0);
 }
 static mrb_value rb_input_dir8(mrb_state* mrb, mrb_value self) {
     (void)self;
     XpInputTick(mrb);
     const bool u = XpKeyDown(mrb, 8), d = XpKeyDown(mrb, 2);
     const bool l = XpKeyDown(mrb, 4), r = XpKeyDown(mrb, 6);
-    if (u) { if (l) return mrb_integer_value(7); if (r) return mrb_integer_value(9); return mrb_integer_value(8); }
-    if (d) { if (l) return mrb_integer_value(1); if (r) return mrb_integer_value(3); return mrb_integer_value(2); }
-    if (l) return mrb_integer_value(4);
-    if (r) return mrb_integer_value(6);
-    return mrb_integer_value(0);
+    if (u) { if (l) return RPG_MRB_INT_VALUE(7); if (r) return RPG_MRB_INT_VALUE(9); return RPG_MRB_INT_VALUE(8); }
+    if (d) { if (l) return RPG_MRB_INT_VALUE(1); if (r) return RPG_MRB_INT_VALUE(3); return RPG_MRB_INT_VALUE(2); }
+    if (l) return RPG_MRB_INT_VALUE(4);
+    if (r) return RPG_MRB_INT_VALUE(6);
+    return RPG_MRB_INT_VALUE(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1843,26 +1844,26 @@ void RubyVM::BindRgssGraphics() {
 
     // Input (XP-Satz zusätzlich zu key_down?/key_pressed?)
     struct RClass* input = mrb_module_get(mMrb, "Input");
-    mrb_define_const(mMrb, input, "DOWN", mrb_integer_value(2));
-    mrb_define_const(mMrb, input, "LEFT", mrb_integer_value(4));
-    mrb_define_const(mMrb, input, "RIGHT", mrb_integer_value(6));
-    mrb_define_const(mMrb, input, "UP", mrb_integer_value(8));
-    mrb_define_const(mMrb, input, "A", mrb_integer_value(11));
-    mrb_define_const(mMrb, input, "B", mrb_integer_value(12));
-    mrb_define_const(mMrb, input, "C", mrb_integer_value(13));
-    mrb_define_const(mMrb, input, "X", mrb_integer_value(14));
-    mrb_define_const(mMrb, input, "Y", mrb_integer_value(15));
-    mrb_define_const(mMrb, input, "Z", mrb_integer_value(16));
-    mrb_define_const(mMrb, input, "L", mrb_integer_value(17));
-    mrb_define_const(mMrb, input, "R", mrb_integer_value(18));
-    mrb_define_const(mMrb, input, "SHIFT", mrb_integer_value(21));
-    mrb_define_const(mMrb, input, "CTRL", mrb_integer_value(22));
-    mrb_define_const(mMrb, input, "ALT", mrb_integer_value(23));
-    mrb_define_const(mMrb, input, "F5", mrb_integer_value(25));
-    mrb_define_const(mMrb, input, "F6", mrb_integer_value(26));
-    mrb_define_const(mMrb, input, "F7", mrb_integer_value(27));
-    mrb_define_const(mMrb, input, "F8", mrb_integer_value(28));
-    mrb_define_const(mMrb, input, "F9", mrb_integer_value(29));
+    mrb_define_const(mMrb, input, "DOWN", RPG_MRB_INT_VALUE(mMrb, 2));
+    mrb_define_const(mMrb, input, "LEFT", RPG_MRB_INT_VALUE(mMrb, 4));
+    mrb_define_const(mMrb, input, "RIGHT", RPG_MRB_INT_VALUE(mMrb, 6));
+    mrb_define_const(mMrb, input, "UP", RPG_MRB_INT_VALUE(mMrb, 8));
+    mrb_define_const(mMrb, input, "A", RPG_MRB_INT_VALUE(mMrb, 11));
+    mrb_define_const(mMrb, input, "B", RPG_MRB_INT_VALUE(mMrb, 12));
+    mrb_define_const(mMrb, input, "C", RPG_MRB_INT_VALUE(mMrb, 13));
+    mrb_define_const(mMrb, input, "X", RPG_MRB_INT_VALUE(mMrb, 14));
+    mrb_define_const(mMrb, input, "Y", RPG_MRB_INT_VALUE(mMrb, 15));
+    mrb_define_const(mMrb, input, "Z", RPG_MRB_INT_VALUE(mMrb, 16));
+    mrb_define_const(mMrb, input, "L", RPG_MRB_INT_VALUE(mMrb, 17));
+    mrb_define_const(mMrb, input, "R", RPG_MRB_INT_VALUE(mMrb, 18));
+    mrb_define_const(mMrb, input, "SHIFT", RPG_MRB_INT_VALUE(mMrb, 21));
+    mrb_define_const(mMrb, input, "CTRL", RPG_MRB_INT_VALUE(mMrb, 22));
+    mrb_define_const(mMrb, input, "ALT", RPG_MRB_INT_VALUE(mMrb, 23));
+    mrb_define_const(mMrb, input, "F5", RPG_MRB_INT_VALUE(mMrb, 25));
+    mrb_define_const(mMrb, input, "F6", RPG_MRB_INT_VALUE(mMrb, 26));
+    mrb_define_const(mMrb, input, "F7", RPG_MRB_INT_VALUE(mMrb, 27));
+    mrb_define_const(mMrb, input, "F8", RPG_MRB_INT_VALUE(mMrb, 28));
+    mrb_define_const(mMrb, input, "F9", RPG_MRB_INT_VALUE(mMrb, 29));
     mrb_define_module_function(mMrb, input, "update", rb_input_update, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, input, "press?", rb_input_press_p, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, input, "trigger?", rb_input_trigger_p, MRB_ARGS_REQ(1));

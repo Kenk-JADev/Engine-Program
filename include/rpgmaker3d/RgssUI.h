@@ -237,7 +237,9 @@ public:
     static RgssUI& Get();
 
     /// Erzeugt ein Fenster, gibt die stabile ID zurueck (>0).
-    int CreateWindow(float x, float y, float w, float h);
+    /// WICHTIG: Nicht "CreateWindow" nennen -- windows.h definiert dafuer
+    /// ein Makro (CreateWindowW), das Windows-Builds zerbricht.
+    int MakeWindow(float x, float y, float w, float h);
     void DisposeWindow(int id);
     /// nullptr wenn ID unbekannt/abgeraeumt.
     RgssWindowState* GetWindow(int id);

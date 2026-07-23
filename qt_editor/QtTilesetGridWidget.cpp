@@ -99,16 +99,9 @@ int QtTilesetGridWidget::tileAt(const QPoint& pos) const {
     return tileId;
 }
 
-int QtTilesetGridWidget::tileCount() const {
-    const int c = mTilesX * mTilesY;
-    if (!mData) return c;
-    // Begrenze auf laengsten Flag-Vektor? Nein: Vektoren werden in
-    // ensureSizesIfPossible() bis count gezogen, deswegen ist count korrekt.
-    return c;
-}
-
 // ---------------------------------------------------------------------
 // Klick-Logik
+// (tileCount() ist inline im Header: mTilesX * mTilesY)
 // ---------------------------------------------------------------------
 
 void QtTilesetGridWidget::applyLeftClick(int tileId) {
