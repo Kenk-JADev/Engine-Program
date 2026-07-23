@@ -650,8 +650,9 @@ bool EventInterpreter::ExecuteCommand() {
     case CC::ShowBattleAnimation:
     case CC::PlayAnimation: {
         // XP-Animations-Playback (Paket 5): Sequenz aus Data/Animations.json
-        // als RGSS-Sprite-Gruppe ueber dem Spieler (v1-Naeherung, Ziel-Event
-        // aus param1 ist im TODO notiert).
+        // als RGSS-Sprite-Gruppe. Ziel (Paket 6): param1 -> -1 Spieler,
+        // 0 dieses Event, >0 Event-ID; Weltposition wird von der Engine als
+        // Canvas-Position projiziert (Fallback: Canvas-Mitte).
         int animId = cmd.param2 > 0 ? cmd.param2 : 0;
         if (animId == 0 && !cmd.text.empty()) {
             // Hilfsweg: Animation per NAME finden (Editor-Textfeld)
@@ -659,7 +660,17 @@ bool EventInterpreter::ExecuteCommand() {
                 if (a.name == cmd.text) { animId = a.id > 0 ? a.id : 1; break; }
         }
         if (animId <= 0) animId = 1;
-        Game::Get().StartMapAnimation(animId);
+        Vec3 target = Game::Get().Player().GetPosition();
+        const int targetId = (cmd.param1 == 0) ? mEventId : cmd.param1;
+        if (targetId > 0) {
+            if (MapEvent* ev = EventSystem::Get().GetEvent(targetId)) {
+                Vec3 ep = ev->worldPos;
+                if (glm::length(ep) < 0.001f)
+                    ep = Vec3((float)ev->x, (float)ev->y, (float)ev->z);
+                target = ep;
+            }
+        }
+        Game::Get().StartMapAnimationAt(animId, target);
         return true;
     }
     case CC::ChangeTransparentFlag:

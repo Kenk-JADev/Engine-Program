@@ -984,6 +984,27 @@ void Engine::Update(float dt) {
             };
         }
 
+        // XP-Animations-Zielprojektion (Paket 6): Weltposition -> RGSS-
+        // Canvas (640x480). Der RGSS-Renderer streckt den Canvas direkt auf
+        // den Framebuffer, deshalb gilt: canvasUV == NDC-UV aus der
+        // Laufzeitkamera. View/Proj kommen von derselben Kamera, mit der
+        // gerendert wird (mRenderer->GetCamera(), Aspect wird in Render()
+        // jedes Frame gesetzt). false bei Ziel hinter der Kamera.
+        if (!Game::Get().worldToScreenHook) {
+            Game::Get().worldToScreenHook = [this](const Vec3& wp, float& outX, float& outY) {
+                if (!mWindow || !mRenderer) return false;
+                const Camera& cam = mRenderer->GetCamera();
+                const Vec4 clip = cam.GetProjectionMatrix() * cam.GetViewMatrix() *
+                                  Vec4(wp, 1.0f);
+                if (clip.w <= 0.0001f) return false;
+                const float ndcX = clip.x / clip.w;
+                const float ndcY = clip.y / clip.w;
+                outX = (ndcX * 0.5f + 0.5f) * 640.0f;
+                outY = (0.5f - ndcY * 0.5f) * 480.0f;
+                return true;
+            };
+        }
+
         Game::Get().Update(dt);
         if (!GameUI::Get().Menu().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);

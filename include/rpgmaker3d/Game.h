@@ -327,16 +327,23 @@ public:
 
     void Update(float dt);
 
-    // ---- XP-Animation-Playback (Paket 5, TODO_XP_PARITY.md) ----
+    // ---- XP-Animation-Playback (Paket 5/6, TODO_XP_PARITY.md) ----
     // Läuft komplett über die RGSS-Spriteschicht (kein 3D-Partikelsystem).
-    /// Startet Animation <animId> aus der Datenbank auf dem Platz des
-    /// Spielers (v1-Näherung; XP-„Ziel-Event"-Auswahl ist im TODO verbucht).
+    /// Startet Animation <animId> aus der Datenbank beim Spieler
+    /// (XP-Referenz -1 = Spieler).
     void StartMapAnimation(int animId);
+    /// Startet Animation <animId> an einer Weltposition (XP-„Ziel-Event“):
+    /// Engine projiziert ueber worldToScreenHook in den RGSS-Canvas; ohne
+    /// Hook/Kamera bleibt das alte Zentrum-Verhalten als Fallback.
+    void StartMapAnimationAt(int animId, const Vec3& worldPos);
     bool IsAnimationPlaying() const { return mRunningAnim.active; }
     void UpdateAnimations(float dt);
     /// Wire-once-Hook (Engine): SE-Abspielen zu Frame-Wechseln.
     /// (name wie in Data/Animations.json, vol 0..100, pitch 50..150)
     std::function<void(const std::string& seName, int vol, int pitch)> playSeHook;
+    /// Wire-once-Hook (Engine, Paket 6): Weltposition -> RGSS-Canvas (0..640
+    /// x 0..480). false = nicht projizierbar (hinter Kamera/kein Fenster).
+    std::function<bool(const Vec3& worldPos, float& outCanvasX, float& outCanvasY)> worldToScreenHook;
 
     GameSwitches& Switches() { return mSwitches; }
     GameVariables& Variables() { return mVariables; }

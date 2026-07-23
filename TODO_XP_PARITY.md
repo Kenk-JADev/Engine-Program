@@ -306,13 +306,22 @@ am Ziel ab und wartet bis zum Ende.
 - [ ] **XP_Scripts/ schrittweise lauffähig:** die 90 Original-Skripte gegen
   unsere RGSS-Implementierung laufen lassen; jedes noch-fehlende API hier
   eintragen. Bekannte dokumentierte Grenze: `load_data`/Marshal (rxdata).
-- [ ] **Animations-Ziel (param1) beachten:** Paket-5-Nebenpunkt — das
-  Ziel-Event aus „Animation zeigen" wird noch als Canvas-Mitte interpretiert;
-  echte 3D→2D-Projektion der Eventposition als Folgearbeit.
+- [x] **Animations-Ziel (param1) beachten (ERLEDIGT 2026-07-23):**
+  `EventSystem` loest param1 jetzt XP-konform auf (-1 Spieler / 0 dieses
+  Event via `mEventId` / >0 Event-ID via `EventSystem::Get().GetEvent`,
+  worldPos mit Map-Koordinaten-Fallback) und ruft
+  `Game::StartMapAnimationAt(animId, worldPos)`. Neu:
+  `Game::worldToScreenHook` (Engine verdrahtet ihn einmalig): projiziert
+  die Weltposition mit View/Proj der Laufzeitkamera in NDC -> RGSS-Canvas
+  (640x480; stimmt, weil der RGSS-Renderer den Canvas direkt auf den
+  Framebuffer streckt - canvasUV == NDC-UV). Animation `position`
+  (oben/mitte/unten) wird relativ zur Projektion versetzt (+-80), Ergebnis
+  auf 32..608 x 16..464 ge-clampt. Fallback ohne Hook/Kamera/hinter
+  Kamera: altes statisches Mittel-Verhalten.
 
 ---
 
-## PAKET 7 — CI-Build-Fixes (Windows/MSVC + mruby 4.0.0) ✅ ERLEDIGT 2026-07-23
+## PAKET 7 — CI-Build-Fixes (Windows/MSVC + mruby 4.0.0) ✅ ERLEDIGT 2026-07-23 (CI-Lauf 7: success, Run 30003416040)
 Der erste CI-Lauf nach Paket 1–6 schlug auf Windows fehl (Linux-g++ lokal war
 grün — alles Windows-spezifische Fallen). Fixes:
 

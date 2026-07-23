@@ -1088,6 +1088,11 @@ int EnsureFallbackCellBmp() {
 } // namespace
 
 void Game::StartMapAnimation(int animId) {
+    // XP-Referenz -1 = Spieler
+    StartMapAnimationAt(animId, Player().GetPosition());
+}
+
+void Game::StartMapAnimationAt(int animId, const Vec3& worldPos) {
     const AnimationData* anim = Database::Get().GetAnimation(animId);
     if (!anim || anim->frames.empty()) return;
 
@@ -1118,12 +1123,23 @@ void Game::StartMapAnimation(int animId) {
     }
     mRunningAnim.bmpId = sheetId;
 
-    // Zielzentrum vom Spieler ableiten (v1: Canvas-Mitte; XP-Event-Ziele spaeter)
-    mRunningAnim.baseX = 320;
-    mRunningAnim.baseY = 240;
-    // position: 0=Oben 1=Mitte 2=Unten -> versetzt, wie XP es optisch macht
-    if (anim->position == 0) mRunningAnim.baseY = 160;
-    else if (anim->position == 2) mRunningAnim.baseY = 320;
+    // Zielzentrum (Paket 6): Weltposition ueber Engine-Hook in den RGSS-
+    // Canvas (640x480) projizieren; position versetzt relativ dazu (XP).
+    // Fallback bei fehlendem Hook/Projektion (z.B. Ziel hinter Kamera):
+    // altes statisches Verhalten (Canvas-Mitte +- 80).
+    float cx = 0.0f, cy = 0.0f;
+    if (worldToScreenHook && worldToScreenHook(worldPos, cx, cy)) {
+        mRunningAnim.baseX = (int)std::round(cx);
+        mRunningAnim.baseY = (int)std::round(cy);
+        if (anim->position == 0) mRunningAnim.baseY -= 80;
+        else if (anim->position == 2) mRunningAnim.baseY += 80;
+        mRunningAnim.baseX = std::clamp(mRunningAnim.baseX, 32, 608);
+        mRunningAnim.baseY = std::clamp(mRunningAnim.baseY, 16, 464);
+    } else {
+        mRunningAnim.baseX = 320;
+        mRunningAnim.baseY = (anim->position == 0) ? 160
+                           : (anim->position == 2) ? 320 : 240;
+    }
 
     ApplyAnimFrame(); // erster Frame sofort
 }
