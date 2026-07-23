@@ -9,11 +9,12 @@
 #   .github/workflows/Main.yml
 # kopieren und mit einem normalen User-Account committen+pushen
 # (oder im GitHub-Web-Editor einfuegen).
-# Letzte inhaltliche Aenderung (2026-07-23): Qt-Download gehaertet -
-# aqtinstall==3.1.* gepinnt, Download reduziert auf --modules qttools +
-# --archives qtbase qttools opengl32sw d3dcompiler (kein qtdeclarative mehr,
-# das war das korrupte Bad7zFile-Archiv 2026-07-23; qtbase ist KEIN gueltiger
-# --modules-Name -> aqt "packages not found"), 1 Retry bei Spiegel-Fehlern.
+# Letzte inhaltliche Aenderung (2026-07-23): Qt-Download endgueltig
+# gehaertet - aqtinstall==3.3.* (3.1.x kann das 6.9.1-Repo-Format mit
+# "extensions" NICHT aufloesen -> "packages not found" auch bei qttools),
+# --external 7z statt py7zr (py7zr versagte am qtdeclarative-Archiv mit
+# Bad7zFile; 7-Zip ist auf den Runnern vorinstalliert), zweistufig:
+# reduzierter Download, danach Vollinstallation als Fallback.
 # Details: TODO_XP_PARITY.md, PAKET 7 Punkt 7.
 # ============================================================================
 name: Build Windows EXE
@@ -49,36 +50,42 @@ jobs:
       - name: Install Qt for editor
         shell: pwsh
         run: |
-          # aqt auf die als stabil geltende Serie pinnen (kein Stillstand durch
-          # brandneue aqt-Releases mit ungetesteten Qt-Paket-Layouts).
-          python -m pip install "aqtinstall==3.1.*"
-          # Windows-Mirror lieferte schon mehrfach korrupte 7z-Archive aus
-          # (Bad7zFile / "Specified path is bad: mkspecs/features/qtquickcompiler.prf").
-          # Deshalb: 1) weniger Archive laden (qtdeclarative & Co. brauchen wir
-          # nicht - der Editor nutzt nur Widgets/OpenGLWidgets aus qtbase),
-          # was die Angriffsflaeche fuer korrupte Downloads deutlich senkt, und
-          # 2) ein Retry mit sauberem Zielverzeichnis, falls doch ein Archiv
-          # defekt ankommt.
+          # aqt 3.1.x kann das Qt-Repository-Format (6.9.1, Erweiterungs-
+          # Module als "extensions") NICHT aufloesen -> "--modules qttools"
+          # meldet faelschlich "packages not found". Serie 3.3.* kann es
+          # (CI-Lauf 4 hat die Archive korrekt gefunden).
+          python -m pip install "aqtinstall==3.3.*"
+          # --external 7z: py7zr (der Python-Entpacker) versagte 2026-07-23
+          # am qtdeclarative-Archiv (Bad7zFile "Specified path is bad:
+          # mkspecs/features/qtquickcompiler.prf"); das systemeigene 7-Zip
+          # (auf windows-Runnern vorinstalliert) ist dafuer die etablierte
+          # Abhilfe.
+          # Zwei Stufen: 1) reduzierter Download (weniger Korruptions-
+          # risiko, qtdeclarative/qtsvg/qttranslations entfallen - Editor
+          # braucht nur Widgets/OpenGLWidgets aus qtbase + windeployqt aus
+          # qttools), 2) Fallback: Vollinstallation, falls die reduzierte
+          # Variante an der Spiegel-Infrastruktur scheitert.
           $attempt = 0
-          while ($attempt -lt 2) {
+          $succeeded = $false
+          while ($attempt -lt 2 -and -not $succeeded) {
             $attempt++
             Write-Host "aqt install attempt $attempt"
-            if ($attempt -gt 1 -and (Test-Path "$env:GITHUB_WORKSPACE/qt")) {
+            if (Test-Path "$env:GITHUB_WORKSPACE/qt") {
               Remove-Item -Recurse -Force "$env:GITHUB_WORKSPACE/qt" -ErrorAction SilentlyContinue
             }
-            # --modules: nur ERWEITERUNGSmodule (qtbase ist kein gueltiger
-            # Modulname dort - aqt 3.1.x meldet sonst "packages not found"!),
-            # qttools reicht: windeployqt liegt darin. --archives: Filter fuer
-            # die 7z-Archive: qtbase (Basis, enthaelt Widgets/OpenGL/Plugins),
-            # qttools (windeployqt), opengl32sw/d3dcompiler (Software-GL-
-            # Fallback im Deployment). Nicht benoetigt: qtdeclarative (war das
-            # korrupte Archiv), qtsvg, qttranslations (windeployqt laeuft mit
-            # --no-translations).
-            aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --modules qttools --archives qtbase qttools opengl32sw d3dcompiler
-            if ($LASTEXITCODE -eq 0) { break }
-            Write-Host "aqt attempt $attempt failed (exit $LASTEXITCODE)"
+            if ($attempt -eq 1) {
+              aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --external 7z --modules qttools --archives qtbase qttools opengl32sw d3dcompiler
+            } else {
+              Write-Host "Fallback: Vollinstallation ohne Modul-/Archivfilter"
+              aqt install-qt windows desktop 6.9.1 win64_msvc2022_64 -O "$env:GITHUB_WORKSPACE/qt" --external 7z
+            }
+            if ($LASTEXITCODE -eq 0) {
+              $succeeded = $true
+            } else {
+              Write-Host "aqt attempt $attempt failed (exit $LASTEXITCODE)"
+            }
           }
-          if ($LASTEXITCODE -ne 0) {
+          if (-not $succeeded) {
             throw "Qt installation failed after retries"
           }
           $qtDir = "$env:GITHUB_WORKSPACE/qt/6.9.1/msvc2022_64"
