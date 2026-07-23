@@ -28,6 +28,7 @@
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Custom.h" // Game.ini / "alles custom"-Schalter
+#include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (reine Ruby-UI)
 
 #include <SDL.h>
 
@@ -400,6 +401,8 @@ void Engine::SetPlaying(bool playing) {
     // Playtest-/Spielstopp: Executed-Merker zuruecksetzen, damit der
     // naechste Start die Skripte wieder frisch ausfuehrt (Neustart-Verhalten).
     if (!playing && mScriptManager) mScriptManager->InvalidateExecutedScripts();
+    // Spielstopp: alle Ruby-Fenster (RGSS-UI) entfernen.
+    if (!playing) RgssUI::Get().ClearAll();
 
     // "Alles custom": Game.ini + Projekt-Skins bei jedem Spielstart neu ziehen
     if (playing) LoadCustomConfigForProject();
@@ -499,6 +502,7 @@ void Engine::SetPlaying(bool playing) {
 void Engine::LoadCustomConfigForProject() {
     const std::string base = mProject ? mProject->GetProjectPath() : std::string();
     CustomConfig::Get().LoadFromProject(base);
+    RgssUI::Get().SetProjectBase(base); // Windowskin-Aufloesung der Ruby-UI
 #ifdef RPGMAKER3D_ENABLE_RMLUI
     if (mRmlUi) {
         // HUD-Startwert (UI.hud_visible= kann es danach jederzeit aendern)
@@ -1152,6 +1156,9 @@ void Engine::Render() {
 #ifdef RPGMAKER3D_ENABLE_RMLUI
     if (mRmlUi) mRmlUi->Render();
 #endif
+    // RGSS-Fenster (reine Ruby-UI) liegen auf der obersten Schicht -
+    // nach RmlUi zeichnen, damit Ruby-UIs alles ueberdecken koennen.
+    if (mWindow) RgssUI::Get().Render(mWindow->GetWidth(), mWindow->GetHeight());
 }
 
 void Engine::RenderScene() {

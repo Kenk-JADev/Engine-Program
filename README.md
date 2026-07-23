@@ -438,9 +438,51 @@ Fehlt eine Datei, gilt der eingebaute Standard; ist eine Custom-Datei
 fehlerhaft, fällt die Engine mit Warnung auf den Standard zurück (das Spiel
 startet immer). Skins werden beim Spielstart geladen.
 
+### 4. RGSS-Fenstersystem (reine Ruby-UI)
+
+Zusätzlich zur RmlUi-Oberfläche gibt es ein **eigenes Fenstersystem nach
+XP-Vorbild**, das komplett aus Ruby gesteuert wird (Stichwort RGSS). Die
+Ruby-Fenster werden als eigene GL-Schicht **oberhalb von allem** (auch über
+der RmlUi-HUD) gezeichnet – RmlUi bleibt vorerst parallel bestehen.
+
+```ruby
+@win = Window.new(80, 120, 480, 200)   # x, y, breite, hoehe
+@win.windowskin = "001-Blue01"         # Graphics/System/<Name>.png
+@win.text = "Mein Fenster\nZweite Zeile"
+@win.z = 100                           # hoeher = weiter vorne
+
+# spaeter: @win.dispose   bzw. alle Fenster: RGSS.clear_windows
+```
+
+| Ruby | Wirkung |
+|---|---|
+| `Window.new(x, y, breite, hoehe)` | Fenster erzeugen (Koordinaten im logischen 640×480-Raum wie XP) |
+| `x`, `y`, `width`, `height`, `z` | Position/Größe/Ebene (lesen & schreiben) |
+| `openness` (0–255) | XP-Öffnen-Animation: 0 = zu, 255 = offen |
+| `visible` | Fenster ein-/ausblenden |
+| `windowskin = "Name"` | Windowskin-Datei (s. u.) – ohne Zuweisung gilt der System-Standard |
+| `text = "..."` | Fenstertext, `\n` = Zeilenumbruch (mit automatischem Wrap) |
+| `text_color = [r, g, b, a]` | Textfarbe, Werte 0.0–1.0 |
+| `dispose` / `disposed?` | Fenster freigeben / prüfen |
+| `update` | vorhanden (Kompatibilität, derzeit ohne Funktion) |
+| `RGSS.clear_windows` | alle Ruby-Fenster entfernen (passiert auch automatisch beim Spielstopp) |
+
+**Windowskin:** Gesucht wird `<Projekt>/Graphics/System/<Name>.png` wie beim
+XP; gefunden wird der Skin auch in `Graphics/Windowskins/`, `Graphics/` oder
+im Projektordner selbst. Ohne `windowskin=`-Zuweisung gilt der Name aus dem
+Datenbank-System-Tab (Standard **001-Blue01**). Skins werden gecacht und der
+Cache bei Projektwechsel geleert. Fehlt die Datei komplett, zeichnet die
+Engine ein schlichtes dunkles Panel als Fallback (das Spiel läuft weiter).
+
+Der Fensterinhalt wird mit einem eingebauten 8×8-Bitmap-Font gerendert
+(Public Domain, Daniel Hepper) – inklusive deutscher Umlaute (ä ö ü Ä Ö Ü ß).
+Fenster leben in der Ruby-VM: Beim Stoppen des Playtests werden sie
+automatisch aufgeräumt (`ClearAll`).
+
 Der Skript-Editor enthält fertige Vorlagen: Snippets **„Eigenes Menue
 (custom)"**, **„Eigene Kampfszene (custom)"**, **„Kampf mit eigener
-Gegnerliste"** und **„Eigener Titel (custom)"**.
+Gegnerliste"**, **„Eigener Titel (custom)"** und **„RGSS-Fenster (reine
+Ruby-UI)"**.
 
 ## Datenbank (XP-Dialog)
 

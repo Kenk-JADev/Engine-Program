@@ -14,6 +14,7 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/RmlUiSystem.h"
 #include "rpgmaker3d/Custom.h" // "alles custom"-Schalter (UI.native_*)
+#include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (Ruby-Klasse Window)
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -95,6 +96,7 @@ bool RubyVM::Initialize(Engine* engine) {
     BindActor();
     BindCamera();
     BindUI();
+    BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
 
     RPG_LOG_INFO("Ruby VM initialized");
     return true;
@@ -1725,6 +1727,156 @@ static mrb_value rb_ui_hud_visible(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(e && e->GetRmlUi() && e->GetRmlUi()->IsVisible());
 }
 
+// ---------------------------------------------------------------------------
+// RGSS: Ruby-Klasse "Window" (reine Ruby-UI, unabhaengig von RmlUi)
+// ---------------------------------------------------------------------------
+static rpg::RgssWindowState* RgssWinFrom(mrb_state* mrb, mrb_value self) {
+    mrb_value idv = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "__rgss_id"));
+    if (!mrb_integer_p(idv)) return nullptr;
+    return rpg::RgssUI::Get().GetWindow((int)mrb_integer(idv));
+}
+
+static mrb_value rb_win_init(mrb_state* mrb, mrb_value self) {
+    mrb_float x = 0, y = 0, w = 0, h = 0;
+    mrb_get_args(mrb, "|ffff", &x, &y, &w, &h);
+    const int id = rpg::RgssUI::Get().CreateWindow((float)x, (float)y, (float)w, (float)h);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__rgss_id"), mrb_integer_value(id));
+    return self;
+}
+
+#define RGSS_WIN_FATTR(rname, field)                                              \
+static mrb_value rb_win_##rname##_get(mrb_state* mrb, mrb_value self) {          \
+    if (auto* w = RgssWinFrom(mrb, self)) return mrb_float_value(mrb, w->field); \
+    return mrb_nil_value();                                                       \
+}                                                                                 \
+static mrb_value rb_win_##rname##_set(mrb_state* mrb, mrb_value self) {          \
+    mrb_float v = 0; mrb_get_args(mrb, "f", &v);                                  \
+    if (auto* w = RgssWinFrom(mrb, self)) w->field = (float)v;                    \
+    return mrb_float_value(mrb, v);                                               \
+}
+RGSS_WIN_FATTR(x, x)
+RGSS_WIN_FATTR(y, y)
+RGSS_WIN_FATTR(width, width)
+RGSS_WIN_FATTR(height, height)
+RGSS_WIN_FATTR(openness, openness)
+
+static mrb_value rb_win_z_get(mrb_state* mrb, mrb_value self) {
+    if (auto* w = RgssWinFrom(mrb, self)) return mrb_integer_value(w->z);
+    return mrb_nil_value();
+}
+static mrb_value rb_win_z_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0; mrb_get_args(mrb, "i", &v);
+    if (auto* w = RgssWinFrom(mrb, self)) w->z = (int)v;
+    return mrb_integer_value(v);
+}
+
+static mrb_value rb_win_visible_get(mrb_state* mrb, mrb_value self) {
+    if (auto* w = RgssWinFrom(mrb, self)) return mrb_bool_value(w->visible);
+    return mrb_bool_value(false);
+}
+static mrb_value rb_win_visible_set(mrb_state* mrb, mrb_value self) {
+    mrb_bool v = false; mrb_get_args(mrb, "b", &v);
+    if (auto* w = RgssWinFrom(mrb, self)) w->visible = v;
+    return mrb_bool_value(v);
+}
+
+static mrb_value rb_win_skin_get(mrb_state* mrb, mrb_value self) {
+    if (auto* w = RgssWinFrom(mrb, self)) return mrb_str_new_cstr(mrb, w->windowskin.c_str());
+    return mrb_nil_value();
+}
+static mrb_value rb_win_skin_set(mrb_state* mrb, mrb_value self) {
+    mrb_value v; mrb_get_args(mrb, "o", &v);
+    if (auto* w = RgssWinFrom(mrb, self)) {
+        if (mrb_string_p(v)) w->windowskin.assign(RSTRING_PTR(v), (size_t)RSTRING_LEN(v));
+        else w->windowskin.clear();
+    }
+    return v;
+}
+
+static mrb_value rb_win_text_get(mrb_state* mrb, mrb_value self) {
+    if (auto* w = RgssWinFrom(mrb, self)) return mrb_str_new_cstr(mrb, w->text.c_str());
+    return mrb_nil_value();
+}
+static mrb_value rb_win_text_set(mrb_state* mrb, mrb_value self) {
+    mrb_value v; mrb_get_args(mrb, "o", &v);
+    if (auto* w = RgssWinFrom(mrb, self)) {
+        if (mrb_string_p(v)) w->text.assign(RSTRING_PTR(v), (size_t)RSTRING_LEN(v));
+        else w->text.clear();
+    }
+    return v;
+}
+
+// text_color = [r, g, b, a]  (0.0 .. 1.0, Array; a optional = 1.0)
+static mrb_value rb_win_text_color_set(mrb_state* mrb, mrb_value self) {
+    mrb_value v; mrb_get_args(mrb, "o", &v);
+    auto* w = RgssWinFrom(mrb, self);
+    if (w && mrb_array_p(v)) {
+        const mrb_int len = RARRAY_LEN(v);
+        const auto fget = [&](int idx, float fallback) {
+            if (idx < len) {
+                mrb_value e = mrb_ary_ref(mrb, v, idx);
+                if (mrb_float_p(e)) return (float)mrb_float(e);
+                if (mrb_integer_p(e)) return (float)mrb_integer(e);
+            }
+            return fallback;
+        };
+        w->textRed = fget(0, 1.0f);
+        w->textGreen = fget(1, 1.0f);
+        w->textBlue = fget(2, 1.0f);
+        w->textAlpha = fget(3, 1.0f);
+    }
+    return v;
+}
+
+static mrb_value rb_win_dispose(mrb_state* mrb, mrb_value self) {
+    if (auto* w = RgssWinFrom(mrb, self)) w->disposed = true;
+    return mrb_nil_value();
+}
+static mrb_value rb_win_disposed_p(mrb_state* mrb, mrb_value self) {
+    const auto* w = RgssWinFrom(mrb, self);
+    return mrb_bool_value(!w || w->disposed);
+}
+static mrb_value rb_win_update(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self; // RGSS-Kompatibilitaets-Hook (no-op)
+    return mrb_nil_value();
+}
+
+static mrb_value rb_rgss_clear_windows(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    rpg::RgssUI::Get().ClearAll();
+    return mrb_nil_value();
+}
+
+void RubyVM::BindRgssWindow() {
+    struct RClass* win = mrb_define_class(mMrb, "Window", mMrb->object_class);
+    mrb_define_method(mMrb, win, "initialize", rb_win_init, MRB_ARGS_OPT(4));
+    mrb_define_method(mMrb, win, "x", rb_win_x_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "x=", rb_win_x_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "y", rb_win_y_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "y=", rb_win_y_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "z", rb_win_z_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "z=", rb_win_z_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "width", rb_win_width_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "width=", rb_win_width_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "height", rb_win_height_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "height=", rb_win_height_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "openness", rb_win_openness_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "openness=", rb_win_openness_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "visible", rb_win_visible_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "visible=", rb_win_visible_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "windowskin", rb_win_skin_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "windowskin=", rb_win_skin_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "text", rb_win_text_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "text=", rb_win_text_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "text_color=", rb_win_text_color_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, win, "dispose", rb_win_dispose, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "disposed?", rb_win_disposed_p, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, win, "update", rb_win_update, MRB_ARGS_NONE());
+
+    struct RClass* rgss = mrb_define_module(mMrb, "RGSS");
+    mrb_define_module_function(mMrb, rgss, "clear_windows", rb_rgss_clear_windows, MRB_ARGS_NONE());
+}
+
 void RubyVM::BindUI() {
     struct RClass* uiModule = mrb_define_module(mMrb, "UI");
 
@@ -2350,6 +2502,7 @@ void RubyVM::BindActor() {}
 void RubyVM::BindCamera() {}
 void RubyVM::BindGame() {}
 void RubyVM::BindUI() {}
+void RubyVM::BindRgssWindow() {}
 
 } // namespace rpg
 

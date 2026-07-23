@@ -63,6 +63,7 @@ private:
     void BindCamera();
     void BindGame();
     void BindUI();
+    void BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
 
     // Schreibt Exception-Text nach mLastError und loggt
     bool CaptureException(const std::string& context);

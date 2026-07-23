@@ -120,6 +120,7 @@ set(CORE_LIB_SOURCES
     src/BattleSystem.cpp
     src/UI.cpp
     src/Custom.cpp
+    src/RgssUI.cpp
 )
 
 if(RPGMAKER3D_ENABLE_RMLUI)

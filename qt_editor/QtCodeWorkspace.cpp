@@ -131,6 +131,16 @@ const char* kRubySnippets[][2] = {
      "    end\n"
      "  end\n"
      "end\n"},
+    {"RGSS-Fenster (reine Ruby-UI)",
+     "# Eigenes Fenstersystem wie im RPG Maker XP - laeuft komplett in Ruby,\n"
+     "# die Fenster liegen auf der obersten Ebene (auch ueber der RmlUi-HUD).\n"
+     "@win = Window.new(80, 120, 480, 200)   # x, y, breite, hoehe (640x480-Raum)\n"
+     "@win.windowskin = \"001-Blue01\"         # Graphics/System/<Name>.png\n"
+     "@win.text = \"Mein Fenster\\nZweite Zeile mit ae/oe/ue/sz\"\n"
+     "@win.z = 100                            # hoeher = weiter vorne\n"
+     "# Weitere Attribute: x, y, width, height, openness (0..255), visible,\n"
+     "# text_color = [rot, gruen, blau, alpha]  (0.0 .. 1.0)\n"
+     "# Aufraeumen: @win.dispose  bzw. alle: RGSS.clear_windows\n"},
 };
 
 const char* kCppSnippets[][2] = {
