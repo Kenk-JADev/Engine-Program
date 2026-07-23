@@ -191,9 +191,8 @@ private:
     float mFPSTimer = 0.0f;
     int mFrameCount = 0;
 
-    // XP-Kampfstatus-Anzeige (Gegner-/Gruppenzeile oben, Screen-Text-Ids)
+    // XP-Kampfstatus-Anzeige (Gegnerzeile oben, Screen-Text-Id)
     int mBattleStatusEnemiesId = -1;
-    int mBattleStatusPartyId = -1;
     float mBattleStatusTimer = 0.0f;
     // Gegner-Grafiken im Kampf (Graphics/Battlers/, XP-Battler-Bilder):
     // Namen der aktiven $battler-Pictures, damit kein Flackern/Reload entsteht

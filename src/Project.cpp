@@ -82,7 +82,7 @@ bool Project::New(const std::string& path, const std::string& name) {
     static const char* kGfxDirs[] = {
         "Tilesets", "Autotiles", "Characters", "Animations", "Battlers",
         "Battlebacks", "Panoramas", "Fogs", "Pictures", "Titles",
-        "Gameovers", "Icons", "Transitions", "System", "Windowskins"
+        "Gameovers", "Icons", "Transitions", "System", "Windowskins", "Faces"
     };
     for (const char* d : kGfxDirs)
         std::filesystem::create_directories(path + "/Graphics/" + d);

@@ -5,11 +5,14 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
+#include <unordered_map>
 #include "Types.h"
 
 namespace rpg {
 
 enum class BattleActionType; // BattleSystem.h (Fwd-Dekl, UI.h bleibt leicht)
+class Texture; // Fwd-Dekl fuer Face-Cache (UI.cpp inkludiert Texture.h)
 
 // Ware im Laden (Event-Befehl 302, ShowShopGoods):
 // text-Kodierung "1,2,w3,a1" - Zahl = Item, w<ID> = Waffe, a<ID> = Ruestung
@@ -328,6 +331,23 @@ public:
     /// nach Graphics/Pictures|Titles etc.; XP-Ordnerstruktur).
     static void SetPicturePathResolver(
         std::function<std::string(const std::string&)> fn);
+
+    // === XP-Kampf-Statusfenster (PAKET 9) ===
+    // Party-Status unten im Kampf (Gesicht, Name, HP-/MP-Balken, K.O.),
+    // ersetzt die einfache Textzeile: Schnappschuss pro Status-Tick setzen,
+    // Clear am Kampfende; Draw rendert die Leiste (ImGui-Overlay, wie der
+    // Rest der GameUI-HUDs).
+    struct BattleStatusEntry {
+        std::string name;
+        int hp = 0, maxHp = 1;
+        int mp = 0, maxMp = 1;
+        bool dead = false;
+        std::string faceName; // Graphics/Faces/<faceName> (leer = kein Gesicht)
+        int faceIndex = 0;    // Index im 4x2-Face-Sheet (VX-Stil), 0 = erstes
+    };
+    void SetBattleStatusEntries(std::vector<BattleStatusEntry> entries);
+    void ClearBattleStatus();
+    bool IsBattleStatusActive() const { return mBattleStatusActive; }
     // Easing helpers
     static float ApplyEasing(float t, int easingType);
 
@@ -385,6 +405,13 @@ private:
 
     std::vector<ScreenPicture> mPictures;
     int mNextPictureId = 1;
+
+    // XP-Kampf-Statusfenster (PAKET 9): Schnappschuss + Face-Cache
+    std::vector<BattleStatusEntry> mBattleStatusEntries;
+    bool mBattleStatusActive = false;
+    std::unordered_map<std::string, std::shared_ptr<Texture>> mFaceCache;
+    unsigned int GetFaceTexture(const std::string& faceName, int& outW, int& outH);
+    void DrawBattleStatus();
 };
 
 } // namespace rpg

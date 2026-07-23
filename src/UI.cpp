@@ -224,6 +224,7 @@ void GameUI::Draw() {
     if (mTitle.IsVisible()) mTitle.Draw();
     else if (mPause.IsVisible()) mPause.Draw();
     else if (mMessage.IsVisible()) mMessage.Draw();
+    DrawBattleStatus(); // PAKET 9: XP-Kampfstatus (unter den HUD-Overlays)
     // Screen texts and pictures always on top (HUD)
     DrawPictures();
     DrawScreenTexts();
@@ -1660,6 +1661,163 @@ void GameUI::UpdatePictures(float dt) {
     // Remove expired (duration based)
     mPictures.erase(std::remove_if(mPictures.begin(), mPictures.end(),
         [](const ScreenPicture& p){ return p.duration > 0.0f && p.elapsed >= p.duration; }), mPictures.end());
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 9: XP-Kampf-Statusfenster (Party unten im Kampf)
+// ---------------------------------------------------------------------------
+// Datenfluss: Engine (Status-Tick) -> SetBattleStatusEntries (Schnappschuss)
+// -> DrawBattleStatus pro Frame (ImGui-Overlay, Stil wie MessageWindow).
+// Gesichter: Graphics/Faces/<faceName>; Sheets im 4x2-Raster (VX-Stil,
+// erkannt am Seitenverhaeltnis 2:1), sonst Einzelbild. faceIndex waehlt die
+// Zelle (0..7). Fehlende Dateien sind gecacht (kein Lade-Spam) und zeigen
+// schlicht kein Gesicht.
+void GameUI::SetBattleStatusEntries(std::vector<BattleStatusEntry> entries) {
+    mBattleStatusEntries = std::move(entries);
+    mBattleStatusActive = !mBattleStatusEntries.empty();
+}
+
+void GameUI::ClearBattleStatus() {
+    mBattleStatusEntries.clear();
+    mBattleStatusActive = false;
+}
+
+unsigned int GameUI::GetFaceTexture(const std::string& faceName, int& outW, int& outH) {
+    outW = 0; outH = 0;
+    if (faceName.empty()) return 0;
+    auto it = mFaceCache.find(faceName);
+    if (it != mFaceCache.end()) {
+        if (it->second) {
+            outW = it->second->GetWidth();
+            outH = it->second->GetHeight();
+            return it->second->GetID();
+        }
+        return 0; // Negativ-Eintrag
+    }
+    std::shared_ptr<Texture> tex;
+    const std::string path = ResolvePicturePath(faceName);
+    if (!path.empty()) {
+        auto t = std::make_shared<Texture>();
+        if (t->LoadFromFile(path)) tex = std::move(t);
+    }
+    if (tex) {
+        outW = tex->GetWidth();
+        outH = tex->GetHeight();
+        const unsigned int id = tex->GetID();
+        mFaceCache.emplace(faceName, std::move(tex));
+        return id;
+    }
+    mFaceCache.emplace(faceName, nullptr);
+    return 0;
+}
+
+void GameUI::DrawBattleStatus() {
+    if (!mBattleStatusActive || mBattleStatusEntries.empty()) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y * 0.20f;      // XP: Statuszeile ~1/5 unten
+    if (h < 110.0f) h = 110.0f;              // Mindesthoehe fuer 2 Balkenzeilen
+    ImGui::SetNextWindowPos(ImVec2(0.0f, io.DisplaySize.y - h));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.07f, 0.16f, 0.90f));
+    if (ImGui::Begin("##BattleStatus", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 origin = ImGui::GetWindowPos();
+        const int n = (int)mBattleStatusEntries.size();
+        const int cols = std::max(4, n);     // XP: 4 Slots nebeneinander
+        const float slotW = w / (float)cols;
+        const float faceSz = h - 62.0f;      // Platz: Name + 2 Zeilen
+        const float pad = 10.0f;
+
+        // Kleiner lokaler Balkenzeichner (Hintergrund, Fuellung, Rahmen)
+        auto drawBar = [dl](float x, float y, float bw, float bh, float t,
+                            ImU32 fillCol) {
+            if (t < 0.0f) t = 0.0f;
+            if (t > 1.0f) t = 1.0f;
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw, y + bh),
+                              IM_COL32(18, 18, 22, 230));
+            if (t > 0.0f)
+                dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw * t, y + bh), fillCol);
+            dl->AddRect(ImVec2(x, y), ImVec2(x + bw, y + bh),
+                        IM_COL32(200, 200, 210, 160), 0.0f, 0, 1.0f);
+        };
+
+        for (int i = 0; i < n; ++i) {
+            const BattleStatusEntry& e = mBattleStatusEntries[(size_t)i];
+            const float x0 = origin.x + slotW * (float)i + pad;
+            const float y0 = origin.y + 8.0f;
+
+            // Gesicht (links), bei Bedarf aus dem Face-Sheet
+            float textX = x0;
+            int fw = 0, fh = 0;
+            const unsigned int faceTex = GetFaceTexture(e.faceName, fw, fh);
+            if (faceTex != 0 && faceSz > 8.0f) {
+                float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+                if (fh > 0 && fw == fh * 2) {         // 4x2-Sheet (VX-Stil)
+                    const int idx = std::clamp(e.faceIndex, 0, 7);
+                    u0 = (float)(idx % 4) * 0.25f;
+                    v0 = (float)(idx / 4) * 0.5f;
+                    u1 = u0 + 0.25f;
+                    v1 = v0 + 0.5f;
+                }
+                const float a = e.dead ? 0.45f : 1.0f;
+                dl->AddImage((ImTextureID)(intptr_t)faceTex,
+                             ImVec2(x0, y0), ImVec2(x0 + faceSz, y0 + faceSz),
+                             ImVec2(u0, v0), ImVec2(u1, v1),
+                             IM_COL32(255, 255, 255, (int)(a * 255.0f)));
+                dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + faceSz, y0 + faceSz),
+                            IM_COL32(0, 0, 0, 160), 0.0f, 0, 1.0f);
+                textX = x0 + faceSz + 8.0f;
+            }
+
+            // Name (K.O. rot markiert)
+            const ImU32 nameCol = e.dead ? IM_COL32(255, 90, 80, 255)
+                                         : IM_COL32(235, 240, 255, 255);
+            dl->AddText(ImVec2(textX, y0), nameCol, e.name.c_str());
+            if (e.dead)
+                dl->AddText(ImVec2(x0 + slotW - pad - 30.0f, y0),
+                            IM_COL32(255, 90, 80, 255), "K.O.");
+
+            const float barX = textX + 36.0f;
+            const float barW = slotW - (barX - x0) - pad - 74.0f;
+            const float rowY1 = y0 + 26.0f;
+            const float rowY2 = y0 + 50.0f;
+
+            // HP (XP: gruen -> gelb -> rot je nach Fuellstand)
+            const float hpT = e.maxHp > 0 ? (float)e.hp / (float)e.maxHp : 0.0f;
+            const ImU32 hpCol = e.dead ? IM_COL32(90, 90, 95, 255)
+                : hpT > 0.5f ? IM_COL32(64, 224, 88, 255)
+                : hpT > 0.25f ? IM_COL32(255, 200, 64, 255)
+                              : IM_COL32(240, 80, 70, 255);
+            dl->AddText(ImVec2(textX, rowY1 - 4.0f), IM_COL32(255, 190, 110, 255), "HP");
+            drawBar(barX, rowY1, barW, 7.0f, hpT, hpCol);
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "%d/%d", e.hp, e.maxHp);
+            dl->AddText(ImVec2(barX + barW + 8.0f, rowY1 - 4.0f),
+                        IM_COL32(220, 225, 240, 255), buf);
+
+            // MP (blaeulich)
+            const float mpT = e.maxMp > 0 ? (float)e.mp / (float)e.maxMp : 0.0f;
+            const ImU32 mpCol = e.dead ? IM_COL32(90, 90, 95, 255)
+                                       : IM_COL32(96, 150, 240, 255);
+            dl->AddText(ImVec2(textX, rowY2 - 4.0f), IM_COL32(150, 190, 255, 255), "MP");
+            drawBar(barX, rowY2, barW, 7.0f, mpT, mpCol);
+            std::snprintf(buf, sizeof(buf), "%d/%d", e.mp, e.maxMp);
+            dl->AddText(ImVec2(barX + barW + 8.0f, rowY2 - 4.0f),
+                        IM_COL32(220, 225, 240, 255), buf);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+#else
+    (void)0; // Ohne ImGui: Status nur als interne Datenhalde (wie uebliche No-Op-Draws)
+#endif
 }
 
 void GameUI::DrawPictures() {

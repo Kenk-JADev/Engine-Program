@@ -734,11 +734,18 @@ als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
   die per `MoveScreenText`-Tween (easeOutQuad) nach oben schwebt und mit
   ihrer Lebensdauer (0,95 s) fadet. Hook wird in `Engine::Shutdown`
   geloest.
-- [ ] **XP-Statusfenster unten (nächste Runde):** Party-Textzeile durch
-  ein richtiges Statusfenster ersetzen — XP-Layout: 4 Slots, Name,
-  HP-Balken (gruen→rot), MP-Balken, K.O.-Markierung, Gesichter aus
-  Graphics/Faces/<faceName> (ActorData.faceName + faceIndex sind da,
-  XP 4x1-Face-Reihen).
+- [x] **XP-Statusfenster unten (Gesicht + Name + HP-/MP-Balken + K.O.):**
+  `GameUI::BattleStatusEntry` (name/hp/maxHp/mp/maxMp/dead/faceName/
+  faceIndex) + `SetBattleStatusEntries`/`ClearBattleStatus`; die Engine
+  fuellt den Schnappschuss im 0,25-s-Kampfstatus-Tick (Party-Textzeile
+  entfernt, Gegner-Zeile oben bleibt). `DrawBattleStatus` (ImGui-Overlay,
+  Stil wie MessageWindow) rendert unten eine Leiste mit bis zu 4 Slots:
+  Gesicht aus Graphics/Faces/<faceName> (4x2-Sheet per faceIndex, sonst
+  Einzelbild; Negativ-Cache bei fehlender Datei), Name (K.O. rot),
+  HP-Balken gruen→gelb→rot nach Fuellstand, MP-Balken blau, Zahlen.
+  Pfad-/Ordnerseite: `Graphics/Faces/` in `ResolvePicturePathFor` UND in
+  `Project::Create` (neue Projekte legen den Ordner mit an);
+  `UI.h` bekam Fwd-Dekl `class Texture` + `<memory>/<unordered_map>`.
 - [ ] **Treffer-Flash/Blink der Gegner-Bilder** (RgssDrawableState kann
   flash; Picture-System muesste es durchreichen) + Zielmarkierung beim
   Waehlen (XP: Gegner blinkt).
@@ -749,13 +756,19 @@ als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
   Popups sind dafuer vorbereitet (eigene Farbe/Text).
 
 ## Arbeitsregeln (für Agenten-Sessions)
+
+**Strategie (Nutzer, 2026-07-23):** RmlUi ist eine Uebergangsloesung und
+wird entfernt, sobald alles fertig ist — **keine neuen Features darauf
+aufbauen.** HUD/Menues in ImGui (GameUI-Overlay-Pfad, wie MessageWindow),
+XP-Fenster im nativen RgssUI-Canvas.
+
 1. **Nur** Branch `arena/019f6f2a-engine-program`; vor jedem Commit:
    `git log --oneline -1` + `git fetch origin arena/019f6f2a-engine-program -q`
    + HEAD==FETCH_HEAD prüfen (stiller Reset kam vor!).
 2. Nach jedem Paket: compilernahe Checks
    (`g++ -std=c++17 -fsyntax-only -Iinclude -Ithird_party ... <geänderte .cpp>`,
-   Qt-Dateien: Python-Tokenizer-Brace-Check), dann Commit (DE, ausführlich) +
-   Push.
+   Qt-Dateien: Python-Tokenizer-Brace-Check, **beide ImGui-Varianten** –
+   mit und ohne `-DRPGMAKER3D_ENABLE_IMGUI`), dann Commit (DE, ausführlich) + Push.
 3. `QL(`/`QStringLiteral(` nur mit Literalen.
 4. mruby-Zweig lokal nicht baubar → jede neue RubyVM-/Rgss-Methode auch im
    `#else`-Stub spiegeln; mruby-APIs gegen 4.0.0-Header verifizieren.

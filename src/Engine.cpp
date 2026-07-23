@@ -603,6 +603,7 @@ std::string Engine::ResolvePicturePathFor(const std::string& filename) const {
     static const char* kDirs[] = {
         "Graphics/Pictures/", "Graphics/Titles/", "Graphics/Gameovers/",
         "Graphics/Battlers/", // XP-Gegnergrafiken (Kampf)
+        "Graphics/Faces/",    // XP-Gesichter (Kampf-Statusfenster, PAKET 9)
         "Pictures/", "pictures/",
         "assets/pictures/", "assets/textures/", "assets/", ""
     };
@@ -1144,8 +1145,6 @@ void Engine::Update(float dt) {
             if (mBattleStatusEnemiesId < 0) {
                 mBattleStatusEnemiesId = GameUI::Get().AddScreenText(
                     "", Vec2(0.5f, 0.03f), Color(1.0f, 0.85f, 0.6f, 1.0f), 0.0f, true, 1.0f);
-                mBattleStatusPartyId = GameUI::Get().AddScreenText(
-                    "", Vec2(0.5f, 0.10f), Color(0.75f, 1.0f, 0.75f, 1.0f), 0.0f, true, 1.0f);
             }
             mBattleStatusTimer -= dt;
             if (mBattleStatusTimer <= 0.0f) {
@@ -1157,15 +1156,25 @@ void Engine::Update(float dt) {
                         ? ("[" + e.name + " besiegt]")
                         : (e.name + "  " + std::to_string(e.hp) + "/" + std::to_string(e.maxHp));
                 }
-                std::string party;
-                for (const auto& a : bs.Actors()) {
-                    if (!party.empty()) party += "    |    ";
-                    party += a.name + "  " + std::to_string(a.hp) + "/" + std::to_string(a.maxHp) +
-                             " HP, " + std::to_string(a.mp) + "/" + std::to_string(a.maxMp) + " MP";
-                    if (a.isDead) party += " (K.O.)";
-                }
                 GameUI::Get().SetScreenText(mBattleStatusEnemiesId, enemies);
-                GameUI::Get().SetScreenText(mBattleStatusPartyId, party);
+
+                // PAKET 9: Party-Status als XP-Statusfenster unten (Gesicht,
+                // Name, HP-/MP-Balken, K.O.) — ersetzt die fruehere Textzeile
+                std::vector<GameUI::BattleStatusEntry> statusEntries;
+                statusEntries.reserve(bs.Actors().size());
+                for (const auto& a : bs.Actors()) {
+                    GameUI::BattleStatusEntry se;
+                    se.name = a.name;
+                    se.hp = a.hp; se.maxHp = a.maxHp;
+                    se.mp = a.mp; se.maxMp = a.maxMp;
+                    se.dead = a.isDead;
+                    if (const auto* ad = Database::Get().GetActor(a.id)) {
+                        se.faceName = ad->faceName;
+                        se.faceIndex = ad->faceIndex;
+                    }
+                    statusEntries.push_back(std::move(se));
+                }
+                GameUI::Get().SetBattleStatusEntries(std::move(statusEntries));
 
                 // --- Gegner-Grafiken (Graphics/Battlers/<battlerName>, XP) ---
                 // Max. 4 Stueck; Bilder entstehen einmal und bleiben (kein
@@ -1205,10 +1214,9 @@ void Engine::Update(float dt) {
             }
         } else if (mBattleStatusEnemiesId >= 0) {
             GameUI::Get().RemoveScreenText(mBattleStatusEnemiesId);
-            GameUI::Get().RemoveScreenText(mBattleStatusPartyId);
             mBattleStatusEnemiesId = -1;
-            mBattleStatusPartyId = -1;
             mBattleStatusTimer = 0.0f;
+            GameUI::Get().ClearBattleStatus(); // PAKET 9: XP-Statusfenster aus
             for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
             mBattlerPicNames.clear(); // Gegner-Grafiken weg
         }
@@ -1232,10 +1240,9 @@ void Engine::Update(float dt) {
     // auch nach Titelwechsel/Playtest-Stopp (laeuft sonst als Geist weiter)
     if (mBattleStatusEnemiesId >= 0 && !BattleSystem::Get().IsInBattle()) {
         GameUI::Get().RemoveScreenText(mBattleStatusEnemiesId);
-        GameUI::Get().RemoveScreenText(mBattleStatusPartyId);
         mBattleStatusEnemiesId = -1;
-        mBattleStatusPartyId = -1;
         mBattleStatusTimer = 0.0f;
+        GameUI::Get().ClearBattleStatus(); // PAKET 9: XP-Statusfenster aus
         for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
         mBattlerPicNames.clear(); // Gegner-Grafiken weg
     }
