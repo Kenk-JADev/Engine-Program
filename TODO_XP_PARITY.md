@@ -364,8 +364,15 @@ am Ziel ab und wartet bis zum Ende.
   bewusst: NPC-Rendering + Interpreter laufen nativ (LoadMapEvents haette
   singleton-Seiteneffekte gehabt — Event-Export als moegliche Stufe 2b
   vermerkt, falls XP-Skripte ev.pages/list wirklich lesen muessen);
-  (b) `CommonEvents.rxdata` (Database hat noch keine CommonEvent-Struct ->
-  erst Paket „Gemeinsame Ereignisse" in der DB); (c) `BT_*.rxdata`
+  (b) ~~`CommonEvents.rxdata`~~ **ERLEDIGT 2026-07-23 (Stufe 3):** Quelle ist
+  `EventSystem::Get().GetCommonEvents()` (das CommonEvent-Struct existierte
+  dort — NICHT in Database, kein neues DB-Struct noetig). Export: trigger
+  Autorun→1/Parallel→2, switch_id, volle Befehlsliste — unsere
+  EventCommandCode-Enum ist exakt XP-kodiert (101..355), daher 1:1;
+  params gemischt (reine Ganzzahl-Strings als Integer, Rest als String),
+  Prelude setzt [param1..3, text, params...] zusammen und kuerzt
+  Trailing-Defaults (0/""), wie XP-Daten;
+  (c) `BT_*.rxdata`
   (Kampf-Testdaten) — Ausgabe der XP-Test-Schiene; (d) Marshal.load/save
   (Save files, 32 Aufrufe in den Skripten) bleibt bekannte Grenze —
   unser Slot-System stattdessen; (e) Ruby-Skript-Fehlertoleranz: Beim

@@ -17,6 +17,7 @@
 #include "rpgmaker3d/RgssPrelude.h"
 #include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/Map.h"
+#include "rpgmaker3d/EventSystem.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -2236,6 +2237,57 @@ static mrb_value rb_engine_db_fetch(mrb_state* mrb, mrb_value /*self*/) {
         DbSetStr(mrb, h, "word_attack", sys.wordAttack);
         DbSetStr(mrb, h, "word_guard", sys.wordDefend);
         return h; // einzelnes Objekt, kein Array
+    }
+    if (kind == "common_events") {
+        // Stufe 3 (CommonEvents.rxdata): Die gemeinsamen Ereignisse liegen
+        // im EventSystem (Tab „Gem. Events" der Datenbank). Unsere
+        // EventCommandCode-Enum ist exakt XP-kodiert (101..355), daher
+        // 1:1-Export; param1..3/text/parameters roh — der Prelude kuerzt
+        // nur Trailing-Defaults (XP-Daten enden nicht auf Defaults).
+        const auto& cevs = EventSystem::Get().GetCommonEvents();
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)cevs.size());
+        for (const auto& ce : cevs) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", ce.id);
+            DbSetStr(mrb, h, "name", ce.name);
+            // XP trigger: 0 = keiner, 1 = Autorun, 2 = Parallelprozess
+            int trig = 0;
+            if (ce.trigger == EventTrigger::Autorun) trig = 1;
+            else if (ce.trigger == EventTrigger::Parallel) trig = 2;
+            DbSetInt(mrb, h, "trigger", trig);
+            DbSetInt(mrb, h, "switch_id", ce.switchId);
+            mrb_value list = mrb_ary_new_capa(mrb, (mrb_int)ce.list.size());
+            for (const auto& cmd : ce.list) {
+                mrb_value ch = mrb_hash_new(mrb);
+                DbSetInt(mrb, ch, "code", (mrb_int)cmd.code);
+                DbSetInt(mrb, ch, "indent", cmd.indent);
+                DbSetInt(mrb, ch, "p1", cmd.param1);
+                DbSetInt(mrb, ch, "p2", cmd.param2);
+                DbSetInt(mrb, ch, "p3", cmd.param3);
+                DbSetStr(mrb, ch, "text", cmd.text);
+                mrb_value ps = mrb_ary_new_capa(mrb, (mrb_int)cmd.parameters.size());
+                for (const auto& pstr : cmd.parameters) {
+                    // Zahlen als Integer liefern (XP-Parameter sind gemischt
+                    // int/string), alles andere als String. Nur vollstaendig
+                    // geparste, nicht-leere Strings gelten als Zahl.
+                    if (!pstr.empty()) {
+                        char* endP = nullptr;
+                        const long v = std::strtol(pstr.c_str(), &endP, 10);
+                        if (endP && *endP == '\0') {
+                            mrb_ary_push(mrb, ps, RPG_MRB_INT_VALUE(mrb, v));
+                            continue;
+                        }
+                    }
+                    mrb_ary_push(mrb, ps,
+                                 mrb_str_new(mrb, pstr.data(), (mrb_int)pstr.size()));
+                }
+                mrb_hash_set(mrb, ch, mrb_symbol_value(mrb_intern_lit(mrb, "params")), ps);
+                mrb_ary_push(mrb, list, ch);
+            }
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "list")), list);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
     }
     if (kind == "mapinfos") {
         const auto& infos = db.MapInfos();

@@ -77,14 +77,16 @@ def load_data(filename)
     when "Tilesets.rxdata"    then "tilesets"
     when "System.rxdata"      then "system"
     when "MapInfos.rxdata"    then "mapinfos"
+    when "CommonEvents.rxdata" then "common_events"
     else nil
   end
   if kind.nil?
     raise RGSSError, "load_data(\"#{filename}\"): .rxdata/Marshal wird nicht " \
       "unterstuetzt und fuer diese Datei gibt es noch keine JSON-Bruecke " \
       "(verdrahtet: Actors, Classes, Skills, Items, Weapons, Armors, " \
-      "Enemies, Troops, States, Animations, Tilesets, System, MapInfos; " \
-      "offen u.a. Map%03d.rxdata, CommonEvents.rxdata - TODO_XP_PARITY.md)."
+      "Enemies, Troops, States, Animations, Tilesets, System, MapInfos, " \
+      "CommonEvents + Map%03d.rxdata; offen: BT_*.rxdata, Marshal-Saves " \
+      "- TODO_XP_PARITY.md)."
   end
   rows = __engine_db_fetch(kind)
   if rows.nil?
@@ -370,6 +372,32 @@ def __engine_db_build(kind, rows)
       mi.name = r[:name]; mi.parent_id = r[:parent_id]; mi.order = r[:order]
       mi.expanded = r[:expanded]; mi.scroll_x = r[:scroll_x]; mi.scroll_y = r[:scroll_y]
       out[r[:id]] = mi
+    end
+    return out
+  when "common_events"
+    out = [nil]
+    rows.each do |r|
+      ce = RPG::CommonEvent.new
+      ce.id = r[:id]; ce.name = r[:name]
+      ce.trigger = r[:trigger]; ce.switch_id = r[:switch_id]
+      ls = []
+      r[:list].each do |c|
+        ec = RPG::EventCommand.new
+        ec.code = c[:code]; ec.indent = c[:indent]
+        # Roh-Parameter (p1..p3, text, params[]) zusammenfuehren und
+        # Trailing-Defaults kuerzen (XP-Daten enden nicht auf 0/"") —
+        # unsere Codes sind exakt XP-kodiert (101..355).
+        pars = [c[:p1], c[:p2], c[:p3]]
+        pars.push(c[:text]) if c[:text] != ""
+        c[:params].each { |p| pars.push(p) }
+        while pars.length > 0 and (pars[-1] == 0 or pars[-1] == "")
+          pars.pop
+        end
+        ec.parameters = pars
+        ls.push(ec)
+      end
+      ce.list = ls
+      out.push(ce)
     end
     return out
   end
