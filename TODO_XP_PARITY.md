@@ -341,9 +341,28 @@ am Ziel ab und wartet bis zum Ende.
   Abschnitt „Fehlersuche: Player/Editor startet nicht (Windows)" erklärt
   die Schließt-sofort-Historie (vc_redist) + Vorschläge (installieren,
   statisch linken, engine.log [FATAL-STARTUP] lesen).
-- [ ] **XP_Scripts/ schrittweise lauffähig:** die 90 Original-Skripte gegen
-  unsere RGSS-Implementierung laufen lassen; jedes noch-fehlende API hier
-  eintragen. Bekannte dokumentierte Grenze: `load_data`/Marshal (rxdata).
+- [~] **XP_Scripts/ schrittweise lauffähig (IN ARBEIT, Stufe 1 am
+  2026-07-23):** die 90 Original-Skripte gegen unsere RGSS-Implementierung
+  laufen lassen; jedes noch-fehlende API hier eintragen.
+  **Stufe 1 ERLEDIGT — `load_data`-JSON-Bruecke:** RubyRgss.cpp hat neu
+  `__engine_db_fetch(kind)` (privater Kernel-Helfer, Release-`Database::Get()`
+  als generische Ruby-Hashes; mruby-4.0-Fallen behoben: `mrb_intern` ist
+  3-arg, `mrb_hash_set` braucht `<mruby/hash.h>`); RgssPrelude `load_data`
+  mappt die 13 Kerndateien (`Actors/Classes/Skills/Items/Weapons/Armors/
+  Enemies/Troops/States/Animations/Tilesets/System/MapInfos.rxdata`) darauf
+  und baut XP-konforme RPG::*-Objekte ([nil]-Shift, Index = ID; Tileset-
+  Flag-Tabellen mit +384-Offset; Actor-Parameter linear initial->final über
+  99 Level; Troop-Member ohne Koordinaten aufgereiht). XP-Skripte bekommen
+  ihre `$data_*` so aus dem Datenbank-Dialog-JSON.
+  **Offen (geordnet, nächste Stufen zuerst):** (a) `Map%03d.rxdata`-Brücke
+  (Engine-Map -> RPG::Map mit Table data — nötig für Game_Map.setup);
+  (b) `CommonEvents.rxdata` (Database hat noch keine CommonEvent-Struct ->
+  erst Paket „Gemeinsame Ereignisse" in der DB); (c) `BT_*.rxdata`
+  (Kampf-Testdaten) — Ausgabe der XP-Test-Schiene; (d) Marshal.load/save
+  (Save files, 32 Aufrufe in den Skripten) bleibt bekannte Grenze —
+  unser Slot-System stattdessen; (e) Ruby-Skript-Fehlertoleranz: Beim
+  Laden der 90 Skripte reihenweise prüfen, welche Klassen/Methoden uns
+  noch fehlen (Ergebnis hier pflegen).
 - [x] **Animations-Ziel (param1) beachten (ERLEDIGT 2026-07-23):**
   `EventSystem` loest param1 jetzt XP-konform auf (-1 Spieler / 0 dieses
   Event via `mEventId` / >0 Event-ID via `EventSystem::Get().GetEvent`,

@@ -15,6 +15,7 @@
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/RgssUI.h"
 #include "rpgmaker3d/RgssPrelude.h"
+#include "rpgmaker3d/Database.h"
 
 // ssize_t-Fix wie in RubyVM.cpp (MSVC kennt den POSIX-Typ nicht)
 #include <cstddef>
@@ -35,6 +36,7 @@ typedef std::intptr_t ssize_t;
 #include <mruby.h>
 #include <mruby/string.h>
 #include <mruby/array.h>
+#include <mruby/hash.h>
 #include <mruby/class.h>
 #include <mruby/variable.h>
 #include <mruby/error.h>
@@ -1828,6 +1830,381 @@ void RubyVM::BindRgssDrawables() {
     mrb_define_method(mMrb, tilemap, "update", rb_sprite_update, MRB_ARGS_NONE());
 }
 
+// ---------------------------------------------------------------------------
+// XP load_data-Bruecke (PAKET 6, XP_Scripts schrittweise): C++ liefert die
+// Engine-Datenbank (JSON) als generische Ruby-Hashes; der Prelude baut
+// daraus RPG::*-Objekte. Dadurch funktioniert load_data("Data/X.rxdata")
+// der Original-XP-Skripte gegen unsere JSON-Datenbank. Der XP-Index-0-nil-
+// Shift passiert auf der Ruby-Seite. Kind unbekannt -> nil -> Prelude-Fehler.
+// ---------------------------------------------------------------------------
+namespace {
+
+void DbSetInt(mrb_state* mrb, mrb_value h, const char* k, mrb_int v) {
+    // mruby 4.0: mrb_intern ist 3-argumentig (Laenge mitgeben)
+    mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern(mrb, k, strlen(k))),
+                 RPG_MRB_INT_VALUE(mrb, v));
+}
+void DbSetStr(mrb_state* mrb, mrb_value h, const char* k, const std::string& s) {
+    mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern(mrb, k, strlen(k))),
+                 mrb_str_new(mrb, s.data(), (mrb_int)s.size()));
+}
+void DbSetBool(mrb_state* mrb, mrb_value h, const char* k, bool v) {
+    mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern(mrb, k, strlen(k))),
+                 v ? mrb_true_value() : mrb_false_value());
+}
+mrb_value DbIntArray(mrb_state* mrb, const std::vector<int>& v) {
+    mrb_value a = mrb_ary_new_capa(mrb, (mrb_int)v.size());
+    for (int x : v) mrb_ary_push(mrb, a, RPG_MRB_INT_VALUE(mrb, x));
+    return a;
+}
+mrb_value DbStrArray(mrb_state* mrb, const std::vector<std::string>& v) {
+    mrb_value a = mrb_ary_new_capa(mrb, (mrb_int)v.size());
+    for (const auto& s : v)
+        mrb_ary_push(mrb, a, mrb_str_new(mrb, s.data(), (mrb_int)s.size()));
+    return a;
+}
+
+} // anonymous namespace
+
+static mrb_value rb_engine_db_fetch(mrb_state* mrb, mrb_value /*self*/) {
+    char* kindC = nullptr;
+    mrb_get_args(mrb, "z", &kindC);
+    const std::string kind = kindC ? kindC : "";
+    Database& db = Database::Get();
+
+    if (kind == "actors") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Actors().size());
+        for (const auto& a : db.Actors()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", a.id);
+            DbSetStr(mrb, h, "name", a.name);
+            // Klassen-ID ueber den Klassennamen suchen (unsere DB referenziert
+            // per Name, XP per ID) — unbekannt -> 1 (Erste Klasse).
+            int classId = 1;
+            for (const auto& c : db.Classes())
+                if (c.name == a.className) { classId = c.id; break; }
+            DbSetInt(mrb, h, "class_id", classId);
+            DbSetInt(mrb, h, "initial_level", a.initialLevel);
+            DbSetInt(mrb, h, "final_level", a.maxLevel);
+            DbSetStr(mrb, h, "character_name", a.characterName);
+            DbSetStr(mrb, h, "battler_name", a.battlerName);
+            // Parameter-Endwerte: Ruby interpoliert initial->final ueber 99 Level
+            DbSetInt(mrb, h, "init_mhp", a.initialStats.mhp);
+            DbSetInt(mrb, h, "init_mmp", a.initialStats.mmp);
+            DbSetInt(mrb, h, "init_atk", a.initialStats.atk);
+            DbSetInt(mrb, h, "init_def", a.initialStats.def);
+            DbSetInt(mrb, h, "init_mat", a.initialStats.mat);
+            DbSetInt(mrb, h, "init_agi", a.initialStats.agi);
+            DbSetInt(mrb, h, "fin_mhp", a.finalStats.mhp);
+            DbSetInt(mrb, h, "fin_mmp", a.finalStats.mmp);
+            DbSetInt(mrb, h, "fin_atk", a.finalStats.atk);
+            DbSetInt(mrb, h, "fin_def", a.finalStats.def);
+            DbSetInt(mrb, h, "fin_mat", a.finalStats.mat);
+            DbSetInt(mrb, h, "fin_agi", a.finalStats.agi);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "classes") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Classes().size());
+        for (const auto& c : db.Classes()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", c.id);
+            DbSetStr(mrb, h, "name", c.name);
+            mrb_value ls = mrb_ary_new_capa(mrb, (mrb_int)c.learnings.size());
+            for (const auto& l : c.learnings) {
+                mrb_value pair = mrb_ary_new_capa(mrb, 2);
+                mrb_ary_push(mrb, pair, RPG_MRB_INT_VALUE(mrb, l.level));
+                mrb_ary_push(mrb, pair, RPG_MRB_INT_VALUE(mrb, l.skillId));
+                mrb_ary_push(mrb, ls, pair);
+            }
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "learnings")), ls);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "skills") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Skills().size());
+        for (const auto& s : db.Skills()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", s.id);
+            DbSetStr(mrb, h, "name", s.name);
+            DbSetStr(mrb, h, "description", s.description);
+            DbSetInt(mrb, h, "scope", s.scope);
+            DbSetInt(mrb, h, "sp_cost", s.mpCost);
+            DbSetInt(mrb, h, "power", s.power);
+            // animation ist bei uns ein NAME; XP nutzt animation1_id
+            // -> ueber die System-Animationsliste zurueckindizieren (Index+1).
+            int animId = 0;
+            for (size_t ai = 0; ai < db.System().animations.size(); ++ai)
+                if (db.System().animations[ai] == s.animation) { animId = (int)ai + 1; break; }
+            DbSetInt(mrb, h, "animation1_id", animId);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "items") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Items().size());
+        for (const auto& it : db.Items()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", it.id);
+            DbSetStr(mrb, h, "name", it.name);
+            DbSetStr(mrb, h, "description", it.description);
+            DbSetInt(mrb, h, "price", it.price);
+            DbSetBool(mrb, h, "consumable", it.consumable);
+            DbSetInt(mrb, h, "scope", (mrb_int)it.scope); // Enum-Reihenfolge = XP
+            DbSetInt(mrb, h, "recover_hp", it.hpRecovery);
+            DbSetInt(mrb, h, "recover_sp", it.mpRecovery);
+            DbSetInt(mrb, h, "animation1_id", it.animationId);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "weapons") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Weapons().size());
+        for (const auto& w : db.Weapons()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", w.id);
+            DbSetStr(mrb, h, "name", w.name);
+            DbSetStr(mrb, h, "description", w.description);
+            DbSetInt(mrb, h, "price", w.price);
+            DbSetInt(mrb, h, "atk", w.atk);
+            DbSetInt(mrb, h, "animation1_id", w.animationId);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "armors") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Armors().size());
+        for (const auto& ar : db.Armors()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", ar.id);
+            DbSetStr(mrb, h, "name", ar.name);
+            DbSetStr(mrb, h, "description", ar.description);
+            DbSetInt(mrb, h, "price", ar.price);
+            DbSetInt(mrb, h, "pdef", ar.def);
+            DbSetInt(mrb, h, "mdef", ar.mdf);
+            DbSetInt(mrb, h, "kind", (mrb_int)ar.armorType); // 0..3 wie XP
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "enemies") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Enemies().size());
+        for (const auto& e : db.Enemies()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", e.id);
+            DbSetStr(mrb, h, "name", e.name);
+            DbSetStr(mrb, h, "battler_name", e.battlerName);
+            DbSetInt(mrb, h, "battler_hue", e.battlerHue);
+            DbSetInt(mrb, h, "maxhp", e.maxHp);
+            DbSetInt(mrb, h, "maxsp", e.maxMp);
+            // XP-Gegner: str/dex/agi/int (Kurven) + atk/pdef/mdef absolut.
+            // Unsere Stats mappen: atk->str/atk, def->dex/pdef, mdf->mdef,
+            // mat->int. luck hat XP an Gegnern nicht (bleibt Engine-intern).
+            DbSetInt(mrb, h, "str", e.atk);
+            DbSetInt(mrb, h, "dex", e.def);
+            DbSetInt(mrb, h, "agi", e.agi);
+            DbSetInt(mrb, h, "int", e.mat);
+            DbSetInt(mrb, h, "atk", e.atk);
+            DbSetInt(mrb, h, "pdef", e.def);
+            DbSetInt(mrb, h, "mdef", e.mdf);
+            DbSetInt(mrb, h, "exp", e.exp);
+            DbSetInt(mrb, h, "gold", e.gold);
+            DbSetInt(mrb, h, "item_id", e.dropItems.empty() ? 0 : e.dropItems[0]);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "troops") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Troops().size());
+        for (const auto& t : db.Troops()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", t.id);
+            DbSetStr(mrb, h, "name", t.name);
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "members")),
+                         DbIntArray(mrb, t.members));
+            mrb_value pages = mrb_ary_new_capa(mrb, (mrb_int)t.pages.size());
+            for (const auto& p : t.pages) {
+                mrb_value ph = mrb_hash_new(mrb);
+                DbSetBool(mrb, ph, "turn_valid", p.turnValid);
+                DbSetInt(mrb, ph, "turn_a", p.turnA);
+                DbSetInt(mrb, ph, "turn_b", p.turnB);
+                DbSetBool(mrb, ph, "enemy_valid", p.enemyValid);
+                DbSetInt(mrb, ph, "enemy_index", p.enemyIndex);
+                DbSetInt(mrb, ph, "enemy_hp", p.enemyHpBelow);
+                DbSetBool(mrb, ph, "actor_valid", p.actorValid);
+                DbSetInt(mrb, ph, "actor_id", p.actorIndex);
+                DbSetInt(mrb, ph, "actor_hp", p.actorHpBelow);
+                DbSetBool(mrb, ph, "switch_valid", p.switchValid);
+                DbSetInt(mrb, ph, "switch_id", p.switchId);
+                DbSetInt(mrb, ph, "span", p.span);
+                DbSetInt(mrb, ph, "common_event_id", p.commonEventId);
+                mrb_ary_push(mrb, pages, ph);
+            }
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "pages")), pages);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "states") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.States().size());
+        for (const auto& s : db.States()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", s.id);
+            DbSetStr(mrb, h, "name", s.name);
+            DbSetInt(mrb, h, "restriction", s.restriction);
+            DbSetInt(mrb, h, "rating", s.priority); // XP rating = unsere Prioritaet
+            DbSetBool(mrb, h, "slip_damage", s.hpDrainRate > 0.0f);
+            DbSetBool(mrb, h, "battle_only", s.removeAtBattleEnd);
+            DbSetInt(mrb, h, "hold_turn", s.holdTurn);
+            DbSetInt(mrb, h, "auto_release_prob", s.autoRemovalTiming != 0 ? 100 : 0);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "animations") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.AnimationSet().size());
+        for (const auto& an : db.AnimationSet()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", an.id);
+            DbSetStr(mrb, h, "name", an.name);
+            DbSetStr(mrb, h, "animation_name", an.file);
+            DbSetInt(mrb, h, "position", an.position);
+            DbSetInt(mrb, h, "frame_max", an.frames.empty() ? 1 : (mrb_int)an.frames.size());
+            mrb_value frames = mrb_ary_new_capa(mrb, (mrb_int)an.frames.size());
+            for (const auto& f : an.frames) {
+                mrb_value fh = mrb_hash_new(mrb);
+                mrb_value cells = mrb_ary_new_capa(mrb, (mrb_int)f.cells.size());
+                for (const auto& c : f.cells) {
+                    mrb_value cell = mrb_ary_new_capa(mrb, 6);
+                    mrb_ary_push(mrb, cell, RPG_MRB_INT_VALUE(mrb, c.cellId));
+                    mrb_ary_push(mrb, cell, RPG_MRB_INT_VALUE(mrb, c.x));
+                    mrb_ary_push(mrb, cell, RPG_MRB_INT_VALUE(mrb, c.y));
+                    mrb_ary_push(mrb, cell, RPG_MRB_INT_VALUE(mrb, c.scale));
+                    mrb_ary_push(mrb, cell, RPG_MRB_INT_VALUE(mrb, c.rotation));
+                    mrb_ary_push(mrb, cell, RPG_MRB_INT_VALUE(mrb, c.opacity));
+                    mrb_ary_push(mrb, cells, cell);
+                }
+                mrb_hash_set(mrb, fh, mrb_symbol_value(mrb_intern_lit(mrb, "cells")), cells);
+                DbSetStr(mrb, fh, "se_name", f.seName);
+                DbSetInt(mrb, fh, "se_volume", f.seVolume);
+                DbSetInt(mrb, fh, "se_pitch", f.sePitch);
+                DbSetInt(mrb, fh, "flash_scope", f.flashScope);
+                DbSetInt(mrb, fh, "flash_r", f.flashR);
+                DbSetInt(mrb, fh, "flash_g", f.flashG);
+                DbSetInt(mrb, fh, "flash_b", f.flashB);
+                DbSetInt(mrb, fh, "flash_duration", f.flashDuration);
+                mrb_ary_push(mrb, frames, fh);
+            }
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "frames")), frames);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "tilesets") {
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)db.Tilesets().size());
+        for (const auto& ts : db.Tilesets()) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", ts.id);
+            DbSetStr(mrb, h, "name", ts.name);
+            DbSetStr(mrb, h, "tileset_name", ts.tilesetName);
+            mrb_value autos = mrb_ary_new_capa(mrb, 7);
+            for (int i = 0; i < 7; ++i)
+                mrb_ary_push(mrb, autos,
+                             mrb_str_new(mrb, ts.autotileNames[i].data(),
+                                         (mrb_int)ts.autotileNames[i].size()));
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "autotile_names")), autos);
+            DbSetStr(mrb, h, "panorama_name", ts.panoramaName);
+            DbSetStr(mrb, h, "fog_name", ts.fogName);
+            DbSetStr(mrb, h, "battleback_name", ts.battlebackName);
+            // Rohtabellen ohne den RGSS-Autotile-Offset (0..383) — die
+            // Ruby-Seite baut daraus Tables mit XP-Offset 384.
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "passages")),
+                         DbIntArray(mrb, ts.flags));
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "priorities")),
+                         DbIntArray(mrb, ts.priority));
+            mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "terrain_tags")),
+                         DbIntArray(mrb, ts.terrainTags));
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    if (kind == "system") {
+        const SystemData& sys = db.System();
+        mrb_value h = mrb_hash_new(mrb);
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "party_members")),
+                     DbIntArray(mrb, sys.initialParty));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "elements")),
+                     DbStrArray(mrb, sys.elements));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "switches")),
+                     DbStrArray(mrb, sys.switches));
+        mrb_hash_set(mrb, h, mrb_symbol_value(mrb_intern_lit(mrb, "variables")),
+                     DbStrArray(mrb, sys.variables));
+        DbSetStr(mrb, h, "windowskin_name", sys.windowskinName);
+        DbSetStr(mrb, h, "title_name", sys.titleGraphicName);
+        DbSetStr(mrb, h, "gameover_name", sys.gameoverGraphicName);
+        DbSetStr(mrb, h, "battle_transition", sys.battleTransitionName);
+        DbSetStr(mrb, h, "title_bgm", sys.titleBgm);
+        DbSetStr(mrb, h, "battle_bgm", sys.battleBgm);
+        DbSetStr(mrb, h, "battle_end_me", sys.battleEndMe);
+        DbSetStr(mrb, h, "gameover_me", sys.gameoverMe);
+        DbSetStr(mrb, h, "cursor_se", sys.cursorSe);
+        DbSetStr(mrb, h, "decision_se", sys.decisionSe);
+        DbSetStr(mrb, h, "cancel_se", sys.cancelSe);
+        DbSetStr(mrb, h, "buzzer_se", sys.buzzerSe);
+        DbSetStr(mrb, h, "equip_se", sys.equipSe);
+        DbSetStr(mrb, h, "shop_se", sys.shopSe);
+        DbSetStr(mrb, h, "save_se", sys.saveSe);
+        DbSetStr(mrb, h, "load_se", sys.loadSe);
+        DbSetStr(mrb, h, "battle_start_se", sys.battleStartSe);
+        DbSetStr(mrb, h, "escape_se", sys.escapeSe);
+        DbSetStr(mrb, h, "actor_collapse_se", sys.actorCollapseSe);
+        DbSetStr(mrb, h, "enemy_collapse_se", sys.enemyCollapseSe);
+        DbSetInt(mrb, h, "start_map_id", sys.startMapId);
+        DbSetInt(mrb, h, "start_x", sys.startX);
+        DbSetInt(mrb, h, "start_y", sys.startY);
+        // word_* als flache Liste im XP-Words-Reihenfolgeprofil
+        DbSetStr(mrb, h, "word_gold", sys.currencyUnit);
+        DbSetStr(mrb, h, "word_hp", sys.wordHp);
+        DbSetStr(mrb, h, "word_sp", sys.wordSp);
+        DbSetStr(mrb, h, "word_str", sys.wordStr);
+        DbSetStr(mrb, h, "word_dex", sys.wordDex);
+        DbSetStr(mrb, h, "word_agi", sys.wordAgi);
+        DbSetStr(mrb, h, "word_int", sys.wordInt);
+        DbSetStr(mrb, h, "word_atk", sys.wordAtk);
+        DbSetStr(mrb, h, "word_pdef", sys.wordPdef);
+        DbSetStr(mrb, h, "word_mdef", sys.wordMdef);
+        DbSetStr(mrb, h, "word_skill", sys.wordSkill);
+        DbSetStr(mrb, h, "word_item", sys.wordItem);
+        DbSetStr(mrb, h, "word_weapon", sys.wordWeapon);
+        DbSetStr(mrb, h, "word_armor1", sys.wordShield);
+        DbSetStr(mrb, h, "word_armor2", sys.wordHelmet);
+        DbSetStr(mrb, h, "word_armor3", sys.wordBodyArmor);
+        DbSetStr(mrb, h, "word_armor4", sys.wordAccessory);
+        DbSetStr(mrb, h, "word_attack", sys.wordAttack);
+        DbSetStr(mrb, h, "word_guard", sys.wordDefend);
+        return h; // einzelnes Objekt, kein Array
+    }
+    if (kind == "mapinfos") {
+        const auto& infos = db.MapInfos();
+        mrb_value out = mrb_ary_new_capa(mrb, (mrb_int)infos.size());
+        for (const auto& mi : infos) {
+            mrb_value h = mrb_hash_new(mrb);
+            DbSetInt(mrb, h, "id", mi.id);
+            DbSetStr(mrb, h, "name", mi.name);
+            DbSetInt(mrb, h, "parent_id", mi.parentId);
+            DbSetInt(mrb, h, "order", mi.order);
+            DbSetBool(mrb, h, "expanded", mi.expanded);
+            DbSetInt(mrb, h, "scroll_x", mi.scrollX);
+            DbSetInt(mrb, h, "scroll_y", mi.scrollY);
+            mrb_ary_push(mrb, out, h);
+        }
+        return out;
+    }
+    return mrb_nil_value(); // unbekannt/nicht verdrahtet -> Prelude meldet das
+}
+
 void RubyVM::BindRgssGraphics() {
     // Graphics-Modul
     struct RClass* gfx = mrb_define_module(mMrb, "Graphics");
@@ -1884,6 +2261,11 @@ void RubyVM::BindRgssGraphics() {
     mrb_define_module_function(mMrb, audio, "bgm_fade", rb_audio_bgm_fade_xp, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, audio, "bgs_fade", rb_audio_bgs_fade_xp, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, audio, "me_fade", rb_audio_me_fade_xp, MRB_ARGS_REQ(1));
+
+    // XP load_data-Bruecke (PAKET 6): Engine-DB (JSON) -> Ruby-Hashes.
+    // Privater Kernel-Helfer; der Prelude baut daraus die RPG::*-Objekte.
+    mrb_define_method(mMrb, mMrb->kernel_module, "__engine_db_fetch",
+                      rb_engine_db_fetch, MRB_ARGS_REQ(1));
 }
 
 void RubyVM::BindRgssWindowEx() {

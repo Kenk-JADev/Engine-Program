@@ -37,10 +37,304 @@ def rgss_stop(*args)
   # Engine laeuft framebasiert; Stop ist hier ein no-op (Kompatibilitaet).
 end
 
+# ---------------------------------------------------------------------------
+# XP load_data-Bruecke (PAKET 6, XP_Scripts schrittweise): Die Original-
+# Skripte laden $data_* per load_data("Data/X.rxdata"). Unsere Datenbank ist
+# JSON im Datenbank-Dialog — die Bruecke mappt die bekannten rxdata-Namen
+# auf __engine_db_fetch (nativ, liefert generische Hashes) und baut daraus
+# XP-konforme RPG::*-Objekte ([nil] + Eintraege, Index = ID wie in XP).
+# Nicht verdrahtete Dateien (u.a. Map%03d.rxdata, CommonEvents.rxdata,
+# BT_*.rxdata) werfen weiterhin den erklaerenden Fehler — schrittweise.
+# ---------------------------------------------------------------------------
 def load_data(filename)
-  raise RGSSError, "load_data(\"#{filename}\"): .rxdata/Marshal wird nicht " \
-    "unterstuetzt - die Datenbank liegt im Engine-Datenbank-Dialog " \
-    "(JSON), Laufzeitzugriff ueber die $game_*-Objekte."
+  base = filename.to_s
+  slash = base.rindex("/")
+  base = base[(slash + 1)..-1] if slash
+  kind = case base
+    when "Actors.rxdata"      then "actors"
+    when "Classes.rxdata"     then "classes"
+    when "Skills.rxdata"      then "skills"
+    when "Items.rxdata"       then "items"
+    when "Weapons.rxdata"     then "weapons"
+    when "Armors.rxdata"      then "armors"
+    when "Enemies.rxdata"     then "enemies"
+    when "Troops.rxdata"      then "troops"
+    when "States.rxdata"      then "states"
+    when "Animations.rxdata"  then "animations"
+    when "Tilesets.rxdata"    then "tilesets"
+    when "System.rxdata"      then "system"
+    when "MapInfos.rxdata"    then "mapinfos"
+    else nil
+  end
+  if kind.nil?
+    raise RGSSError, "load_data(\"#{filename}\"): .rxdata/Marshal wird nicht " \
+      "unterstuetzt und fuer diese Datei gibt es noch keine JSON-Bruecke " \
+      "(verdrahtet: Actors, Classes, Skills, Items, Weapons, Armors, " \
+      "Enemies, Troops, States, Animations, Tilesets, System, MapInfos; " \
+      "offen u.a. Map%03d.rxdata, CommonEvents.rxdata - TODO_XP_PARITY.md)."
+  end
+  rows = __engine_db_fetch(kind)
+  if rows.nil?
+    raise RGSSError, "load_data(\"#{filename}\"): Engine-Datenbank leer."
+  end
+  __engine_db_build(kind, rows)
+end
+
+# Baut aus den generischen DB-Hashes (nativ) die RPG::*-Objekte.
+def __engine_db_build(kind, rows)
+  case kind
+  when "actors"
+    out = [nil]
+    rows.each do |r|
+      a = RPG::Actor.new
+      a.id = r[:id]; a.name = r[:name]; a.class_id = r[:class_id]
+      a.initial_level = r[:initial_level]; a.final_level = r[:final_level]
+      a.character_name = r[:character_name]; a.battler_name = r[:battler_name]
+      # Parameterkurve: linear initial -> final ueber 1..99
+      # (XP: maxhp/maxsp/str/dex/agi/int; unsere Stats: mhp/mmp/atk/def/mat/agi)
+      t = Table.new(6, 100)
+      for lv in 1..99
+        f = (lv - 1) / 98.0
+        t[0, lv] = (r[:init_mhp] + (r[:fin_mhp] - r[:init_mhp]) * f).to_i
+        t[1, lv] = (r[:init_mmp] + (r[:fin_mmp] - r[:init_mmp]) * f).to_i
+        t[2, lv] = (r[:init_atk] + (r[:fin_atk] - r[:init_atk]) * f).to_i
+        t[3, lv] = (r[:init_def] + (r[:fin_def] - r[:init_def]) * f).to_i
+        t[4, lv] = (r[:init_agi] + (r[:fin_agi] - r[:init_agi]) * f).to_i
+        t[5, lv] = (r[:init_mat] + (r[:fin_mat] - r[:init_mat]) * f).to_i
+      end
+      a.parameters = t
+      out.push(a)
+    end
+    return out
+  when "classes"
+    out = [nil]
+    rows.each do |r|
+      c = RPG::Class.new
+      c.id = r[:id]; c.name = r[:name]
+      ls = []
+      r[:learnings].each do |pair|
+        l = RPG::Class::Learning.new
+        l.level = pair[0]; l.skill_id = pair[1]
+        ls.push(l)
+      end
+      c.learnings = ls
+      out.push(c)
+    end
+    return out
+  when "skills"
+    out = [nil]
+    rows.each do |r|
+      s = RPG::Skill.new
+      s.id = r[:id]; s.name = r[:name]; s.description = r[:description]
+      s.scope = r[:scope]; s.sp_cost = r[:sp_cost]; s.power = r[:power]
+      s.animation1_id = r[:animation1_id]
+      out.push(s)
+    end
+    return out
+  when "items"
+    out = [nil]
+    rows.each do |r|
+      i = RPG::Item.new
+      i.id = r[:id]; i.name = r[:name]; i.description = r[:description]
+      i.price = r[:price]; i.consumable = r[:consumable]; i.scope = r[:scope]
+      i.recover_hp = r[:recover_hp]; i.recover_sp = r[:recover_sp]
+      i.animation1_id = r[:animation1_id]
+      out.push(i)
+    end
+    return out
+  when "weapons"
+    out = [nil]
+    rows.each do |r|
+      w = RPG::Weapon.new
+      w.id = r[:id]; w.name = r[:name]; w.description = r[:description]
+      w.price = r[:price]; w.atk = r[:atk]; w.animation1_id = r[:animation1_id]
+      out.push(w)
+    end
+    return out
+  when "armors"
+    out = [nil]
+    rows.each do |r|
+      ar = RPG::Armor.new
+      ar.id = r[:id]; ar.name = r[:name]; ar.description = r[:description]
+      ar.price = r[:price]; ar.pdef = r[:pdef]; ar.mdef = r[:mdef]
+      ar.kind = r[:kind]
+      out.push(ar)
+    end
+    return out
+  when "enemies"
+    out = [nil]
+    rows.each do |r|
+      e = RPG::Enemy.new
+      e.id = r[:id]; e.name = r[:name]
+      e.battler_name = r[:battler_name]; e.battler_hue = r[:battler_hue]
+      e.maxhp = r[:maxhp]; e.maxsp = r[:maxsp]
+      e.str = r[:str]; e.dex = r[:dex]; e.agi = r[:agi]; e.int = r[:int]
+      e.atk = r[:atk]; e.pdef = r[:pdef]; e.mdef = r[:mdef]
+      e.exp = r[:exp]; e.gold = r[:gold]
+      e.item_id = r[:item_id] if r[:item_id] > 0
+      out.push(e)
+    end
+    return out
+  when "troops"
+    out = [nil]
+    rows.each do |r|
+      t = RPG::Troop.new
+      t.id = r[:id]; t.name = r[:name]
+      ms = []
+      r[:members].each do |eid|
+        m = RPG::Troop::Member.new
+        m.enemy_id = eid
+        # XP-Member-Koordinaten speichert unsere DB nicht -> in einer Reihe
+        # auffaechern, damit Spriteset_Battle sie nicht stapelt (Naeherung).
+        m.x = 120 + ms.length * 100; m.y = 250
+        ms.push(m)
+      end
+      t.members = ms
+      ps = []
+      r[:pages].each do |ph|
+        p = RPG::Troop::Page.new
+        p.span = ph[:span]
+        c = p.condition
+        c.turn_valid = ph[:turn_valid]; c.turn_a = ph[:turn_a]; c.turn_b = ph[:turn_b]
+        c.enemy_valid = ph[:enemy_valid]; c.enemy_index = ph[:enemy_index]
+        c.enemy_hp = ph[:enemy_hp]
+        c.actor_valid = ph[:actor_valid]; c.actor_id = ph[:actor_id]
+        c.actor_hp = ph[:actor_hp]
+        c.switch_valid = ph[:switch_valid]; c.switch_id = ph[:switch_id]
+        if ph[:common_event_id] > 0
+          ec = RPG::EventCommand.new
+          ec.code = 117; ec.parameters = [ph[:common_event_id]]
+          p.list = [ec]
+        end
+        ps.push(p)
+      end
+      t.pages = ps
+      out.push(t)
+    end
+    return out
+  when "states"
+    out = [nil]
+    rows.each do |r|
+      s = RPG::State.new
+      s.id = r[:id]; s.name = r[:name]
+      s.restriction = r[:restriction]; s.rating = r[:rating]
+      s.slip_damage = r[:slip_damage]; s.battle_only = r[:battle_only]
+      s.hold_turn = r[:hold_turn]; s.auto_release_prob = r[:auto_release_prob]
+      out.push(s)
+    end
+    return out
+  when "animations"
+    out = [nil]
+    rows.each do |r|
+      an = RPG::Animation.new
+      an.id = r[:id]; an.name = r[:name]
+      an.animation_name = r[:animation_name]; an.position = r[:position]
+      an.frame_max = r[:frame_max]
+      fr = []
+      ti = []
+      r[:frames].each_with_index do |fh, fi|
+        f = RPG::Animation::Frame.new
+        cells = fh[:cells]
+        f.cell_max = cells.length
+        if f.cell_max > 0
+          t = Table.new(f.cell_max, 8)
+          cells.each_with_index do |c, j|
+            t[j, 0] = c[0]; t[j, 1] = c[1]; t[j, 2] = c[2]
+            t[j, 3] = c[3]; t[j, 4] = c[4]; t[j, 5] = 0 # flip
+            t[j, 6] = c[5]; t[j, 7] = 0 # blend
+          end
+          f.cell_data = t
+        end
+        fr.push(f)
+        if fh[:se_name] != "" or fh[:flash_scope] > 0
+          tm = RPG::Animation::Timing.new
+          tm.frame = fi
+          tm.se = RPG::AudioFile.new(fh[:se_name], fh[:se_volume], fh[:se_pitch])
+          tm.flash_scope = fh[:flash_scope]
+          tm.flash_color = Color.new(fh[:flash_r], fh[:flash_g], fh[:flash_b], 255)
+          tm.flash_duration = fh[:flash_duration]
+          tm.condition = 0
+          ti.push(tm)
+        end
+      end
+      an.frames = fr
+      an.timings = ti
+      out.push(an)
+    end
+    return out
+  when "tilesets"
+    out = [nil]
+    rows.each do |r|
+      ts = RPG::Tileset.new
+      ts.id = r[:id]; ts.name = r[:name]; ts.tileset_name = r[:tileset_name]
+      ts.autotile_names = r[:autotile_names]
+      ts.panorama_name = r[:panorama_name]; ts.fog_name = r[:fog_name]
+      ts.battleback_name = r[:battleback_name]
+      # Unsere Flag-Tabellen ohne RGSS-Autotile-Offset -> +384 verschieben
+      n = r[:passages].length
+      pas = Table.new(384 + n)
+      pri = Table.new(384 + n)
+      ter = Table.new(384 + n)
+      for i in 0...n
+        pas[384 + i] = r[:passages][i]
+        pv = r[:priorities][i];  pri[384 + i] = pv || 0
+        tg = r[:terrain_tags][i]; ter[384 + i] = tg || 0
+      end
+      ts.passages = pas; ts.priorities = pri; ts.terrain_tags = ter
+      out.push(ts)
+    end
+    return out
+  when "system"
+    r = rows
+    s = RPG::System.new
+    s.party_members = r[:party_members].length > 0 ? r[:party_members] : [1]
+    elems = [nil]; r[:elements].each { |e| elems.push(e) }
+    s.elements = elems
+    sw = [nil]; r[:switches].each { |nm| sw.push(nm) }
+    s.switches = sw
+    va = [nil]; r[:variables].each { |nm| va.push(nm) }
+    s.variables = va
+    s.windowskin_name = r[:windowskin_name]
+    s.title_name = r[:title_name]; s.gameover_name = r[:gameover_name]
+    s.battle_transition = r[:battle_transition]
+    s.title_bgm = RPG::AudioFile.new(r[:title_bgm])
+    s.battle_bgm = RPG::AudioFile.new(r[:battle_bgm])
+    s.battle_end_me = RPG::AudioFile.new(r[:battle_end_me])
+    s.gameover_me = RPG::AudioFile.new(r[:gameover_me])
+    s.cursor_se = RPG::AudioFile.new(r[:cursor_se])
+    s.decision_se = RPG::AudioFile.new(r[:decision_se])
+    s.cancel_se = RPG::AudioFile.new(r[:cancel_se])
+    s.buzzer_se = RPG::AudioFile.new(r[:buzzer_se])
+    s.equip_se = RPG::AudioFile.new(r[:equip_se])
+    s.shop_se = RPG::AudioFile.new(r[:shop_se])
+    s.save_se = RPG::AudioFile.new(r[:save_se])
+    s.load_se = RPG::AudioFile.new(r[:load_se])
+    s.battle_start_se = RPG::AudioFile.new(r[:battle_start_se])
+    s.escape_se = RPG::AudioFile.new(r[:escape_se])
+    s.actor_collapse_se = RPG::AudioFile.new(r[:actor_collapse_se])
+    s.enemy_collapse_se = RPG::AudioFile.new(r[:enemy_collapse_se])
+    w = RPG::System::Words.new
+    w.gold = r[:word_gold]; w.hp = r[:word_hp]; w.sp = r[:word_sp]
+    w.str = r[:word_str]; w.dex = r[:word_dex]; w.agi = r[:word_agi]
+    w.int = r[:word_int]; w.atk = r[:word_atk]; w.pdef = r[:word_pdef]
+    w.mdef = r[:word_mdef]; w.skill = r[:word_skill]; w.item = r[:word_item]
+    w.weapon = r[:word_weapon]; w.armor1 = r[:word_armor1]
+    w.armor2 = r[:word_armor2]; w.armor3 = r[:word_armor3]
+    w.armor4 = r[:word_armor4]; w.attack = r[:word_attack]; w.guard = r[:word_guard]
+    s.words = w
+    s.start_map_id = r[:start_map_id]; s.start_x = r[:start_x]; s.start_y = r[:start_y]
+    return s
+  when "mapinfos"
+    out = {}
+    rows.each do |r|
+      mi = RPG::MapInfo.new
+      mi.name = r[:name]; mi.parent_id = r[:parent_id]; mi.order = r[:order]
+      mi.expanded = r[:expanded]; mi.scroll_x = r[:scroll_x]; mi.scroll_y = r[:scroll_y]
+      out[r[:id]] = mi
+    end
+    return out
+  end
+  nil
 end
 
 def save_data(obj, filename)
