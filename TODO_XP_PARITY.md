@@ -402,8 +402,21 @@ am Ziel ab und wartet bis zum Ende.
       mruby-4.0-Falle direkt gefangen: `mrb_int(v)` ist dort 2-arg-Makro
       (`mrb_int(mrb, v)`) statt 3.x-Funktion — `mrb_as_int` genutzt, und
       in statischen rb_*-Funktionen heisst der State `mrb` (nicht mMrb);
-  (g) Game_Actors/Game_Troop/Game_Screen-Bruecke zum nativen Kampf/
-      Screen-System (Game_Battler-Faehigkeiten = groesster Brocken);
+  (g) **TEIL 1 erledigt 2026-07-23: `$game_actors` + `Game_Actor`-Bruecke**
+      (RubyVM.cpp + Prelude): native Klasse Game_Actor wrappt die
+      GameActor-Laufzeitstruct (Party-Member Quelle; Nicht-Party-Akteure =
+      fluechtige Setup-Instanz aus der Datenbank, dokumentierte Naeherung).
+      Voll nativ: id/actor_id, exist?, name/=, class_id, level/=, exp/=,
+      next_exp (ExpForNextLevel), add_exp (-> Levelups), hp/sp inkl.
+      XP-Clamp-Setter, maxhp/maxsp/atk/def/agi (mit Equip-Boni wie XP),
+      dead?, recover_all, states + add_state/remove_state, skills +
+      learn_skill/forget_skill, weapon_id, armor1..4_id, character_name,
+      face_index. Prelude: `Game_Actors`-Sammlung mit Instanz-Cache pro ID
+      ($game_actors = XP-Identitaet) + Komfort-Reopen: `int` (aus der
+      Akteur-Parameter-Table der load_data-Bruecke), weapon/armor1..4 als
+      Objekte. **Noch offen:** Game_Troop- + Game_Screen-Bruecke (Kampf-
+      Zustand/Pictures/Flash); Game_Actor-Equip-MUTATOREN (change_equip),
+      Name-Input-Verdahtung (name= liegt aktuell nur auf der Runtime);
   (h) Scene_*-Framework: XP Main.rb treibt `while $scene != nil` —
       unsere Engine ownet den Frame-Loop; Bruecke = $scene bereitstellen
       + Scene.update pro Frame aufrufen (Architektur-Entscheid: Opt-in-

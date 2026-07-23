@@ -426,6 +426,47 @@ def __engine_db_build(kind, rows)
   nil
 end
 
+# ---------------------------------------------------------------------------
+# XP $game_actors (Stufe 4g): Die Klasse Game_Actor ist nativ an die
+# Party-Laufzeit (GameActor-Struct) gekoppelt; diese Sammlung liefert die
+# XP-Identitaet (pro Akteur-ID immer dieselbe Instanz, Cache).
+# ---------------------------------------------------------------------------
+class Game_Actors
+  def initialize
+    @cache = {}
+  end
+  def [](actor_id)
+    @cache[actor_id] ||= Game_Actor.new(actor_id)
+  end
+end
+$game_actors = Game_Actors.new
+
+class Game_Actor
+  # XP-Bequemlichkeit, nativ nicht abgedeckt: Intelligenz aus der Akteur-
+  # Parameter-Tabelle der load_data-Bruecke (lineare init->fin-Kurve).
+  def int
+    all = ($__engine_db_actors ||= load_data("Data/Actors.rxdata"))
+    row = all[id]
+    row ? row.parameters[5, level] : 0
+  end
+  # Ausruestung als Objekte (XP liest z.B. actor.weapon.atk)
+  def weapon
+    ($__engine_db_weapons ||= load_data("Data/Weapons.rxdata"))[weapon_id]
+  end
+  def armor1
+    ($__engine_db_armors ||= load_data("Data/Armors.rxdata"))[armor1_id]
+  end
+  def armor2
+    ($__engine_db_armors ||= load_data("Data/Armors.rxdata"))[armor2_id]
+  end
+  def armor3
+    ($__engine_db_armors ||= load_data("Data/Armors.rxdata"))[armor3_id]
+  end
+  def armor4
+    ($__engine_db_armors ||= load_data("Data/Armors.rxdata"))[armor4_id]
+  end
+end
+
 def save_data(obj, filename)
   raise RGSSError, "save_data: Marshal wird nicht unterstuetzt " \
     "(Spielstaende: Game.save(slot))."

@@ -1746,6 +1746,186 @@ static mrb_value rb_game_map_refresh(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+// ---------- XP Game_Actor-Bruecke (PAKET 6, XP_Scripts Stufe 4g) ----------
+// Wrappt die native GameActor-Laufzeitstruktur (Party-Member). Nicht-Party-
+// Akteure bekommen eine fluechtige Setup-Instanz aus der Datenbank (ehrliche
+// Naeherung — XP haelt sie persistent, bei uns zaehlt die Party als Quelle).
+static GameActor* EngineGameActorFor(int actorId) {
+    if (auto* a = Game::Get().Party().GetActor(actorId)) return a;
+    static std::unordered_map<int, GameActor> s_orphans;
+    auto it = s_orphans.find(actorId);
+    if (it != s_orphans.end()) return &it->second;
+    GameActor fresh;
+    fresh.Setup(actorId);
+    auto res = s_orphans.emplace(actorId, std::move(fresh));
+    return &res.first->second;
+}
+
+static mrb_int GActorId(mrb_state* mrb, mrb_value self) {
+    return mrb_as_int(mrb, mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@actor_id")));
+}
+
+static mrb_value rb_gactor_initialize(mrb_state* mrb, mrb_value self) {
+    mrb_int id = 1;
+    mrb_get_args(mrb, "|i", &id);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@actor_id"), mrb_int_value(mrb, id));
+    return self;
+}
+static mrb_value rb_gactor_id(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorId(mrb, self));
+}
+static GameActor* GActorPtr(mrb_state* mrb, mrb_value self) {
+    return EngineGameActorFor((int)GActorId(mrb, self));
+}
+static mrb_value rb_gactor_exist(mrb_state* mrb, mrb_value self) {
+    const bool inParty = Game::Get().Party().GetActor((int)GActorId(mrb, self)) != nullptr;
+    return mrb_bool_value(inParty);
+}
+static mrb_value rb_gactor_name(mrb_state* mrb, mrb_value self) {
+    const auto* a = GActorPtr(mrb, self);
+    return mrb_str_new(mrb, a->name.data(), (mrb_int)a->name.size());
+}
+static mrb_value rb_gactor_name_set(mrb_state* mrb, mrb_value self) {
+    char* s = nullptr;
+    mrb_get_args(mrb, "z", &s);
+    auto* a = GActorPtr(mrb, self);
+    a->name = s ? s : "";
+    return mrb_str_new(mrb, a->name.data(), (mrb_int)a->name.size());
+}
+static mrb_value rb_gactor_class_id(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->classId);
+}
+static mrb_value rb_gactor_level(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->level);
+}
+static mrb_value rb_gactor_level_set(mrb_state* mrb, mrb_value self) {
+    mrb_int lv = 1;
+    mrb_get_args(mrb, "i", &lv);
+    auto* a = GActorPtr(mrb, self);
+    const int clamped = (int)std::clamp<mrb_int>(lv, 1, 99);
+    a->level = clamped;
+    // XP-Annahme: Level wird gesetzt ohne Skill-Nachlernen (Skripte regeln
+    // das bei Bedarf ueber learn_skill / Exp-Wege).
+    return mrb_int_value(mrb, clamped);
+}
+static mrb_value rb_gactor_exp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->exp);
+}
+static mrb_value rb_gactor_exp_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    GActorPtr(mrb, self)->exp = (int)v;
+    return mrb_int_value(mrb, v);
+}
+static mrb_value rb_gactor_next_exp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->ExpForNextLevel());
+}
+static mrb_value rb_gactor_add_exp(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->AddExp((int)v));
+}
+static mrb_value rb_gactor_hp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->hp);
+}
+static mrb_value rb_gactor_hp_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    auto* a = GActorPtr(mrb, self);
+    a->hp = std::clamp((int)v, 0, a->MaxHp()); // XP-Clamp
+    return mrb_int_value(mrb, a->hp);
+}
+static mrb_value rb_gactor_sp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->mp);
+}
+static mrb_value rb_gactor_sp_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    auto* a = GActorPtr(mrb, self);
+    a->mp = std::clamp((int)v, 0, a->MaxMp());
+    return mrb_int_value(mrb, a->mp);
+}
+static mrb_value rb_gactor_maxhp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->MaxHp());
+}
+static mrb_value rb_gactor_maxsp(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->MaxMp());
+}
+static mrb_value rb_gactor_atk(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->Atk());
+}
+static mrb_value rb_gactor_def(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->Def());
+}
+static mrb_value rb_gactor_agi(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->Agi());
+}
+static mrb_value rb_gactor_dead(mrb_state* mrb, mrb_value self) {
+    return mrb_bool_value(GActorPtr(mrb, self)->IsDead());
+}
+static mrb_value rb_gactor_recover_all(mrb_state* mrb, mrb_value self) {
+    GActorPtr(mrb, self)->RecoverAll();
+    return mrb_nil_value();
+}
+static mrb_value GActorIntArray(mrb_state* mrb, const std::vector<int>& v) {
+    mrb_value a = mrb_ary_new_capa(mrb, (mrb_int)v.size());
+    for (int x : v) mrb_ary_push(mrb, a, mrb_int_value(mrb, x));
+    return a;
+}
+static mrb_value rb_gactor_states(mrb_state* mrb, mrb_value self) {
+    return GActorIntArray(mrb, GActorPtr(mrb, self)->states);
+}
+static mrb_value rb_gactor_add_state(mrb_state* mrb, mrb_value self) {
+    mrb_int sid = 0;
+    mrb_get_args(mrb, "i", &sid);
+    auto& st = GActorPtr(mrb, self)->states;
+    if (std::find(st.begin(), st.end(), (int)sid) == st.end()) st.push_back((int)sid);
+    return GActorIntArray(mrb, st);
+}
+static mrb_value rb_gactor_remove_state(mrb_state* mrb, mrb_value self) {
+    mrb_int sid = 0;
+    mrb_get_args(mrb, "i", &sid);
+    auto& st = GActorPtr(mrb, self)->states;
+    st.erase(std::remove(st.begin(), st.end(), (int)sid), st.end());
+    return GActorIntArray(mrb, st);
+}
+static mrb_value rb_gactor_skills(mrb_state* mrb, mrb_value self) {
+    return GActorIntArray(mrb, GActorPtr(mrb, self)->skills);
+}
+static mrb_value rb_gactor_learn_skill(mrb_state* mrb, mrb_value self) {
+    mrb_int sid = 0;
+    mrb_get_args(mrb, "i", &sid);
+    auto& sk = GActorPtr(mrb, self)->skills;
+    if (std::find(sk.begin(), sk.end(), (int)sid) == sk.end()) sk.push_back((int)sid);
+    return GActorIntArray(mrb, sk);
+}
+static mrb_value rb_gactor_forget_skill(mrb_state* mrb, mrb_value self) {
+    mrb_int sid = 0;
+    mrb_get_args(mrb, "i", &sid);
+    auto& sk = GActorPtr(mrb, self)->skills;
+    sk.erase(std::remove(sk.begin(), sk.end(), (int)sid), sk.end());
+    return GActorIntArray(mrb, sk);
+}
+static mrb_value rb_gactor_weapon_id(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->weaponId);
+}
+static mrb_value GActorArmorSlot(mrb_state* mrb, mrb_value self, size_t slot) {
+    const auto& ar = GActorPtr(mrb, self)->armors;
+    return mrb_int_value(mrb, slot < ar.size() ? ar[slot] : 0);
+}
+static mrb_value rb_gactor_armor1_id(mrb_state* mrb, mrb_value self) { return GActorArmorSlot(mrb, self, 0); }
+static mrb_value rb_gactor_armor2_id(mrb_state* mrb, mrb_value self) { return GActorArmorSlot(mrb, self, 1); }
+static mrb_value rb_gactor_armor3_id(mrb_state* mrb, mrb_value self) { return GActorArmorSlot(mrb, self, 2); }
+static mrb_value rb_gactor_armor4_id(mrb_state* mrb, mrb_value self) { return GActorArmorSlot(mrb, self, 3); }
+static mrb_value rb_gactor_character_name(mrb_state* mrb, mrb_value self) {
+    const auto& s = GActorPtr(mrb, self)->graphicName;
+    return mrb_str_new(mrb, s.data(), (mrb_int)s.size());
+}
+static mrb_value rb_gactor_face_index(mrb_state* mrb, mrb_value self) {
+    return mrb_int_value(mrb, GActorPtr(mrb, self)->faceIndex);
+}
+
+
 // ---------- Menue/Speicherbildschirm aus Ruby oeffnen (XP: Scene_Menu/Scene_Save) ----------
 static mrb_value rb_ui_open_menu(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
@@ -2194,6 +2374,48 @@ void RubyVM::BindUI() {
     // Map-API (Need-Refresh-Semantik: Setzer loesen sofort aus).
     mrb_gv_set(mMrb, mrb_intern_lit(mMrb, "$game_map"),
                mrb_obj_new(mMrb, gameMapClass, 0, nullptr));
+
+    // ---------- XP Game_Actor (Stufe 4g): Bruecke zur nativen Party-Struct
+    // Die eigentliche Instanz-Sammlung $game_actors (mit Cache pro ID)
+    // baut das Prelude in Ruby — hier nur die Klasse.
+    struct RClass* cGameActor = mrb_define_class(mMrb, "Game_Actor", mMrb->object_class);
+    mrb_define_method(mMrb, cGameActor, "initialize", rb_gactor_initialize, MRB_ARGS_OPT(1));
+    mrb_define_method(mMrb, cGameActor, "id", rb_gactor_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "actor_id", rb_gactor_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "exist?", rb_gactor_exist, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "name", rb_gactor_name, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "name=", rb_gactor_name_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "class_id", rb_gactor_class_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "level", rb_gactor_level, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "level=", rb_gactor_level_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "exp", rb_gactor_exp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "exp=", rb_gactor_exp_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "next_exp", rb_gactor_next_exp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "add_exp", rb_gactor_add_exp, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "hp", rb_gactor_hp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "hp=", rb_gactor_hp_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "sp", rb_gactor_sp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "sp=", rb_gactor_sp_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "maxhp", rb_gactor_maxhp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "maxsp", rb_gactor_maxsp, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "atk", rb_gactor_atk, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "def", rb_gactor_def, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "agi", rb_gactor_agi, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "dead?", rb_gactor_dead, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "recover_all", rb_gactor_recover_all, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "states", rb_gactor_states, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "add_state", rb_gactor_add_state, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "remove_state", rb_gactor_remove_state, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "skills", rb_gactor_skills, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "learn_skill", rb_gactor_learn_skill, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "forget_skill", rb_gactor_forget_skill, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameActor, "weapon_id", rb_gactor_weapon_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "armor1_id", rb_gactor_armor1_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "armor2_id", rb_gactor_armor2_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "armor3_id", rb_gactor_armor3_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "armor4_id", rb_gactor_armor4_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "character_name", rb_gactor_character_name, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameActor, "face_index", rb_gactor_face_index, MRB_ARGS_NONE());
 }
 
 // ==================== Actor Bindings ====================
