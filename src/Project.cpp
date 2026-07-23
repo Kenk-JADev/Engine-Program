@@ -76,6 +76,16 @@ bool Project::New(const std::string& path, const std::string& name) {
     std::filesystem::create_directories(path + "/maps");
     std::filesystem::create_directories(path + "/scripts");
     std::filesystem::create_directories(path + "/prefabs");
+    // XP-Ordnerstruktur (Material-Kategorien des Importdialogs /
+    // RPG::Cache-Suchpfade): neue Projekte legen sie gleich mit an,
+    // damit der Asset-Browser-Import sie vorfindet.
+    static const char* kGfxDirs[] = {
+        "Tilesets", "Autotiles", "Characters", "Animations", "Battlers",
+        "Battlebacks", "Panoramas", "Fogs", "Pictures", "Titles",
+        "Gameovers", "Icons", "Transitions", "System", "Windowskins"
+    };
+    for (const char* d : kGfxDirs)
+        std::filesystem::create_directories(path + "/Graphics/" + d);
 
     Save();
     return true;

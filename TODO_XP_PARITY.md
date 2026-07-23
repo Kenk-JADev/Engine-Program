@@ -281,10 +281,22 @@ am Ziel ab und wartet bis zum Ende.
 ---
 
 ## PAKET 6 — Kleinigkeiten (Stand 2026-07-23)
-- [ ] **XP-Importdialog („Material base"):** Asset-Browser vorhanden
-  (`qt_editor/QtAssetBrowserDock.*`); XP kann zusätzlich Datei→Projektordner
-  importieren inkl. transparenter Farbe (nur ViaScript: Bitmap hat Colorkey?
-  — prüfen ob nötig; vermutlich reicht Drag&Drop in den Asset-Browser).
+- [x] **XP-Importdialog („Material base") (ERLEDIGT 2026-07-23):**
+  `QtAssetBrowserDock` kann jetzt importieren: Button **„Importieren…"**
+  (Datei-Mehrfachwahl → Kategorie-Dialog `ImportTargetDialog` mit den
+  XP-Ordnern, die die Engine wirklich sucht: Graphics/Tilesets, Autotiles,
+  Characters, Animations, Battlers, Battlebacks, Panoramas, Fogs, Pictures,
+  Titles, Gameovers, Icons, Transitions, System, Windowskins + Audio BGM/
+  BGS/ME/SE; Vorauswahl Audio→SE, Bild→Tilesets) und **Drag & Drop aus
+  dem Dateimanager** auf den Baum (`AssetTreeWidget`-Subklasse, externe
+  URL-Drops; Ziel = Ordner unter dem Cursor, Drop in die Leere →
+  Kategorie-Dialog). Kopieren legt Zielordner an, fragt bei Konflikt
+  (Überschreiben/Alle/Überspringen), refreshed danach. Scan-Roots um
+  `Graphics/`+`Audio/` erweitert (waren unsichtbar!), `Project::New`
+  legt die volle Graphics-Ordnerstruktur bei neuen Projekten an.
+  **Bewusste Näherung:** XP-Farbschlüssel-Import (linke/rechte
+  Transparenzfarbe) entfällt — die Engine arbeitet mit echtem PNG-Alpha;
+  Hinweis steht im Dialog.
 - [x] **Prioritaet zur Laufzeit (ERLEDIGT 2026-07-23):** XP liest Prios
   aus $data_tilesets, wenn die Tilemap keine eigene `priorities`-Table
   traegt — jetzt genauso: `RgssSetTilePriorityHooks` (RgssUI.h), Engine
