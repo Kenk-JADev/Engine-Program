@@ -260,8 +260,11 @@ public:
     // IsBushAt = irgendeine Ebene des Tiles traegt das Busch-Flag
     // (TilesetData::bushFlags, Paket 1) -> Charakter steht "im Gras".
     // GetTerrainTagAt = Tag des obersten Tiles mit Tag != 0 (0 = keiner).
+    // Grid-Varianten: fuer Ruby-Bindings ($game_map.bush?(x, y) u.ae.).
     bool IsBushAt(const Vec3& worldPos) const;
+    bool IsBushAt(int x, int z) const;
     int GetTerrainTagAt(const Vec3& worldPos) const;
+    int GetTerrainTagAt(int x, int z) const;
 
     // Convert world position to map grid coordinates
     bool WorldToMap(float worldX, float worldZ, int& outX, int& outZ) const;

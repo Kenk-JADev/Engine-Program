@@ -80,13 +80,35 @@ def load_data(filename)
     when "CommonEvents.rxdata" then "common_events"
     else nil
   end
+  # Kampf-Testdateien (BT_*.rxdata): XP-Trennung Test/Produktiv fuehren wir
+  # nicht — ehrlicher Fallback: Test-Schiene liest die Produktivdaten
+  # (BT_Tilesets.rxdata -> tilesets usw.). System.rxdata hat kein BT_-Pendant
+  # (battler/test_battlers bleiben Standard).
+  if kind.nil? and base.length >= 12 and base[0..2] == "BT_" and base[-7..-1] == ".rxdata"
+    sub = base[3..-1]
+    kind = case sub
+      when "Actors.rxdata"     then "actors"
+      when "Classes.rxdata"    then "classes"
+      when "Skills.rxdata"     then "skills"
+      when "Items.rxdata"      then "items"
+      when "Weapons.rxdata"    then "weapons"
+      when "Armors.rxdata"     then "armors"
+      when "Enemies.rxdata"    then "enemies"
+      when "Troops.rxdata"     then "troops"
+      when "States.rxdata"     then "states"
+      when "Animations.rxdata" then "animations"
+      when "Tilesets.rxdata"   then "tilesets"
+      when "CommonEvents.rxdata" then "common_events"
+      else nil
+    end
+  end
   if kind.nil?
     raise RGSSError, "load_data(\"#{filename}\"): .rxdata/Marshal wird nicht " \
       "unterstuetzt und fuer diese Datei gibt es noch keine JSON-Bruecke " \
       "(verdrahtet: Actors, Classes, Skills, Items, Weapons, Armors, " \
       "Enemies, Troops, States, Animations, Tilesets, System, MapInfos, " \
-      "CommonEvents + Map%03d.rxdata; offen: BT_*.rxdata, Marshal-Saves " \
-      "- TODO_XP_PARITY.md)."
+      "CommonEvents + Map%03d.rxdata; BT_*.rxdata mit Fallback auf die " \
+      "Produktivdaten; offen nur: Marshal-Savefiles - TODO_XP_PARITY.md)."
   end
   rows = __engine_db_fetch(kind)
   if rows.nil?

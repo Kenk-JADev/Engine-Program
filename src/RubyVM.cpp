@@ -1617,6 +1617,35 @@ static mrb_value rb_game_map_height(mrb_state* mrb, mrb_value self) {
     return mrb_int_value(mrb, (e && e->IsInitialized()) ? (mrb_int)e->GetMap().GetHeight() : 0);
 }
 
+// ---------- XP Game_Map-Flags (PAKET 6, XP_Scripts): passable?/bush?/terrain_tag ----------
+// Greifen auf die TilesetData-Tabellen von Paket 1 zu (gleiche Semantik wie
+// die Laufzeit-Kollision). Signatur wie XP: passable?(x, y, d = 0, self_event = nil)
+static mrb_value rb_game_map_passable(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int x = 0, y = 0, d = 0;
+    mrb_value selfEv;
+    mrb_get_args(mrb, "ii|io", &x, &y, &d, &selfEv);
+    // XP-Richtung d -> Paket-1-DirBits (1=unten,2=links,4=rechts,8=oben)
+    int dirBit = 0;
+    if (d == 2) dirBit = 1;      // unten
+    else if (d == 4) dirBit = 2; // links
+    else if (d == 6) dirBit = 4; // rechts
+    else if (d == 8) dirBit = 8; // oben
+    return mrb_bool_value(Game::Get().Map().IsPassable((int)x, (int)y, dirBit));
+}
+static mrb_value rb_game_map_bush(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int x = 0, y = 0;
+    mrb_get_args(mrb, "ii", &x, &y);
+    return mrb_bool_value(Game::Get().Map().IsBushAt((int)x, (int)y));
+}
+static mrb_value rb_game_map_terrain_tag(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int x = 0, y = 0;
+    mrb_get_args(mrb, "ii", &x, &y);
+    return mrb_int_value(mrb, Game::Get().Map().GetTerrainTagAt((int)x, (int)y));
+}
+
 // ---------- Menue/Speicherbildschirm aus Ruby oeffnen (XP: Scene_Menu/Scene_Save) ----------
 static mrb_value rb_ui_open_menu(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
@@ -1988,6 +2017,10 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, gameMapModule, "setup", rb_game_map_setup, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gameMapModule, "width", rb_game_map_width, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gameMapModule, "height", rb_game_map_height, MRB_ARGS_NONE());
+    // XP Game_Map-Flags (PAKET 6, XP_Scripts): Passage/Bush/Terrain-Tag
+    mrb_define_module_function(mMrb, gameMapModule, "passable?", rb_game_map_passable, MRB_ARGS_ARG(2, 2));
+    mrb_define_module_function(mMrb, gameMapModule, "bush?", rb_game_map_bush, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, gameMapModule, "terrain_tag", rb_game_map_terrain_tag, MRB_ARGS_REQ(2));
 
     // ---------- XP-Spielobjekte als globale Variablen ($game_*) ----------
     // Exakt wie in RPG Maker XP: Skripte schreiben $game_switches[5] = true

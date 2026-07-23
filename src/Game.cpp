@@ -470,6 +470,11 @@ bool GameMap::IsBushAt(const Vec3& worldPos) const {
     if (!mBoundMap) return false;
     int mx, mz;
     WorldToMap(worldPos.x, worldPos.z, mx, mz);
+    return IsBushAt(mx, mz);
+}
+
+bool GameMap::IsBushAt(int mx, int mz) const {
+    if (!mBoundMap) return false;
     const int w = mBoundMap->GetWidth();
     const int h = mBoundMap->GetHeight();
     if (mx < 0 || mx >= w || mz < 0 || mz >= h) return false;
@@ -494,6 +499,11 @@ int GameMap::GetTerrainTagAt(const Vec3& worldPos) const {
     if (!mBoundMap) return 0;
     int mx, mz;
     WorldToMap(worldPos.x, worldPos.z, mx, mz);
+    return GetTerrainTagAt(mx, mz);
+}
+
+int GameMap::GetTerrainTagAt(int mx, int mz) const {
+    if (!mBoundMap) return 0;
     const int w = mBoundMap->GetWidth();
     const int h = mBoundMap->GetHeight();
     if (mx < 0 || mx >= w || mz < 0 || mz >= h) return 0;

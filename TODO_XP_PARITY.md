@@ -372,12 +372,33 @@ am Ziel ab und wartet bis zum Ende.
   params gemischt (reine Ganzzahl-Strings als Integer, Rest als String),
   Prelude setzt [param1..3, text, params...] zusammen und kuerzt
   Trailing-Defaults (0/""), wie XP-Daten;
-  (c) `BT_*.rxdata`
-  (Kampf-Testdaten) — Ausgabe der XP-Test-Schiene; (d) Marshal.load/save
-  (Save files, 32 Aufrufe in den Skripten) bleibt bekannte Grenze —
-  unser Slot-System stattdessen; (e) Ruby-Skript-Fehlertoleranz: Beim
-  Laden der 90 Skripte reihenweise prüfen, welche Klassen/Methoden uns
-  noch fehlen (Ergebnis hier pflegen).
+  (c) ~~`BT_*.rxdata`~~ **ERLEDIGT 2026-07-23 (Fallback):** XP-Kampf-Test-
+  Dateien mappen auf die Produktiv-Bruecke (Testdaten fuehren wir nicht —
+  dokumentierte Vereinfachung). Damit sind ALLE statisch auftretenden
+  load_data-Dateien der 90 Skripte bedient (26 load_data-Aufrufe);
+  (d) Marshal.load/save
+  (Save files, 32 Aufrufe in den Skripten, alle in Scene_Save/Load/File)
+  bleibt bekannte Grenze — unser Slot-System stattdessen;
+  (e) **Gap-Analyse 2026-07-23 (Ergebnis):** `$game_switches/-variables/
+  -self_switches/-party/-player/-map` existieren nativ (RubyVM.cpp
+  gv_set-Block) — die XP-Ruby-Dateien wuerden sie per Klassen-Reopen
+  ENTKOPPELN (zwei Wahrheiten), daher XP-Modus nur schrittweise:
+  **Stufe 4 = $game_map-XP-Flags erledigt 2026-07-23 `passable?(x,y,d,
+  self_ev)/bush?(x,y)/terrain_tag(x,y)` nativ am Game_Map-Modul (Dir d
+  2/4/6/8 -> DirBits; GameMap-Overloads IsBushAt/GetTerrainTagAt(x,z)
+  neu, Welt-Versionen delegieren); nm-Probe 4 Symbole.** Naechste Stufen:
+  (f) $game_map als XP-faehige Instanz (events, display_x/y, scroll,
+      refresh, data) — heute nur Modul mit Meta-Methoden;
+  (g) Game_Actors/Game_Troop/Game_Screen-Bruecke zum nativen Kampf/
+      Screen-System (Game_Battler-Faehigkeiten = groesster Brocken);
+  (h) Scene_*-Framework: XP Main.rb treibt `while $scene != nil` —
+      unsere Engine ownet den Frame-Loop; Bruecke = $scene bereitstellen
+      + Scene.update pro Frame aufrufen (Architektur-Entscheid: Opt-in-
+      XP-Modus, Default bleibt nativ);
+  (i) interpreter 1-7: bewusst NICHT uebernehmen (unser nativer
+      EventSystem-Interpreter bleibt fuehrend); Windows_*/Sprite_* der
+      Originalskripte sind gegen RgssUI weitgehend API-kompatibel und
+      werden beim ersten Trockenlauf evaluiert.
 - [x] **Animations-Ziel (param1) beachten (ERLEDIGT 2026-07-23):**
   `EventSystem` loest param1 jetzt XP-konform auf (-1 Spieler / 0 dieses
   Event via `mEventId` / >0 Event-ID via `EventSystem::Get().GetEvent`,
