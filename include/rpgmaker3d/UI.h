@@ -93,6 +93,14 @@ struct ScreenPicture {
     bool tweenScale = false;
     bool tweenOpacity = false;
     bool tweenRotation = false;
+
+    // PAKET 9: Treffer-Flash (kurzer Farb-Blitz, XP-Battler-Treffer) und
+    // Ziel-Blinken (periodisches Flackern, solange im Zielmenue markiert)
+    float flashTimer = 0.0f;                    // >0 = Flash aktiv (laeuft ab)
+    float flashDuration = 0.25f;
+    Color flashColor{1.0f, 1.0f, 1.0f, 1.0f};   // alpha = Staerke
+    bool blinking = false;
+    float blinkTime = 0.0f;                     // Uhr fuer die Blinkphase
 };
 
 class MessageWindow {
@@ -327,6 +335,11 @@ public:
     void SetPictureScale(int id, float scale);
     void SetPictureRotation(int id, float degrees);
     void SetPictureSize(int id, float sizeX, float sizeY); // normalisiert 0..1
+    // PAKET 9: XP-Battler-Feedback — kurzer Farb-Blitz (Standard: weiss)
+    // und periodisches Ziel-Blinken (Zielmenue-Markierung)
+    void FlashPicture(int id, const Color& color = Color(1.0f, 1.0f, 1.0f, 1.0f), float duration = 0.25f);
+    void FlashPicture(const std::string& name, const Color& color = Color(1.0f, 1.0f, 1.0f, 1.0f), float duration = 0.25f);
+    void SetPictureBlinking(const std::string& name, bool on);
     /// Pfad-Aufloeser fuer Bilddateien (Engine injiziert Projekt-Suche
     /// nach Graphics/Pictures|Titles etc.; XP-Ordnerstruktur).
     static void SetPicturePathResolver(

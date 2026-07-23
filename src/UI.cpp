@@ -1604,6 +1604,37 @@ void GameUI::RemovePicture(const std::string& name) {
         [&name](const ScreenPicture& p){ return p.name == name; }), mPictures.end());
 }
 
+// PAKET 9: XP-Battler-Feedback — Flash + Ziel-Blinken
+void GameUI::FlashPicture(int id, const Color& color, float duration) {
+    for (auto& pic : mPictures) {
+        if (pic.id == id) {
+            pic.flashColor = color;
+            pic.flashDuration = duration > 0.01f ? duration : 0.01f;
+            pic.flashTimer = pic.flashDuration;
+            return;
+        }
+    }
+}
+
+void GameUI::FlashPicture(const std::string& name, const Color& color, float duration) {
+    for (auto& pic : mPictures) {
+        if (pic.name == name) {
+            FlashPicture(pic.id, color, duration);
+            return;
+        }
+    }
+}
+
+void GameUI::SetPictureBlinking(const std::string& name, bool on) {
+    for (auto& pic : mPictures) {
+        if (pic.name == name) {
+            pic.blinking = on;
+            if (on) pic.blinkTime = 0.0f;
+            return;
+        }
+    }
+}
+
 void GameUI::ClearPictures() {
     mPictures.clear();
 }
@@ -1627,6 +1658,14 @@ void GameUI::SetPictureSize(int id, float sizeX, float sizeY) {
 void GameUI::UpdatePictures(float dt) {
     for (auto& pic : mPictures) {
         pic.elapsed += dt;
+
+        // PAKET 9: Treffer-Flash ablaufen lassen / Blink-Uhr weiterdrehen
+        if (pic.flashTimer > 0.0f) {
+            pic.flashTimer -= dt;
+            if (pic.flashTimer < 0.0f) pic.flashTimer = 0.0f;
+        }
+        if (pic.blinking) pic.blinkTime += dt;
+        else pic.blinkTime = 0.0f;
 
         // Tween handling
         if (pic.isTweening) {
@@ -1835,6 +1874,22 @@ void GameUI::DrawPictures() {
         }
         if (alpha <= 0.01f) continue;
 
+        // PAKET 9: Ziel-Blinken (Flackern als Alpha-Puls) + Treffer-Flash
+        // (Tint wird kurzzeitig in Richtung flashColor verschoben)
+        if (pic.blinking) {
+            const float phase = std::fmod(pic.blinkTime * 5.0f, 1.0f);
+            alpha *= (phase < 0.6f) ? 1.0f : 0.22f;
+        }
+        ImVec4 tint(1.0f, 1.0f, 1.0f, alpha);
+        if (pic.flashTimer > 0.0f && pic.flashDuration > 1.0e-4f) {
+            float ft = pic.flashTimer / pic.flashDuration;
+            if (ft > 1.0f) ft = 1.0f;
+            const float mix = ft * pic.flashColor.a;
+            tint.x = 1.0f + (pic.flashColor.r - 1.0f) * mix;
+            tint.y = 1.0f + (pic.flashColor.g - 1.0f) * mix;
+            tint.z = 1.0f + (pic.flashColor.b - 1.0f) * mix;
+        }
+
         ImVec2 center(pic.screenPos.x * io.DisplaySize.x, pic.screenPos.y * io.DisplaySize.y);
         float baseSize = 128.0f * pic.scale;
         ImVec2 size(baseSize, baseSize);
@@ -1853,7 +1908,7 @@ void GameUI::DrawPictures() {
                                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings;
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0,0));
             ImGui::Begin(windowName.c_str(), nullptr, flags);
-            ImGui::Image((ImTextureID)(intptr_t)pic.textureId, size, ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,alpha), ImVec4(0,0,0,0));
+            ImGui::Image((ImTextureID)(intptr_t)pic.textureId, size, ImVec2(0,0), ImVec2(1,1), tint, ImVec4(0,0,0,0));
             ImGui::End();
             ImGui::PopStyleVar();
         } else {
@@ -1878,7 +1933,7 @@ void GameUI::DrawPictures() {
             fg->AddImageQuad((ImTextureID)(intptr_t)pic.textureId,
                 corners[0], corners[1], corners[2], corners[3],
                 uvs[0], uvs[1], uvs[2], uvs[3],
-                ImGui::GetColorU32(ImVec4(1,1,1,alpha)));
+                ImGui::GetColorU32(tint));
         }
     }
 #endif

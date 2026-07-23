@@ -235,10 +235,28 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     };
 
     // PAKET 9: XP-Kampf-Feedback — fliegende Schadens-/Heilungszahlen ueber
-    // dem Ziel. Quelle: zentraler Hook aus Battler::ApplyDamage/Recover
-    // (deckt auch Kampf-Ereignis-Befehle ab, nicht nur Angriff/Skill/Item).
-    BattleSystem::Get().onBattlerHpChanged = [this](const Battler& b, int amount) {
-        SpawnBattleFeedbackPopup(b, amount);
+    // dem Ziel + Treffer-Flash auf der Gegner-Grafik (XP: Battler blinkt
+    // weiss beim Treffer). Quelle: zentraler Hook aus
+    // Battler::ApplyDamage/Recover/NotifyMiss (deckt auch Kampf-Ereignis-
+    // Befehle ab, nicht nur Angriff/Skill/Item).
+    BattleSystem::Get().onBattlerHit = [this](const Battler& b, BattleHitKind kind, int amount) {
+        SpawnBattleFeedbackPopup(b, kind, amount);
+        // Treffer-Flash nur bei Gegnern (Akteure haben kein Bild im Feld)
+        if (!b.isActor) {
+            const std::string pic = "$battler" + std::to_string(b.index);
+            switch (kind) {
+                case BattleHitKind::Crit:
+                    GameUI::Get().FlashPicture(pic, Color(1.0f, 0.55f, 0.2f, 1.0f), 0.30f);
+                    break;
+                case BattleHitKind::Damage:
+                case BattleHitKind::Miss:
+                    GameUI::Get().FlashPicture(pic, Color(1.0f, 1.0f, 1.0f, 0.9f), 0.22f);
+                    break;
+                case BattleHitKind::Heal:
+                    GameUI::Get().FlashPicture(pic, Color(0.45f, 1.0f, 0.55f, 0.9f), 0.30f);
+                    break;
+            }
+        }
     };
 
     // Bild-Pfadaufloeser fuer GameUI (UI.show_picture + Titelgrafik):
@@ -687,7 +705,7 @@ void Engine::PlayEventAudio(const std::string& name, int kind, bool loop) {
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
     // PAKET 9: Kampf-Feedback-Hook loesen (haelt this)
-    BattleSystem::Get().onBattlerHpChanged = nullptr;
+    BattleSystem::Get().onBattlerHit = nullptr;
     mInitialized = false;
 // ImGui/Editor shutdown removed
     mGridMesh.Delete();
@@ -710,17 +728,17 @@ void Engine::Shutdown() {
 }
 
 // ---------------------------------------------------------------------------
-// PAKET 9: XP-Kampf-Feedback — fliegende Schadens-/Heilungszahlen
+// PAKET 9: XP-Kampf-Feedback — fliegende Schadens-/Heilungszahlen (+Crit/Miss)
 // ---------------------------------------------------------------------------
-// Effektive HP-Aenderung aus BattleSystem::onBattlerHpChanged (Angriff,
-// Fertigkeit, Item UND Kampf-Ereignis-Befehle). Die Zahl schwebt per
-// MoveScreenText-Tween (easeOutQuad) nach oben und fadet ueber ihre
-// Lebensdauer aus. Positionen: Gegner an derselben Verteilungsformel wie
-// ihre Battler-Bilder (Bild y=0.30 -> Popup knapp darueber), Akteure an
-// der Party-Statuszeile (y=0.10 -> Popup darunter).
-void Engine::SpawnBattleFeedbackPopup(const Battler& b, int amount) {
-    if (amount == 0) return;
-    const bool heal = amount < 0;
+// Quelle: BattleSystem::onBattlerHit (Angriff, Fertigkeit, Item UND
+// Kampf-Ereignis-Befehle). Die Zahl schwebt per MoveScreenText-Tween
+// (easeOutQuad) nach oben und fadet ueber ihre Lebensdauer aus. Positionen:
+// Gegner an derselben Verteilungsformel wie ihre Battler-Bilder (Bild
+// y=0.30 -> Popup knapp darueber), Akteure an der Party-Statuszeile
+// (y=0.10 -> Popup darunter).
+void Engine::SpawnBattleFeedbackPopup(const Battler& b, BattleHitKind kind, int amount) {
+    const bool heal = kind == BattleHitKind::Heal;
+    if (amount == 0 && kind != BattleHitKind::Miss) return;
     const int v = heal ? -amount : amount;
     auto& bs = BattleSystem::Get();
 
@@ -734,11 +752,34 @@ void Engine::SpawnBattleFeedbackPopup(const Battler& b, int amount) {
         x = n > 1 ? (0.25f + 0.5f * (float)b.index / (float)(n - 1)) : 0.5f;
         y = 0.235f;
     }
-    const Color col = heal ? Color(0.45f, 1.0f, 0.55f, 1.0f)
-                     : b.isActor ? Color(1.0f, 0.35f, 0.30f, 1.0f)
-                                 : Color(1.0f, 1.0f, 0.88f, 1.0f);
-    const std::string txt = (heal ? "+" : "-") + std::to_string(v);
-    const int id = GameUI::Get().AddScreenText(txt, Vec2(x, y), col, 0.95f, true, 1.5f);
+
+    std::string txt;
+    Color col;
+    float scale = 1.5f;
+    switch (kind) {
+        case BattleHitKind::Miss:
+            txt = "Ausgewichen!";
+            col = b.isActor ? Color(0.95f, 0.95f, 1.0f, 1.0f)
+                            : Color(0.85f, 0.85f, 0.95f, 1.0f);
+            scale = 1.25f;
+            break;
+        case BattleHitKind::Crit:
+            txt = "KRITISCH! -" + std::to_string(v);
+            col = Color(1.0f, 0.55f, 0.15f, 1.0f);
+            scale = 1.85f;
+            break;
+        case BattleHitKind::Heal:
+            txt = "+" + std::to_string(v);
+            col = Color(0.45f, 1.0f, 0.55f, 1.0f);
+            break;
+        case BattleHitKind::Damage:
+        default:
+            txt = "-" + std::to_string(v);
+            col = b.isActor ? Color(1.0f, 0.35f, 0.30f, 1.0f)
+                            : Color(1.0f, 1.0f, 0.88f, 1.0f);
+            break;
+    }
+    const int id = GameUI::Get().AddScreenText(txt, Vec2(x, y), col, 0.95f, true, scale);
     GameUI::Get().MoveScreenText(id, Vec2(x, y - 0.055f), 0.9f, 2 /* easeOutQuad */);
 }
 
@@ -1142,6 +1183,25 @@ void Engine::Update(float dt) {
         // Kampf laeuft (wird nach dem Kampfende automatisch entfernt).
         if (CustomConfig::Get().nativeBattleStatus && BattleSystem::Get().IsInBattle()) {
             auto& bs = BattleSystem::Get();
+            // PAKET 9: Ziel-Blinken — im Gegner-Zielmenue flackert die Grafik
+            // des markierten Gegners (XP: Ziel blinkt beim Waehlen). Cursor-
+            // Index == Gegner-Index (Menue listet alle, tote nur deaktiviert).
+            {
+                std::string wantTag;
+                if (GameUI::Get().Menu().IsVisible() &&
+                    GameUI::Get().Menu().GetTitle() == "Welchen Gegner?") {
+                    const int cur = GameUI::Get().Menu().GetCursor();
+                    if (cur >= 0 && cur < (int)bs.Enemies().size())
+                        wantTag = "$battler" + std::to_string(cur);
+                }
+                if (wantTag != mBattleBlinkTag) {
+                    if (!mBattleBlinkTag.empty())
+                        GameUI::Get().SetPictureBlinking(mBattleBlinkTag, false);
+                    if (!wantTag.empty())
+                        GameUI::Get().SetPictureBlinking(wantTag, true);
+                    mBattleBlinkTag = wantTag;
+                }
+            }
             if (mBattleStatusEnemiesId < 0) {
                 mBattleStatusEnemiesId = GameUI::Get().AddScreenText(
                     "", Vec2(0.5f, 0.03f), Color(1.0f, 0.85f, 0.6f, 1.0f), 0.0f, true, 1.0f);
@@ -1217,6 +1277,10 @@ void Engine::Update(float dt) {
             mBattleStatusEnemiesId = -1;
             mBattleStatusTimer = 0.0f;
             GameUI::Get().ClearBattleStatus(); // PAKET 9: XP-Statusfenster aus
+            if (!mBattleBlinkTag.empty()) {   // Ziel-Blinken aus
+                GameUI::Get().SetPictureBlinking(mBattleBlinkTag, false);
+                mBattleBlinkTag.clear();
+            }
             for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
             mBattlerPicNames.clear(); // Gegner-Grafiken weg
         }
@@ -1243,6 +1307,10 @@ void Engine::Update(float dt) {
         mBattleStatusEnemiesId = -1;
         mBattleStatusTimer = 0.0f;
         GameUI::Get().ClearBattleStatus(); // PAKET 9: XP-Statusfenster aus
+        if (!mBattleBlinkTag.empty()) {       // Ziel-Blinken aus
+            GameUI::Get().SetPictureBlinking(mBattleBlinkTag, false);
+            mBattleBlinkTag.clear();
+        }
         for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
         mBattlerPicNames.clear(); // Gegner-Grafiken weg
     }

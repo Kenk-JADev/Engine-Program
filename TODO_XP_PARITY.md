@@ -746,14 +746,28 @@ als Canvas-Pictures, Text-Statuszeilen oben, natives XP-Kampfmenue.
   Pfad-/Ordnerseite: `Graphics/Faces/` in `ResolvePicturePathFor` UND in
   `Project::Create` (neue Projekte legen den Ordner mit an);
   `UI.h` bekam Fwd-Dekl `class Texture` + `<memory>/<unordered_map>`.
-- [ ] **Treffer-Flash/Blink der Gegner-Bilder** (RgssDrawableState kann
-  flash; Picture-System muesste es durchreichen) + Zielmarkierung beim
-  Waehlen (XP: Gegner blinkt).
+- [x] **Treffer-Flash/Blink der Gegner-Bilder + Ziel-Blinken beim
+  Waehlen:** `ScreenPicture` bekam Flash- (Farb-Blitz mit Staerke-alpha)
+  und Blink-Zustand (periodische Alpha-Pulse ~1,9 Hz) samt
+  `FlashPicture(id|name, color, duration)` und
+  `SetPictureBlinking(name, on)`; Update-/DrawPictures wenden beides an
+  (Tint-Mix Richtung flashColor, blinkender Alpha-Puls, ohne ImGui
+  No-Op). Die Engine flasht im `onBattlerHit`-Hook: Treffer/Miss weiss,
+  Crit orange, Heilung gruen — und laesst im Gegner-Zielmenue
+  („Welchen Gegner?“) das Bild des Gegners unter dem Cursor flackern
+  (Cursor-Index == Gegner-Index; Aufrauemen an beiden Cleanup-Stellen).
+- [x] **Kritische Treffer + Ausweichen (XP-Kampfregel):** Neuer
+  Hook-Typ `BattleHitKind{Damage, Crit, Heal, Miss}` (ersetzt den
+  HP-only-Hook von Teil 1) + `Battler::ApplyDamage(dmg, kind)` und
+  `NotifyMiss()`. Angriff und Schadens-Fertigkeit wuerfeln zuerst
+  Ausweichen (5%, Popup „Ausgewichen!“, eigenes Message-Text) und dann
+  Crit (1/16, dreifacher Schaden, Popup „KRITISCH! -x“ in Orange,
+  groesser). Event-Befehle melden weiterhin Damage/Heal wie gehabt;
+  das teilte sich die Verteilung (Popups/Flash) automatisch.
 - [ ] **battlerHue (Farbton 0..360)** wird beim Laden der Battler-Bilder
   aktuell ignoriert (XP schiebt den Farbkreis; Engine koennte per
-  CPU-Pixel-Shift beim Erstladen loesen — Cache-Key inkl. hue).
-- [ ] **kritische Treffer/Miss** existieren als Kampfregel noch nicht —
-  Popups sind dafuer vorbereitet (eigene Farbe/Text).
+  CPU-Pixel-Shift beim Erstladen loesen — Cache-Key inkl. hue; eigene
+  Runde: braucht Texture-CreateFromRGBA + Pixelmath).
 
 ## Arbeitsregeln (für Agenten-Sessions)
 

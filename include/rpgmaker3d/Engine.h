@@ -23,6 +23,7 @@ class RmlUiSystem;
 
 class MeshFactory;
 struct Battler; // BattleSystem.h — fuer das Kampf-Feedback (PAKET 9)
+enum class BattleHitKind; // BattleSystem.h — Treffer-Art des Feedbacks (PAKET 9)
 
 class Engine {
 public:
@@ -197,11 +198,13 @@ private:
     // Gegner-Grafiken im Kampf (Graphics/Battlers/, XP-Battler-Bilder):
     // Namen der aktiven $battler-Pictures, damit kein Flackern/Reload entsteht
     std::vector<std::string> mBattlerPicNames;
+    // PAKET 9: Ziel-Blinken — aktuell flackerndes $battler-Picture (oder leer)
+    std::string mBattleBlinkTag;
 
-    // PAKET 9: XP-fliegende Schadens-/Heilungszahlen ueber dem Ziel
-    // (Quelle: BattleSystem::onBattlerHpChanged, verdrahtet in Initialize;
-    //  amount > 0 = Schaden, < 0 = Heilung)
-    void SpawnBattleFeedbackPopup(const Battler& b, int amount);
+    // PAKET 9: XP-fliegende Schadens-/Heilungszahlen (+Crit/Miss) ueber dem
+    // Ziel (Quelle: BattleSystem::onBattlerHit, verdrahtet in Initialize;
+    //  amount > 0 = Schaden, < 0 = Heilung, Miss = 0)
+    void SpawnBattleFeedbackPopup(const Battler& b, BattleHitKind kind, int amount);
 
     // Game Over: Anzeige laeuft, wartet auf Bestaetigung -> Titel/Stopp
     bool mGameOverPending = false;

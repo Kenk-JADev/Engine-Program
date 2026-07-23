@@ -43,6 +43,9 @@ struct BattleAction {
     bool targetIsActor = false;
 };
 
+/// PAKET 9: Treffer-Art fuer das Kampf-Feedback (Popup-/Flash-Darstellung).
+enum class BattleHitKind { Damage, Crit, Heal, Miss };
+
 struct Battler {
     bool isActor = true;
     int id = 0; // actorId or enemyId
@@ -60,7 +63,11 @@ struct Battler {
     std::string name;
 
     void ApplyDamage(int dmg);
+    /// PAKET 9: Variante mit Treffer-Art (Crit-Anzeige im Popup)
+    void ApplyDamage(int dmg, BattleHitKind kind);
     void Recover(int hp, int mp);
+    /// PAKET 9: „Ausgewichen!" ohne HP-Aenderung melden
+    void NotifyMiss();
 };
 
 class BattleSystem {
@@ -99,11 +106,12 @@ public:
     // Callbacks für UI/Audio
     std::function<void(const std::string&)> onMessage;
     std::function<void(int enemyId)> onEnemyDefeated;
-    /// XP-Kampf-Feedback (PAKET 9): effektive HP-Aenderung eines Battlers.
-    /// Wird ZENTRAL aus Battler::ApplyDamage/Recover gemeldet und deckt so
+    /// XP-Kampf-Feedback (PAKET 9): Treffer-Ereignis eines Battlers.
+    /// kind Damage/Crit/Miss/Heal; amount = effektive HP-Aenderung
+    /// (>0 Schaden, <0 Heilung, Miss = 0). Wird ZENTRAL aus
+    /// Battler::ApplyDamage/Recover/NotifyMiss gemeldet und deckt so
     /// Angriffe, Fertigkeiten, Items UND Kampf-Ereignis-Befehle ab.
-    /// amount > 0 = Schaden, < 0 = Heilung; Ziel via b.isActor + b.index.
-    std::function<void(const Battler& b, int amount)> onBattlerHpChanged;
+    std::function<void(const Battler& b, BattleHitKind kind, int amount)> onBattlerHit;
     std::function<void()> onVictory;
     std::function<void()> onDefeat;
     /// XP "Game Over": bei Niederlage UND !canLose (nach onDefeat).

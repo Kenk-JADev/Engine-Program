@@ -6,19 +6,30 @@
 
 namespace rpg {
 
+namespace {
+/// Geteiltes Zufallsrad der Kampfregeln (Crit/Miss-Wuerfe, PAKET 9)
+std::mt19937& BattleRng() {
+    static std::mt19937 g(std::random_device{}());
+    return g;
+}
+} // namespace
+
 BattleSystem& BattleSystem::Get() {
     static BattleSystem instance;
     return instance;
 }
 
 void Battler::ApplyDamage(int dmg) {
+    ApplyDamage(dmg, BattleHitKind::Damage);
+}
+void Battler::ApplyDamage(int dmg, BattleHitKind kind) {
     const int before = hp;
     hp -= dmg;
     if (hp <= 0) { hp = 0; isDead = true; }
     // PAKET 9: XP-Kampf-Feedback — effektive HP-Aenderung melden (>0 Schaden)
-    if (auto& hook = BattleSystem::Get().onBattlerHpChanged) {
+    if (auto& hook = BattleSystem::Get().onBattlerHit) {
         const int eff = before - hp;
-        if (eff != 0) hook(*this, eff);
+        if (eff != 0) hook(*this, kind, eff);
     }
 }
 void Battler::Recover(int h, int m) {
@@ -28,10 +39,14 @@ void Battler::Recover(int h, int m) {
     if (hp > 0) isDead = false;
     // PAKET 9: Heilung als negative HP-Aenderung melden (nur wenn HP wirklich
     // stiegen — reine MP-Heilung loest kein Popup aus)
-    if (auto& hook = BattleSystem::Get().onBattlerHpChanged) {
+    if (auto& hook = BattleSystem::Get().onBattlerHit) {
         const int eff = hp - before;
-        if (eff != 0) hook(*this, -eff);
+        if (eff != 0) hook(*this, BattleHitKind::Heal, -eff);
     }
+}
+void Battler::NotifyMiss() {
+    // PAKET 9: „Ausgewichen!" (0 Aenderung — Popup-/Flash-Text entscheidet)
+    if (auto& hook = BattleSystem::Get().onBattlerHit) hook(*this, BattleHitKind::Miss, 0);
 }
 
 void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool canLose,
@@ -300,14 +315,26 @@ void BattleSystem::ProcessTurn() {
     if (action.type==BattleActionType::Attack) {
         Battler* target = targetOf(action);
         if (target && !target->isDead) {
-            int dmg = std::max(1, subject->atk - target->def/2);
-            if (target->isGuarding) dmg = std::max(1, dmg/2);
-            target->ApplyDamage(dmg);
-            std::string msg = subject->name + " greift " + target->name + " an: " +
-                              std::to_string(dmg) + " Schaden!";
-            if (target->isDead) msg += " " + target->name + " wurde besiegt!";
-            if (onMessage) onMessage(msg);
-            if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+            // PAKET 9: XP-Kampfregel — Ausweichen (5%) vor kritischem
+            // Treffer (1/16, dreifacher Schaden), beides im Popup sichtbar
+            std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+            if (uni(BattleRng()) < 0.05f) {
+                target->NotifyMiss();
+                if (onMessage) onMessage(subject->name + " greift " + target->name +
+                                         " an... Ausgewichen!");
+            } else {
+                int dmg = std::max(1, subject->atk - target->def/2);
+                if (target->isGuarding) dmg = std::max(1, dmg/2);
+                const bool crit = uni(BattleRng()) < 0.0625f;
+                if (crit) dmg *= 3;
+                target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
+                std::string msg = subject->name + " greift " + target->name + " an: " +
+                                  std::to_string(dmg) + " Schaden!";
+                if (crit) msg += " Kritischer Treffer!";
+                if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                if (onMessage) onMessage(msg);
+                if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+            }
         } else if (onMessage) onMessage(subject->name + " greift an... aber da ist niemand!");
     } else if (action.type==BattleActionType::Skill) {
         // XP-Semantik: scope>=3 = eigene Seite (Heilung um |power|),
@@ -321,14 +348,24 @@ void BattleSystem::ProcessTurn() {
             // Schadens-Skill - Zielseite steht in action.targetIsActor
             Battler* target = targetOf(action);
             if (target && !target->isDead) {
-                int dmg = std::max(1, power + subject->atk/2 - target->def/2);
-                if (target->isGuarding) dmg = std::max(1, dmg/2);
-                target->ApplyDamage(dmg);
-                std::string msg = subject->name + " setzt " + sname + " ein: " +
-                                  std::to_string(dmg) + " Schaden!";
-                if (target->isDead) msg += " " + target->name + " wurde besiegt!";
-                if (onMessage) onMessage(msg);
-                if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                // PAKET 9: gleiche XP-Regel wie beim Angriff (Miss 5%, Crit 1/16 x3)
+                std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+                if (uni(BattleRng()) < 0.05f) {
+                    target->NotifyMiss();
+                    if (onMessage) onMessage(subject->name + " setzt " + sname + " ein... Ausgewichen!");
+                } else {
+                    int dmg = std::max(1, power + subject->atk/2 - target->def/2);
+                    if (target->isGuarding) dmg = std::max(1, dmg/2);
+                    const bool crit = uni(BattleRng()) < 0.0625f;
+                    if (crit) dmg *= 3;
+                    target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
+                    std::string msg = subject->name + " setzt " + sname + " ein: " +
+                                      std::to_string(dmg) + " Schaden!";
+                    if (crit) msg += " Kritischer Treffer!";
+                    if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                    if (onMessage) onMessage(msg);
+                    if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                }
             }
         } else {
             // Heil-Skill: Ziel = Verbuendeter (Standard: Anwender selbst)
