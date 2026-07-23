@@ -371,9 +371,15 @@ grün — alles Windows-spezifische Fallen). Fixes:
    **`ci/Main.yml.template`**; Maintainer muss ihn nach
    `.github/workflows/Main.yml` kopieren (oder im Web-Editor einfügen),
    sonst läuft der CI weiter mit der alten Qt-Installationsroutine.
-   Nachschlag (CI-Lauf 5): `qtbase` ist KEIN gültiger `--modules`-Name —
-   aqt meldete „packages ['qtbase', ...] were not found". Finale Form:
-   `--modules qttools --archives qtbase qttools opengl32sw d3dcompiler`.
+   Nachschlag (CI-Lauf 5+6): Die „packages not found"-Meldung lag NICHT an
+   qtbase als ungültigem Modulnamen (Fehldiagnose!), sondern daran, dass
+   **aqt 3.1.x das Qt-6.9.1-Repo-Format („extensions") nicht auflösen kann**
+   — auch qttools schlug fehl. 3.3.0 fand die Archive dagegen problemlos;
+   dort versagte nur py7zr am qtdeclarative-Entpacken. Finale Form:
+   `aqtinstall==3.3.*` + `--external 7z` (systemeigenes 7-Zip statt py7zr
+   — etablierte Umgehung der Bad7zFile-Falle) + zweistufig: erst
+   `--modules qttools --archives qtbase qttools opengl32sw d3dcompiler`,
+   Fallback = Vollinstallation ohne Filter.
 
 Merksatz für die nächsten Pakete: nach jedem Push **sofort CI grün machen**
 (4 Commits waren ungetestet gestapelt).
