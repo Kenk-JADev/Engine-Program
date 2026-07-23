@@ -38,6 +38,126 @@ namespace qt_editor {
 #define QL(x) QStringLiteral(x)
 #endif
 
+#include <QPainter>
+#include <QMouseEvent>
+#include <cmath>
+
+namespace {
+
+// XP-Animations-Canvas (Paket 5): halbe Aufloesung von 640x480,
+// zeigt die Zellen des aktiven Frames, Klick legt Zelle, Rechtsklick loescht.
+class QtAnimFrameCanvas : public QWidget {
+public:
+    explicit QtAnimFrameCanvas(QWidget* parent = nullptr) : QWidget(parent) {
+        setFixedSize(320, 240);
+    }
+
+    rpg::AnimationData* anim = nullptr;
+    int frameIdx = 0;
+    int selectedCell = -1;           // Index in frames[frameIdx].cells
+    std::function<void(int, int)> onAddCell;      // Klick: logisch x,y (640x480)
+    std::function<void(int)> onSelectCell;        // Treffer-Zelle anklicken
+    std::function<void(int)> onRemoveCell;        // Rechtsklick: Zelle loeschen
+
+    void setSheet(const QImage& img) { sheet = img; update(); }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.fillRect(rect(), QColor(24, 24, 28));
+        const QPointF center(160, 120);
+
+        if (!anim || frameIdx < 0 || frameIdx >= (int)anim->frames.size()) {
+            p.setPen(QColor(140, 140, 140));
+            p.drawText(rect(), Qt::AlignCenter, QL("Kein Frame vorhanden\n(+ Frame anlegen)"));
+            return;
+        }
+        const auto& fr = anim->frames[(size_t)frameIdx];
+
+        // Mittelkreuz
+        p.setPen(QPen(QColor(90, 90, 110), 1));
+        p.drawLine(QPointF(0, 120), QPointF(320, 120));
+        p.drawLine(QPointF(160, 0), QPointF(160, 240));
+
+        // Zellen zeichnen (0.5-Skalierung)
+        for (size_t i = 0; i < fr.cells.size(); ++i) {
+            const auto& c = fr.cells[i];
+            p.save();
+            QPointF pos = center + QPointF(c.x * 0.5, c.y * 0.5);
+            p.translate(pos);
+            p.rotate(c.rotation);
+            const float s = (c.scale / 100.0f) * 0.5f;
+            const float w = 192.0f * s, h = 192.0f * s;
+            if (!sheet.isNull()) {
+                QRectF src((c.cellId % 5) * 192, (c.cellId / 5) * 192, 192, 192);
+                p.setOpacity(c.opacity / 255.0);
+                p.drawImage(QRectF(-w / 2, -h / 2, w, h), sheet, src);
+                p.setOpacity(1.0);
+            } else {
+                // Platzhalter-Kreuz bei fehlendem Sheet
+                p.setPen(QPen(QColor(90, 140, 220), 1));
+                p.drawLine(QPointF(-6, -6), QPointF(6, 6));
+                p.drawLine(QPointF(-6, 6), QPointF(6, -6));
+                p.drawRect(QRectF(-w / 2, -h / 2, w, h));
+            }
+            if ((int)i == selectedCell) {
+                p.setPen(QPen(QColor(255, 200, 60), 2));
+                p.drawRect(QRectF(-w / 2, -h / 2, w, h));
+            }
+            p.setPen(QColor(200, 220, 255));
+            p.drawText(QPointF(-w / 2 + 2, -h / 2 + 12), QString::number((int)i));
+            p.restore();
+        }
+
+        // Frame/Randinfo
+        p.setPen(QColor(160, 160, 160));
+        p.drawText(rect().adjusted(6, 4, -6, -4),
+                   QStringLiteral("Frame %1/%2 · %3 Zellen · Klick=+, Rechtsklick=−")
+                       .arg(frameIdx + 1).arg((int)anim->frames.size()).arg((int)fr.cells.size()));
+    }
+
+    void mousePressEvent(QMouseEvent* e) override {
+        if (!anim || frameIdx < 0 || frameIdx >= (int)anim->frames.size()) {
+            QWidget::mousePressEvent(e); return;
+        }
+        // Position vom Zentrum aus, logisch (x2 fuer volle 640x480)
+        const int lx = (int)std::lround((e->pos().x() - 160) * 2.0);
+        const int ly = (int)std::lround((e->pos().y() - 120) * 2.0);
+        const auto& fr = anim->frames[(size_t)frameIdx];
+
+        if (e->button() == Qt::RightButton) {
+            // naechstgelegene Zelle loeschen
+            int best = -1; double bestD = 1e9;
+            for (size_t i = 0; i < fr.cells.size(); ++i) {
+                double d = std::hypot(fr.cells[i].x - lx, fr.cells[i].y - ly);
+                if (d < bestD) { bestD = d; best = (int)i; }
+            }
+            if (best >= 0 && onRemoveCell) onRemoveCell(best);
+            update(); return;
+        }
+
+        // Trefferpruefung existierende Zelle (Auswahl)
+        int best = -1; double bestD = 1e9;
+        for (size_t i = 0; i < fr.cells.size(); ++i) {
+            double d = std::hypot(fr.cells[i].x - lx, fr.cells[i].y - ly);
+            if (d < bestD) { bestD = d; best = (int)i; }
+        }
+        const float clickRadius = (best >= 0
+            ? std::max(20.0, 96.0 * (fr.cells[(size_t)best].scale / 100.0) * 0.5) : 0.0);
+        if (best >= 0 && bestD <= clickRadius * 2.0) {
+            if (onSelectCell) onSelectCell(best);
+        } else if (onAddCell) {
+            onAddCell(lx, ly);
+        }
+        update();
+    }
+
+private:
+    QImage sheet;
+};
+
+} // namespace (Canvas)
+
 namespace {
 
 QSpinBox* makeSpin(int mn, int mx, int value, QWidget* parent) {
@@ -93,6 +213,7 @@ QtDatabaseDialog::QtDatabaseDialog(rpg::Engine* engine, QWidget* parent)
     mTroops = db.Troops();
     mStates = db.States();
     mTilesets = db.Tilesets();
+    mAnimations = db.AnimationSet();
     mSystem = db.System();
     mCEs = rpg::EventSystem::Get().GetCommonEvents();
 
@@ -1099,39 +1220,327 @@ void QtDatabaseDialog::buildStatesTab() {
 }
 
 void QtDatabaseDialog::buildAnimationsTab() {
-    ListTab& t = addListTab(QL("Animationen"));
-    ListTab* tp = &t;
-    auto* formHost = new QWidget(t.page);
-    auto* form = new QFormLayout(formHost);
-    ((QScrollArea*)t.page->property("formWrap").value<QWidget*>())->setWidget(formHost);
+    ListTab& tabRef = addListTab(QL("Animationen"));
+    ListTab* tp = &tabRef;
+    auto* formHost = new QWidget(tabRef.page);
+    ((QScrollArea*)tabRef.page->property("formWrap").value<QWidget*>())->setWidget(formHost);
 
-    auto* info = new QLabel(QL("Animationen werden per ID referenziert "
-                               "(z.B. Waffen oder der Event-Befehl 'Animation zeigen').\n"
-                               "Die Grafik/Datei wird am Befehl angegeben."), formHost);
-    info->setWordWrap(true);
+    auto* vbox = new QVBoxLayout(formHost);
+    vbox->setContentsMargins(0, 0, 0, 0);
+
+    // ------- Kopf: Name / Grafik / Position -------
+    auto* form = new QFormLayout();
+    vbox->addLayout(form);
     auto* name = makeLine(formHost);
-    form->addRow(info);
-    form->addRow(QL("Animationsname"), name);
+    auto* file = makeLine(formHost);
+    auto* posCombo = makeCombo(formHost, {QL("Oben"), QL("Mitte"), QL("Unten")}, 2);
+    form->addRow(QL("Name"), name);
+    form->addRow(QL("Grafik (Graphics/Animations/)"), file);
+    form->addRow(QL("Position (XP)"), posCombo);
 
-    tp->count = [this]() { return (int)mSystem.animations.size(); };
+    // ------- Frames: Navigator + Tools -------
+    auto* frameRow = new QHBoxLayout();
+    vbox->addLayout(frameRow);
+    frameRow->addWidget(new QLabel(QL("Frame:"), formHost));
+    auto* framePrevBtn = new QPushButton(QL("◀"), formHost);
+    auto* frameNoLbl = new QLabel(QL("1/1"), formHost);
+    auto* frameNextBtn = new QPushButton(QL("▶"), formHost);
+    auto* frameAddBtn = new QPushButton(QL("+ dahinter neuer Frame"), formHost);
+    auto* frameDelBtn = new QPushButton(QL("Frame löschen"), formHost);
+    frameRow->addWidget(framePrevBtn);
+    frameRow->addWidget(frameNoLbl);
+    frameRow->addWidget(frameNextBtn);
+    frameRow->addSpacing(12);
+    frameRow->addWidget(frameAddBtn);
+    frameRow->addWidget(frameDelBtn);
+    frameRow->addStretch(1);
+
+    // ------- Zellen-Canvas -------
+    auto* canvas = new QtAnimFrameCanvas(formHost);
+    vbox->addWidget(canvas);
+
+    // ------- Zellen-Eigenschaften (ausgewaehlte Zelle) -------
+    auto* cellGrp = new QGroupBox(QL("Ausgewählte Zelle"), formHost);
+    auto* cform = new QFormLayout(cellGrp);
+    vbox->addWidget(cellGrp);
+    auto* cellIdSpin = makeSpin(0, 95, 0, cellGrp);
+    auto* cellXSpin = makeSpin(-320, 320, 0, cellGrp);
+    auto* cellYSpin = makeSpin(-240, 240, 0, cellGrp);
+    auto* cellScaleSpin = makeSpin(1, 400, 100, cellGrp);
+    auto* cellRotSpin = makeSpin(0, 360, 0, cellGrp);
+    auto* cellOpSpin = makeSpin(0, 255, 255, cellGrp);
+    cform->addRow(QL("Bildzelle (0-95)"), cellIdSpin);
+    cform->addRow(QL("X"), cellXSpin);
+    cform->addRow(QL("Y"), cellYSpin);
+    cform->addRow(QL("Skalierung %"), cellScaleSpin);
+    cform->addRow(QL("Rotation °"), cellRotSpin);
+    cform->addRow(QL("Deckkraft"), cellOpSpin);
+
+    // ------- Frame-Timing: SE + Flash -------
+    auto* timingGrp = new QGroupBox(QL("Frame-Timing (SE / Flash)"), formHost);
+    auto* tform = new QFormLayout(timingGrp);
+    vbox->addWidget(timingGrp);
+    auto* seName = makeLine(timingGrp);
+    auto* seVol = makeSpin(0, 100, 100, timingGrp);
+    auto* sePitch = makeSpin(50, 150, 100, timingGrp);
+    tform->addRow(QL("SE-Datei (Audio/SE/)"), seName);
+    tform->addRow(QL("SE-Lautstärke"), seVol);
+    tform->addRow(QL("SE-Pitch"), sePitch);
+    auto* flashScope = makeCombo(timingGrp,
+        {QL("Keiner"), QL("Ziel"), QL("Bildschirm")}, 0);
+    auto* flashR = makeSpin(0, 255, 255, timingGrp);
+    auto* flashG = makeSpin(0, 255, 255, timingGrp);
+    auto* flashB = makeSpin(0, 255, 255, timingGrp);
+    auto* flashDur = makeSpin(1, 60, 5, timingGrp);
+    tform->addRow(QL("Blitz-Bereich"), flashScope);
+    tform->addRow(QL("Blitz R / G / B"), flashR);
+    tform->addRow(QL(""), flashG);
+    tform->addRow(QL(""), flashB);
+    tform->addRow(QL("Blitz-Dauer (Frames)"), flashDur);
+
+    vbox->addStretch(1);
+
+    // ------- gemeinsamer Zugriff auf die aktuelle Animation/Frame -------
+    // tp->current ist die ausgewaehlte Zeile der linken Liste
+    auto curAnim = [this, tp]() -> rpg::AnimationData* {
+        if (tp->current < 0 || (size_t)tp->current >= mAnimations.size()) return nullptr;
+        return &mAnimations[(size_t)tp->current];
+    };
+    auto curFrame = [&curAnim, canvas]() -> rpg::AnimFrame* {
+        auto* a = curAnim();
+        if (!a || a->frames.empty()) return nullptr;
+        int& fi = canvas->frameIdx;
+        if (fi < 0 || fi >= (int)a->frames.size()) fi = 0;
+        return &a->frames[(size_t)fi];
+    };
+    auto refreshFrameLabel = [canvas, frameNoLbl, this, tp]() {
+        auto* a = tp->current >= 0 && (size_t)tp->current < mAnimations.size()
+                      ? &mAnimations[(size_t)tp->current] : nullptr;
+        const int total = a ? (int)a->frames.size() : 0;
+        if (total > 0)
+            frameNoLbl->setText(QStringLiteral("%1/%2").arg(canvas->frameIdx + 1).arg(total));
+        else
+            frameNoLbl->setText(QL("0/0"));
+    };
+    auto loadCellForm = [canvas, cellIdSpin, cellXSpin, cellYSpin,
+                         cellScaleSpin, cellRotSpin, cellOpSpin]() {
+        auto& cells = [&]() -> std::vector<rpg::AnimCell>& {
+            static std::vector<rpg::AnimCell> dummy;
+            auto* a = canvas->anim;
+            if (!a || a->frames.empty()) return dummy;
+            return a->frames[(size_t)std::max(0, std::min(canvas->frameIdx,
+                (int)a->frames.size() - 1))].cells;
+        }();
+        int sc = canvas->selectedCell;
+        if (sc < 0 || sc >= (int)cells.size()) return;
+        const auto& c = cells[(size_t)sc];
+        cellIdSpin->setValue(c.cellId);
+        cellXSpin->setValue(c.x);
+        cellYSpin->setValue(c.y);
+        cellScaleSpin->setValue(c.scale);
+        cellRotSpin->setValue(c.rotation);
+        cellOpSpin->setValue(c.opacity);
+    };
+
+    // ------- Sheet-Datei aus dem Projekt aufloesen -------
+    auto resolveSheet = [this](const std::string& fn) -> QString {
+        if (fn.empty() || !mEngine) return QString();
+        const std::string pp = mEngine->GetProject().GetProjectPath();
+        QStringList cands = {
+            QString::fromStdString(pp + "/Graphics/Animations/" + fn),
+            QL("assets/Graphics/Animations/") + QString::fromStdString(fn)
+        };
+        QString s;
+        for (const QString& c : cands)
+            if (QFile::exists(c)) { s = c; break; }
+        return s;
+    };
+    auto reloadSheet = [canvas, tp, this, resolveSheet]() {
+        if (tp->current < 0 || (size_t)tp->current >= mAnimations.size()) return;
+        QImage img(resolveSheet(mAnimations[(size_t)tp->current].file));
+        canvas->setSheet(img);
+    };
+
+    // ------- Frame-Navigation -------
+    connect(framePrevBtn, &QPushButton::clicked, formHost, [canvas, tp, this, refreshFrameLabel, loadCellForm]() {
+        auto* a = tp->current >= 0 && (size_t)tp->current < mAnimations.size()
+                      ? &mAnimations[(size_t)tp->current] : nullptr;
+        if (!a || a->frames.empty()) return;
+        canvas->frameIdx = std::max(0, canvas->frameIdx - 1);
+        canvas->selectedCell = -1;
+        refreshFrameLabel(); loadCellForm(); canvas->update();
+    });
+    connect(frameNextBtn, &QPushButton::clicked, formHost, [canvas, tp, this, refreshFrameLabel, loadCellForm]() {
+        auto* a = tp->current >= 0 && (size_t)tp->current < mAnimations.size()
+                      ? &mAnimations[(size_t)tp->current] : nullptr;
+        if (!a || a->frames.empty()) return;
+        canvas->frameIdx = std::min((int)a->frames.size() - 1, canvas->frameIdx + 1);
+        canvas->selectedCell = -1;
+        refreshFrameLabel(); loadCellForm(); canvas->update();
+    });
+    connect(frameAddBtn, &QPushButton::clicked, formHost, [canvas, curAnim, refreshFrameLabel]() {
+        auto* a = curAnim();
+        if (!a) return;
+        if (a->frames.empty()) {
+            a->frames.push_back(rpg::AnimFrame{});
+            canvas->frameIdx = 0;
+        } else {
+            // neue Kopie des aktuellen Frames dahinter einfuegen (XP-Stil: duplizieren)
+            a->frames.insert(a->frames.begin() + canvas->frameIdx + 1,
+                             a->frames[(size_t)canvas->frameIdx]);
+            canvas->frameIdx++;
+        }
+        canvas->selectedCell = -1;
+        refreshFrameLabel(); canvas->update();
+    });
+    connect(frameDelBtn, &QPushButton::clicked, formHost, [canvas, curAnim, refreshFrameLabel]() {
+        auto* a = curAnim();
+        if (!a || a->frames.empty()) return;
+        a->frames.erase(a->frames.begin() + canvas->frameIdx);
+        if (canvas->frameIdx >= (int)a->frames.size())
+            canvas->frameIdx = (int)a->frames.size() - 1;
+        if (canvas->frameIdx < 0) canvas->frameIdx = 0;
+        canvas->selectedCell = -1;
+        refreshFrameLabel(); canvas->update();
+    });
+
+    // ------- Canvas-Klicks: Zelle anlegen/waehlen/loeschen -------
+    canvas->onAddCell = [canvas, curFrame, loadCellForm](int lx, int ly) {
+        auto* fr = curFrame();
+        if (!fr) return;
+        rpg::AnimCell c;
+        c.x = lx; c.y = ly;
+        fr->cells.push_back(c);
+        canvas->selectedCell = (int)fr->cells.size() - 1;
+        loadCellForm();
+    };
+    canvas->onSelectCell = [canvas, loadCellForm](int idx) {
+        canvas->selectedCell = idx;
+        loadCellForm();
+    };
+    canvas->onRemoveCell = [canvas, curFrame](int idx) {
+        auto* fr = curFrame();
+        if (!fr) return;
+        if (idx >= 0 && idx < (int)fr->cells.size()) {
+            fr->cells.erase(fr->cells.begin() + idx);
+            if (canvas->selectedCell >= (int)fr->cells.size())
+                canvas->selectedCell = (int)fr->cells.size() - 1;
+        }
+    };
+
+    // ------- Zellen-Formular auf die ausgewaehlte Zelle anwenden -------
+    auto applyCell = [canvas]() {
+        auto* a = canvas->anim;
+        if (!a || a->frames.empty()) return;
+        auto& fr = a->frames[(size_t)std::max(0, std::min(canvas->frameIdx,
+            (int)a->frames.size() - 1))];
+        int sc = canvas->selectedCell;
+        if (sc < 0 || sc >= (int)fr.cells.size()) return;
+        // Werte werden von jedem Spin-Signal gelesen (siehe unten)
+    };
+    (void)applyCell;
+    auto writeCell = [canvas, cellIdSpin, cellXSpin, cellYSpin,
+                      cellScaleSpin, cellRotSpin, cellOpSpin]() {
+        if (!canvas->anim || canvas->anim->frames.empty()) return;
+        auto& fr = canvas->anim->frames[(size_t)std::max(0, std::min(canvas->frameIdx,
+            (int)canvas->anim->frames.size() - 1))];
+        int sc = canvas->selectedCell;
+        if (sc < 0 || sc >= (int)fr.cells.size()) return;
+        auto& c = fr.cells[(size_t)sc];
+        c.cellId = cellIdSpin->value();
+        c.x = cellXSpin->value();
+        c.y = cellYSpin->value();
+        c.scale = cellScaleSpin->value();
+        c.rotation = cellRotSpin->value();
+        c.opacity = cellOpSpin->value();
+        canvas->update();
+    };
+    for (auto* s : {cellIdSpin, cellXSpin, cellYSpin,
+                    cellScaleSpin, cellRotSpin, cellOpSpin})
+        connect(s, QOverload<int>::of(&QSpinBox::valueChanged), formHost,
+                [writeCell]() { writeCell(); });
+
+    // ------- ListTab-Verdrahtung -------
+    tp->count = [this]() { return (int)mAnimations.size(); };
     tp->nameAt = [this](int i) {
-        return IdName(i + 1, QString::fromStdString(mSystem.animations[(size_t)i]));
+        return IdName(mAnimations[(size_t)i].id > 0 ? mAnimations[(size_t)i].id : (i + 1),
+                      QString::fromStdString(mAnimations[(size_t)i].name));
     };
     tp->setMax = [this](int n) {
-        mSystem.animations.resize((size_t)n);
-        for (size_t i = 0; i < mSystem.animations.size(); ++i)
-            if (mSystem.animations[i].empty())
-                mSystem.animations[i] = "Animation " + std::to_string(i + 1);
+        mAnimations.resize((size_t)n);
+        for (size_t i = 0; i < mAnimations.size(); ++i) {
+            if (mAnimations[i].id <= 0) mAnimations[i].id = (int)i + 1;
+            if (mAnimations[i].name.empty())
+                mAnimations[i].name = "Animation " + std::to_string(i + 1);
+            if (mAnimations[i].frames.empty())
+                mAnimations[i].frames.push_back(rpg::AnimFrame{});
+        }
     };
-    tp->loadForm = [this, name](int i) {
-        name->setText(QString::fromStdString(mSystem.animations[(size_t)i]));
+    tp->loadForm = [this, name, file, posCombo, canvas, seName, seVol, sePitch,
+                    flashScope, flashR, flashG, flashB, flashDur,
+                    refreshFrameLabel, reloadSheet](int i) {
+        auto& a = mAnimations[(size_t)i];
+        name->setText(QString::fromStdString(a.name));
+        file->setText(QString::fromStdString(a.file));
+        posCombo->setCurrentIndex(std::clamp(a.position, 0, 2));
+        canvas->anim = &a;
+        canvas->frameIdx = 0;
+        canvas->selectedCell = -1;
+        if (a.frames.empty()) a.frames.push_back(rpg::AnimFrame{});
+        const auto& fr = a.frames[0];
+        seName->setText(QString::fromStdString(fr.seName));
+        seVol->setValue(fr.seVolume);
+        sePitch->setValue(fr.sePitch);
+        flashScope->setCurrentIndex(std::clamp(fr.flashScope, 0, 2));
+        flashR->setValue(fr.flashR);
+        flashG->setValue(fr.flashG);
+        flashB->setValue(fr.flashB);
+        flashDur->setValue(std::max(1, fr.flashDuration));
+        refreshFrameLabel();
+        reloadSheet();
+        canvas->update();
     };
-    tp->storeForm = [this, tp, name](int i) {
-        if ((size_t)i >= mSystem.animations.size()) return;
-        mSystem.animations[(size_t)i] = name->text().toStdString();
+    tp->storeForm = [this, tp, name, file, posCombo](int i) {
+        if ((size_t)i >= mAnimations.size()) return;
+        auto& a = mAnimations[(size_t)i];
+        a.name = name->text().toStdString();
+        a.file = file->text().toStdString();
+        a.position = posCombo->currentIndex();
+        a.id = i + 1;
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
-    rebuildList(t, 0);
+
+    // Frame-Timing-Felder schreiben auf den AKTIVEN Frame (sofort, nicht erst beim Tab-Wechsel)
+    auto writeTiming = [canvas, seName, seVol, sePitch,
+                        flashScope, flashR, flashG, flashB, flashDur]() {
+        auto* a = canvas->anim;
+        if (!a || a->frames.empty()) return;
+        int fi = std::max(0, std::min(canvas->frameIdx, (int)a->frames.size() - 1));
+        auto& fr = a->frames[(size_t)fi];
+        fr.seName = seName->text().toStdString();
+        fr.seVolume = seVol->value();
+        fr.sePitch = sePitch->value();
+        fr.flashScope = flashScope->currentIndex();
+        fr.flashR = flashR->value();
+        fr.flashG = flashG->value();
+        fr.flashB = flashB->value();
+        fr.flashDuration = flashDur->value();
+    };
+    connect(seName, &QLineEdit::editingFinished, formHost, [writeTiming]() { writeTiming(); });
+    for (auto* s : {seVol, sePitch, flashR, flashG, flashB, flashDur})
+        connect(s, QOverload<int>::of(&QSpinBox::valueChanged), formHost,
+                [writeTiming]() { writeTiming(); });
+    connect(flashScope, QOverload<int>::of(&QComboBox::currentIndexChanged), formHost,
+            [writeTiming](int) { writeTiming(); });
+
+    connect(file, &QLineEdit::editingFinished, formHost,
+            [tp, file, reloadSheet, this]() {
+        if (tp->current < 0) return;
+        storeCurrent(*tp);
+        reloadSheet();
+    });
+
+    rebuildList(tabRef, 0);
 }
 
 void QtDatabaseDialog::buildTilesetsTab() {
@@ -1659,6 +2068,7 @@ void QtDatabaseDialog::onApply() {
     db.Troops() = mTroops;
     db.States() = mStates;
     db.Tilesets() = mTilesets;
+    db.AnimationSet() = mAnimations;
     db.System() = mSystem;
 
     // Gemeinsame Events zurückschreiben (IDs/Members ersetzen)

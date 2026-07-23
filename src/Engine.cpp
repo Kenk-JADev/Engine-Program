@@ -972,6 +972,18 @@ void Engine::Update(float dt) {
             }
         }
 
+        // XP-Animations-SE (Paket 5): einmalig mit der Audio-Pipeline verdrahten,
+        // damit Animations-Frames ihre Soundeffekte abspielen koennen.
+        if (mAudio && !Game::Get().playSeHook) {
+            Game::Get().playSeHook = [this](const std::string& seName, int vol, int pitch) {
+                std::string p = ResolveAudioPath(seName, 3);
+                if (p.empty() && seName.find('.') == std::string::npos)
+                    p = ResolveAudioPath(seName + ".wav", 3);
+                if (!p.empty())
+                    mAudio->PlaySE(p, false, vol / 100.0f, pitch / 100.0f);
+            };
+        }
+
         Game::Get().Update(dt);
         if (!GameUI::Get().Menu().IsVisible() && !BattleSystem::Get().IsInBattle()) {
             Game::Get().Player().Update(dt, *mInput);

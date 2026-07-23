@@ -121,6 +121,24 @@ void Database::CreateDefaults() {
         mTilesets.push_back(td);
     }
 
+    // Animationen (XP-Paket 5): ein kleiner Standard-Satz als Startpunkt
+    if (mAnimations.empty()) {
+        AnimationData a1;
+        a1.id = 1; a1.name = "Standard-Treffer"; a1.position = 2;
+        AnimFrame f1;
+        f1.cells.push_back(AnimCell{0, 0, 0, 100, 0, 255});
+        f1.flashScope = 1; f1.flashR = 255; f1.flashG = 255; f1.flashB = 255;
+        f1.flashDuration = 3;
+        a1.frames.push_back(f1);
+        a1.frames.push_back(AnimFrame{}); // leerer Ausklang-Frame
+        mAnimations.push_back(a1);
+        AnimationData a2;
+        a2.id = 2; a2.name = "Aufleveln"; a2.position = 1;
+        AnimFrame f2;
+        f2.cells.push_back(AnimCell{0, 0, 0, 100, 0, 200});
+        mAnimations.push_back(a2);
+    }
+
     // MapInfos - RPG Maker Standard Maps
     if (mMapInfos.empty()) {
         MapInfo map1;
@@ -435,6 +453,64 @@ static void WriteIntArray(std::ofstream& f, const char* key,
     f << "]";
 }
 
+// ---------------------------------------------------------------------------
+// XP-Animationen (Paket 5) - Parse/Schreib-Helfer
+// ---------------------------------------------------------------------------
+
+static rpg::AnimCell ParseAnimCellObject(const std::string& obj) {
+    using namespace rpg::JsonUtils;
+    rpg::AnimCell c;
+    TryParseInt(obj, "id", 0, c.cellId);
+    TryParseInt(obj, "x", 0, c.x);
+    TryParseInt(obj, "y", 0, c.y);
+    TryParseInt(obj, "scale", 0, c.scale);
+    TryParseInt(obj, "rot", 0, c.rotation);
+    TryParseInt(obj, "opacity", 0, c.opacity);
+    return c;
+}
+
+static rpg::AnimFrame ParseAnimFrameObject(const std::string& obj) {
+    using namespace rpg::JsonUtils;
+    rpg::AnimFrame fr;
+    std::string cellsArr;
+    if (FindArrayForKey(obj, "cells", 0, cellsArr)) {
+        for (const auto& co : ExtractObjectsFromArray(cellsArr))
+            fr.cells.push_back(ParseAnimCellObject(co));
+    }
+    // SE: {"name":..,"volume":..,"pitch":..}
+    std::string seObj;
+    if (FindObjectForKey(obj, "se", 0, seObj)) {
+        TryParseString(seObj, "name", 0, fr.seName);
+        TryParseInt(seObj, "volume", 0, fr.seVolume);
+        TryParseInt(seObj, "pitch", 0, fr.sePitch);
+    }
+    // Flash: {"scope":..,"r":..,"g":..,"b":..,"duration":..}
+    std::string flashObj;
+    if (FindObjectForKey(obj, "flash", 0, flashObj)) {
+        TryParseInt(flashObj, "scope", 0, fr.flashScope);
+        TryParseInt(flashObj, "r", 0, fr.flashR);
+        TryParseInt(flashObj, "g", 0, fr.flashG);
+        TryParseInt(flashObj, "b", 0, fr.flashB);
+        TryParseInt(flashObj, "duration", 0, fr.flashDuration);
+    }
+    return fr;
+}
+
+rpg::AnimationData ParseAnimationObject(const std::string& obj) {
+    using namespace rpg::JsonUtils;
+    rpg::AnimationData a;
+    TryParseInt(obj, "id", 0, a.id);
+    TryParseString(obj, "name", 0, a.name);
+    TryParseString(obj, "file", 0, a.file);
+    TryParseInt(obj, "position", 0, a.position);
+    std::string framesArr;
+    if (FindArrayForKey(obj, "frames", 0, framesArr)) {
+        for (const auto& fo : ExtractObjectsFromArray(framesArr))
+            a.frames.push_back(ParseAnimFrameObject(fo));
+    }
+    return a;
+}
+
 rpg::TilesetData ParseTilesetObject(const std::string& obj) {
     using namespace rpg::JsonUtils;
     rpg::TilesetData t;
@@ -661,6 +737,13 @@ bool Database::Load(const std::string& projectPath) {
         std::vector<TilesetData> tmp;
         if (LoadArrayFile(dbDir + "/Tilesets.json", tmp, ParseTilesetObject, "Tilesets")) {
             if (!tmp.empty()) { mTilesets = std::move(tmp); anyLoaded = true; }
+        }
+    }
+    // Animationen (XP-Paket 5)
+    {
+        std::vector<AnimationData> tmp;
+        if (LoadArrayFile(dbDir + "/Animations.json", tmp, ParseAnimationObject, "Animations")) {
+            if (!tmp.empty()) { mAnimations = std::move(tmp); anyLoaded = true; }
         }
     }
     // Troops
@@ -1105,6 +1188,47 @@ bool Database::Save(const std::string& projectPath) const {
             }
             f << "]\n";
         }
+        // Animations.json (XP-Paket 5)
+        {
+            std::ofstream f(dbDir + "/Animations.json");
+            f << "[\n";
+            for (size_t i = 0; i < mAnimations.size(); ++i) {
+                const auto& a = mAnimations[i];
+                f << "  {\"id\":" << a.id
+                  << ",\"name\":\"" << Escape(a.name) << "\""
+                  << ",\"file\":\"" << Escape(a.file) << "\""
+                  << ",\"position\":" << a.position
+                  << ",\"frames\":[";
+                for (size_t fi = 0; fi < a.frames.size(); ++fi) {
+                    const auto& fr = a.frames[fi];
+                    f << "{\"cells\":[";
+                    for (size_t ci = 0; ci < fr.cells.size(); ++ci) {
+                        const auto& c = fr.cells[ci];
+                        f << "{\"id\":" << c.cellId << ",\"x\":" << c.x << ",\"y\":" << c.y
+                          << ",\"scale\":" << c.scale << ",\"rot\":" << c.rotation
+                          << ",\"opacity\":" << c.opacity << "}";
+                        if (ci + 1 < fr.cells.size()) f << ",";
+                    }
+                    f << "]";
+                    if (!fr.seName.empty()) {
+                        f << ",\"se\":{\"name\":\"" << Escape(fr.seName) << "\""
+                          << ",\"volume\":" << fr.seVolume
+                          << ",\"pitch\":" << fr.sePitch << "}";
+                    }
+                    if (fr.flashScope != 0) {
+                        f << ",\"flash\":{\"scope\":" << fr.flashScope
+                          << ",\"r\":" << fr.flashR << ",\"g\":" << fr.flashG
+                          << ",\"b\":" << fr.flashB << ",\"duration\":" << fr.flashDuration << "}";
+                    }
+                    f << "}";
+                    if (fi + 1 < a.frames.size()) f << ",";
+                }
+                f << "]}";
+                if (i + 1 < mAnimations.size()) f << ",";
+                f << "\n";
+            }
+            f << "]\n";
+        }
         // MapInfos.json
         {
             std::ofstream f(dbDir + "/MapInfos.json");
@@ -1241,6 +1365,11 @@ const ClassData* Database::GetClass(const std::string& name) const {
 
 const TroopData* Database::GetTroop(int id) const {
     for (const auto& e : mTroops) if (e.id==id) return &e;
+    return nullptr;
+}
+
+const AnimationData* Database::GetAnimation(int id) const {
+    for (const auto& a : mAnimations) if (a.id == id) return &a;
     return nullptr;
 }
 

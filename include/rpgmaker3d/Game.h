@@ -327,6 +327,17 @@ public:
 
     void Update(float dt);
 
+    // ---- XP-Animation-Playback (Paket 5, TODO_XP_PARITY.md) ----
+    // Läuft komplett über die RGSS-Spriteschicht (kein 3D-Partikelsystem).
+    /// Startet Animation <animId> aus der Datenbank auf dem Platz des
+    /// Spielers (v1-Näherung; XP-„Ziel-Event"-Auswahl ist im TODO verbucht).
+    void StartMapAnimation(int animId);
+    bool IsAnimationPlaying() const { return mRunningAnim.active; }
+    void UpdateAnimations(float dt);
+    /// Wire-once-Hook (Engine): SE-Abspielen zu Frame-Wechseln.
+    /// (name wie in Data/Animations.json, vol 0..100, pitch 50..150)
+    std::function<void(const std::string& seName, int vol, int pitch)> playSeHook;
+
     GameSwitches& Switches() { return mSwitches; }
     GameVariables& Variables() { return mVariables; }
     GameSelfSwitches& SelfSwitches() { return mSelfSwitches; }
@@ -337,6 +348,23 @@ public:
 
     bool IsGameStarted() const { return mGameStarted; }
     void SetGameStarted(bool v) { mGameStarted = v; }
+
+    struct RunningAnimation {
+        int animId = 0;
+        int frameIdx = -1;              // aktueller Frame in der Sequenz
+        float frameTimer = 0.0f;
+        int bmpId = 0;                  // RGSS-Spritesheet (0 = Ersatz-Pixel)
+        std::vector<int> spriteIds;     // RGSS-Zellen-Sprite-Pool
+        int flashSpriteId = 0;
+        int flashFramesTotal = 0, flashFramesLeft = 0;
+        float flashTimer = 0.0f;
+        int flashR = 255, flashG = 255, flashB = 255;
+        bool active = false;
+        int baseX = 320, baseY = 240;   // Zielzentrum im RGSS-Canvas (640x480)
+    };
+    RunningAnimation mRunningAnim;
+    int mFallbackCellBmpId = 0;         // 8x8-Rund als Ersatzzelle
+    void ApplyAnimFrame();              // baut Sprite-Pool auf mRunningAnim.frameIdx
 
 private:
     Game() = default;

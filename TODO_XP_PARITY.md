@@ -226,7 +226,23 @@ Schalter setzt; Toggle im Debugfenster wirkt sofort im Spiel.
 ---
 
 ## PAKET 5 — Animations-Editor + Laufzeit-Wiedergabe 🟡 XL
-**Status: OFFEN — größtes Paket**
+**Status: ✅ ERLEDIGT (2026-07-23)** — `AnimationData`/`AnimFrame`/`AnimCell`
+in Database.h (XP-Felder: Zellenzuschnitt 192×192/5 Spalten, x/y/scale/rot/
+opacity, SE je Frame, Flash scope/rgb/duration, position 0-2), Serialisierung
+`Data/Animations.json` (ParseAnimationObject + Schreiber in Database.cpp),
+`Database::AnimationSet()`+`GetAnimation(id)`. Editor-Tab neu:
+QtDatabaseDialog::buildAnimationsTab() mit Frame-Navigator (◀ ▶ +/löschen,
+Duplikat-Einfügung hinter aktuellem Frame), QtAnimFrameCanvas (halbe XP-
+Auflösung 640×480, Sheet-Bild, Klick=+Zelle, Rechtsklick=−Zelle, Auswahl),
+Zellen-Formular, SE/Flash-Formular, Live-Sheet-Nachladen. Laufzeit: Game::
+StartMapAnimation/UpdateAnimations/ApplyAnimFrame (16 fps XP-Takt, Sprite-
+Pool aus RGSS-Drawable, Flash-Sprite mit Fade, SE über playSeHook →
+engine-BGM-Pipeline, Ersatzzelle bei fehlendem Sheet, Sheet-Cache pro ID);
+Event-Befehl ShowAnimation (207) verdrahtet (Namens-Fallback auf
+command.text). Bekannte Näherungen (im Code vermerkt): Ziel-Event (param1)
+wird als Canvas-Mitte interpretiert (XP-Korrektur in 3D-Weltprojektion als
+Folgearbeit notiert), Zellenschema fix 192×192/5sp. mSystem.animations bleibt
+Legacy-Namensliste.
 
 **Ist:** DB-Tab ist nur Namensliste (`mSystem.animations` = vector<string>).
 Laufzeit: `CC::ShowAnimation` (src/EventSystem.cpp ~Z. 647) zeigt nur

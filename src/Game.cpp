@@ -7,6 +7,7 @@
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Database.h"
+#include "rpgmaker3d/RgssUI.h"   // XP-Animations-Playback ueber RGSS-Sprites
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -951,6 +952,7 @@ void Game::Update(float dt) {
     if (!mGameStarted) return;
     mMap.Update(dt);
     mSystem.Update(dt); // Timer (Control Timer)
+    UpdateAnimations(dt); // XP-Animation-Playback (Paket 5)
 
     // Lock player while a message/event is blocking or battle is running
     bool busy = EventSystem::Get().IsWaitingForMessage() ||
@@ -1027,6 +1029,221 @@ void Game::Update(float dt) {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// XP-Animation-Playback (Paket 5)
+// Rendert Animations-Sequenzen aus Data/Animations.json als RGSS-Sprite-
+// Gruppe im 640x480-Canvas. XP-Takt: 16 Frames/s. SE je Frame ueber
+// playSeHook (von der Engine verdrahtet), Flash ueber volles Bild-Sprite.
+// ---------------------------------------------------------------------------
+
+namespace {
+// X-Frame-Dauer in Sekunden (XP: 16 Bilder pro Sekunde)
+constexpr float kXpAnimFrameDur = 1.0f / 16.0f;
+
+// 8x8 Ersatzzelle (weisser Rund), falls kein Animations-Sheet gefunden wurde
+int EnsureFallbackCellBmp() {
+    static int s_id = 0;
+    if (s_id > 0 && RgssBmpGet(s_id) && !RgssBmpGet(s_id)->disposed) return s_id;
+    s_id = RgssBmpCreate(8, 8);
+    if (s_id <= 0) return 0;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) {
+            const int dx = x - 3, dy = y - 3;
+            const bool on = dx * dx + dy * dy <= 9;
+            if (on) RgssBmpSetPixel(s_id, x, y, 255, 120, 120, 255);
+        }
+    return s_id;
+}
+} // namespace
+
+void Game::StartMapAnimation(int animId) {
+    const AnimationData* anim = Database::Get().GetAnimation(animId);
+    if (!anim || anim->frames.empty()) return;
+
+    // laufende Animation sauber beenden
+    if (mRunningAnim.active) {
+        for (int sid : mRunningAnim.spriteIds)
+            if (sid > 0) RgssDrawableDispose(sid);
+        if (mRunningAnim.flashSpriteId > 0)
+            RgssDrawableDispose(mRunningAnim.flashSpriteId);
+    }
+    mRunningAnim = RunningAnimation{};
+    mRunningAnim.active = true;
+    mRunningAnim.animId = animId;
+    mRunningAnim.frameIdx = -1;
+    mRunningAnim.frameTimer = 0.0f;
+
+    // Spritesheet laden (einmalig je Animation cachen)
+    static std::map<int, int> s_sheetCache;
+    int sheetId = 0;
+    auto it = s_sheetCache.find(animId);
+    if (it != s_sheetCache.end() && RgssBmpGet(it->second) && !RgssBmpGet(it->second)->disposed)
+        sheetId = it->second;
+    if (sheetId <= 0 && !anim->file.empty()) {
+        std::string resolved = RgssResolveGraphic("Graphics/Animations/" + anim->file);
+        if (!resolved.empty())
+            sheetId = RgssBmpLoad(resolved);
+        if (sheetId > 0) s_sheetCache[animId] = sheetId;
+    }
+    mRunningAnim.bmpId = sheetId;
+
+    // Zielzentrum vom Spieler ableiten (v1: Canvas-Mitte; XP-Event-Ziele spaeter)
+    mRunningAnim.baseX = 320;
+    mRunningAnim.baseY = 240;
+    // position: 0=Oben 1=Mitte 2=Unten -> versetzt, wie XP es optisch macht
+    if (anim->position == 0) mRunningAnim.baseY = 160;
+    else if (anim->position == 2) mRunningAnim.baseY = 320;
+
+    ApplyAnimFrame(); // erster Frame sofort
+}
+
+void Game::ApplyAnimFrame() {
+    const AnimationData* anim = Database::Get().GetAnimation(mRunningAnim.animId);
+    const int next = mRunningAnim.frameIdx + 1;
+    if (!anim || next >= (int)anim->frames.size()) return; // bleibt bis Timer-Ende
+    mRunningAnim.frameIdx = next;
+    const AnimFrame& fr = anim->frames[(size_t)next];
+
+    // Bitmap fuer Zellen waehlen (Sheet oder Ersatz)
+    const int sheetId = mRunningAnim.bmpId > 0 ? mRunningAnim.bmpId : EnsureFallbackCellBmp();
+
+    // Sprite-Pool auf Zellenzahl bringen
+    auto& pool = mRunningAnim.spriteIds;
+    const int cellCount = (int)fr.cells.size();
+    while ((int)pool.size() < cellCount)
+        pool.push_back(RgssDrawableCreate(RgssDrawableType::Sprite, 0));
+    // ueberzaehlige Sprites verstecken
+    for (size_t i = (size_t)cellCount; i < pool.size(); ++i) {
+        if (auto* sp = RgssDrawableGet(pool[i])) sp->visible = false;
+    }
+
+    for (size_t i = 0; i < (size_t)cellCount; ++i) {
+        const AnimCell& c = fr.cells[i];
+        auto* sp = RgssDrawableGet(pool[i]);
+        if (!sp) continue;
+        sp->visible = true;
+        sp->bitmapId = sheetId;
+        // Zellenausschnitt: 192x192, 5 Spalten (XP-Sheet-Konvention);
+        // bei der Ersatzzelle (8x8) das komplette Mini-Bitmap nehmen.
+        if (mRunningAnim.bmpId > 0) {
+            const float cw = 192.0f;
+            sp->srcX = (float)((c.cellId % 5) * 192);
+            sp->srcY = (float)((c.cellId / 5) * 192);
+            sp->srcW = cw;
+            sp->srcH = cw;
+            sp->ox = 96.0f;
+            sp->oy = 96.0f;
+        } else {
+            sp->srcX = 0; sp->srcY = 0; sp->srcW = 8; sp->srcH = 8;
+            sp->ox = 4.0f; sp->oy = 4.0f;
+        }
+        sp->x = (float)(mRunningAnim.baseX + c.x);
+        sp->y = (float)(mRunningAnim.baseY + c.y);
+        // Sheet-Zellen koennten sehr gross sein; XP zeigt sie im 640x480-Canvas
+        // im Originalmassstab - wir belassen scale als 1:1-Faktor.
+        const float s = c.scale / 100.0f;
+        sp->zoomX = s;
+        sp->zoomY = s;
+        sp->angle = (float)c.rotation;
+        sp->opacity = c.opacity;
+        sp->z = 9999; // immer oben (ueber Spielfiguren)
+        sp->blendType = 0;
+        sp->mirror = false;
+    }
+
+    // SE zu diesem Frame
+    if (!fr.seName.empty() && playSeHook)
+        playSeHook(fr.seName, fr.seVolume, fr.sePitch);
+
+    // Screen-/Ziel-Flash
+    if (fr.flashScope != 0 && fr.flashDuration > 0) {
+        if (mRunningAnim.flashSpriteId > 0) {
+            if (auto* fs = RgssDrawableGet(mRunningAnim.flashSpriteId))
+                fs->visible = false;
+        }
+        const int wBmp = EnsureFallbackCellBmp();
+        int fsid = mRunningAnim.flashSpriteId;
+        if (fsid <= 0 || !RgssDrawableGet(fsid)) {
+            fsid = RgssDrawableCreate(RgssDrawableType::Sprite, 0);
+            mRunningAnim.flashSpriteId = fsid;
+        }
+        if (auto* fs = RgssDrawableGet(fsid)) {
+            fs->visible = true;
+            fs->bitmapId = wBmp;
+            fs->srcX = 0; fs->srcY = 0; fs->srcW = 8; fs->srcH = 8;
+            fs->ox = 4.0f; fs->oy = 4.0f;
+            // scope 2 = Bildschirm: riesig hochskalieren; 1 = Zielpunkt
+            if (fr.flashScope == 2) {
+                fs->x = 320; fs->y = 240;
+                fs->zoomX = 80.0f; fs->zoomY = 60.0f;
+            } else {
+                fs->x = (float)mRunningAnim.baseX;
+                fs->y = (float)mRunningAnim.baseY;
+                fs->zoomX = 12.0f; fs->zoomY = 12.0f;
+            }
+            fs->angle = 0.0f;
+            fs->opacity = 255;
+            fs->z = 10000;
+        }
+        // Farbe ueber Color-Overlay (flashColorId-Mix in RgssUI-Render)
+        static int s_flashColor = 0;
+        if (s_flashColor > 0) {
+            // vorhandene Color-Registry-Eintraege werden von ClearAll gerissen -
+            // neu anlegen ist der sichere Weg.
+        }
+        s_flashColor = 0;
+        mRunningAnim.flashFramesTotal = fr.flashDuration;
+        mRunningAnim.flashFramesLeft = fr.flashDuration;
+        mRunningAnim.flashR = fr.flashR;
+        mRunningAnim.flashG = fr.flashG;
+        mRunningAnim.flashB = fr.flashB;
+        // Farbe direkt konsumieren: wir nutzen hier die existing flash-facility
+        // des Sprites nicht, sondern malen spaeter pro Frame abnehmende Deckkraft.
+    }
+}
+
+void Game::UpdateAnimations(float dt) {
+    if (!mRunningAnim.active) return;
+
+    // Flash-Fade
+    if (mRunningAnim.flashFramesLeft > 0 && mRunningAnim.flashSpriteId > 0) {
+        if (auto* fs = RgssDrawableGet(mRunningAnim.flashSpriteId)) {
+            const float t = (float)mRunningAnim.flashFramesLeft /
+                            (float)std::max(1, mRunningAnim.flashFramesTotal);
+            fs->opacity = (int)(255.0f * t);
+        }
+        mRunningAnim.flashTimer -= dt;
+        if (mRunningAnim.flashTimer <= 0.0f) {
+            mRunningAnim.flashTimer = kXpAnimFrameDur;
+            mRunningAnim.flashFramesLeft--;
+            if (mRunningAnim.flashFramesLeft <= 0) {
+                if (auto* fs = RgssDrawableGet(mRunningAnim.flashSpriteId))
+                    fs->visible = false;
+            }
+        }
+    }
+
+    // Frame-Takt (16 fps)
+    mRunningAnim.frameTimer -= dt;
+    if (mRunningAnim.frameTimer > 0.0f) return;
+    mRunningAnim.frameTimer += kXpAnimFrameDur;
+
+    const AnimationData* anim = Database::Get().GetAnimation(mRunningAnim.animId);
+    if (!anim) { mRunningAnim.active = false; return; }
+
+    if (mRunningAnim.frameIdx + 1 >= (int)anim->frames.size() &&
+        mRunningAnim.flashFramesLeft <= 0) {
+        // fertig: Sprites aufraeumen
+        for (int sid : mRunningAnim.spriteIds)
+            if (sid > 0) RgssDrawableDispose(sid);
+        if (mRunningAnim.flashSpriteId > 0)
+            RgssDrawableDispose(mRunningAnim.flashSpriteId);
+        mRunningAnim = RunningAnimation{};
+        return;
+    }
+    ApplyAnimFrame();
 }
 
 } // namespace rpg

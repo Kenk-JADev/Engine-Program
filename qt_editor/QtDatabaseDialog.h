@@ -85,6 +85,7 @@ private:
     std::vector<rpg::TroopData> mTroops;
     std::vector<rpg::StateData> mStates;
     std::vector<rpg::TilesetData> mTilesets;
+    std::vector<rpg::AnimationData> mAnimations; // XP-Animationen (Paket 5)
     rpg::SystemData mSystem;
     std::vector<rpg::CommonEvent> mCEs;
 

@@ -214,6 +214,39 @@ struct TilesetData {
     }
 };
 
+// ---------------------------------------------------------------------------
+// XP-Animationen (Paket 5, TODO_XP_PARITY.md)
+// Spritesheet: Zellen 192x192 px, 5 Zellen pro Zeile, Index 0..95
+// (XP: cell_max 100; wir erlauben 0..95 = 4 Zeilen + Reserve).
+// ---------------------------------------------------------------------------
+struct AnimCell {
+    int cellId = 0;      // Bildzelle 0..95 (x = id%5, y = id/5 im Sheet)
+    int x = 0;           // Position relativ zum Zielzentrum (px, XP-2D)
+    int y = 0;
+    int scale = 100;     // %
+    int rotation = 0;    // Grad (0..360)
+    int opacity = 255;   // 0..255
+};
+
+struct AnimFrame {
+    std::vector<AnimCell> cells;
+    // pro Frame optional: Sound + Bildschirmblitz (XP-Animation-Timing)
+    std::string seName;
+    int seVolume = 100;  // 0..100
+    int sePitch = 100;   // 50..150
+    int flashScope = 0;  // 0=keiner 1=Ziel 2=Bildschirm
+    int flashR = 255, flashG = 255, flashB = 255; // Farbe
+    int flashDuration = 5;                        // in Frames
+};
+
+struct AnimationData {
+    int id = 0;
+    std::string name = "Animation";
+    std::string file;                 // Grafik unter Graphics/Animations/ o. <projekt>/Graphics/Animations/
+    std::vector<AnimFrame> frames;    // Ablauffolge, ~15 fps wie XP
+    int position = 2;                 // 0=Oben 1=Mitte 2=Unten (rel. zum Ziel)
+};
+
 struct MapInfo {
     int id = 0;
     std::string name = "Map";
@@ -344,6 +377,7 @@ public:
     std::vector<TroopData>& Troops() { return mTroops; }
     std::vector<StateData>& States() { return mStates; }
     std::vector<TilesetData>& Tilesets() { return mTilesets; }
+    std::vector<AnimationData>& AnimationSet() { return mAnimations; }
     std::vector<MapInfo>& MapInfos() { return mMapInfos; }
     SystemData& System() { return mSystem; }
 
@@ -354,6 +388,7 @@ public:
     const SkillData* GetSkill(int id) const;
     const TroopData* GetTroop(int id) const;
     const StateData* GetState(int id) const;
+    const AnimationData* GetAnimation(int id) const;
 
     void CreateDefaults();
 
@@ -369,6 +404,7 @@ private:
     std::vector<TroopData> mTroops;
     std::vector<StateData> mStates;
     std::vector<TilesetData> mTilesets;
+    std::vector<AnimationData> mAnimations;   // XP-Animationen (Paket 5)
     std::vector<MapInfo> mMapInfos;
     SystemData mSystem;
 };

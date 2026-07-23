@@ -647,14 +647,17 @@ bool EventInterpreter::ExecuteCommand() {
     case CC::ShowAnimation:
     case CC::ShowBattleAnimation:
     case CC::PlayAnimation: {
-        // Animation -> Partikel an Zielposition (vereinfachte 3D-Umsetzung)
-        if (onShowWorldText) {
-            onShowWorldText(cmd.text.empty() ? "*" : cmd.text,
-                Game::Get().Player().GetPosition().x,
-                Game::Get().Player().GetPosition().y + 1.2f,
-                Game::Get().Player().GetPosition().z,
-                0.6f, 0.9f, 1.0f, 1.0f);
+        // XP-Animations-Playback (Paket 5): Sequenz aus Data/Animations.json
+        // als RGSS-Sprite-Gruppe ueber dem Spieler (v1-Naeherung, Ziel-Event
+        // aus param1 ist im TODO notiert).
+        int animId = cmd.param2 > 0 ? cmd.param2 : 0;
+        if (animId == 0 && !cmd.text.empty()) {
+            // Hilfsweg: Animation per NAME finden (Editor-Textfeld)
+            for (const auto& a : Database::Get().AnimationSet())
+                if (a.name == cmd.text) { animId = a.id > 0 ? a.id : 1; break; }
         }
+        if (animId <= 0) animId = 1;
+        Game::Get().StartMapAnimation(animId);
         return true;
     }
     case CC::ChangeTransparentFlag:
