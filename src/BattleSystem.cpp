@@ -62,6 +62,16 @@ int StateResistPercent(const Battler& target, int stateId) {
     }
     return kPct[rank];
 }
+
+/// PAKET 22: Datenzeile der ausgeruesteten Waffe (nullptr = unbewaffnet/
+/// unbekannt) — fuer XP plus/minus_state_set der Waffe.
+const WeaponData* ActorEquippedWeaponData(int actorId) {
+    if (auto* ga = Game::Get().Party().GetActor(actorId)) {
+        for (const auto& w : Database::Get().Weapons())
+            if (w.id == ga->weaponId) return &w;
+    }
+    return nullptr;
+}
 } // namespace
 
 BattleSystem& BattleSystem::Get() {
@@ -443,6 +453,77 @@ void BattleSystem::ApplySkillStates(Battler& target, const SkillData& sk) {
     ApplyStateSets(target, sk.plusStates, sk.minusStates);
 }
 
+// ---- PAKET 22: XP-Zielsystem (scope 0..7) ----------------------------
+std::vector<Battler*> BattleSystem::ResolveScopeTargets(Battler& subject, int scope,
+                                                        bool targetIsActor, int chosen) {
+    std::vector<Battler*> out;
+    auto randomOf = [this](const std::vector<int>& pool) -> int {
+        if (pool.empty()) return -1;
+        std::uniform_int_distribution<> d(0, (int)pool.size() - 1);
+        return pool[(size_t)d(BattleRng())];
+    };
+    // „Eigene Seite" / „Gegenseite" aus Sicht des Anwenders; das im Menue
+    // gewaehlte Ziel gilt nur, wenn die Seite der Aktion dazu passt.
+    const bool chosenFitsEnemySide = (targetIsActor == !subject.isActor);
+    const bool chosenFitsOwnSide   = (targetIsActor == subject.isActor);
+    switch (scope) {
+        case 1: { // Ein Gegner
+            auto& side = subject.isActor ? mEnemies : mActors;
+            int idx = chosenFitsEnemySide ? chosen : -1;
+            std::vector<int> alive;
+            for (size_t i = 0; i < side.size(); ++i)
+                if (!side[i].isDead) alive.push_back((int)i);
+            if (idx < 0 || idx >= (int)side.size() || side[(size_t)idx].isDead)
+                idx = randomOf(alive);
+            if (idx >= 0) out.push_back(&side[(size_t)idx]);
+            break;
+        }
+        case 2: { // Alle Gegner
+            auto& side = subject.isActor ? mEnemies : mActors;
+            for (auto& b : side) if (!b.isDead) out.push_back(&b);
+            break;
+        }
+        case 3: { // Ein Verbuendeter (lebend)
+            auto& side = subject.isActor ? mActors : mEnemies;
+            int idx = chosenFitsOwnSide ? chosen : -1;
+            std::vector<int> alive;
+            for (size_t i = 0; i < side.size(); ++i)
+                if (!side[i].isDead) alive.push_back((int)i);
+            if (idx < 0 || idx >= (int)side.size() || side[(size_t)idx].isDead)
+                idx = randomOf(alive);
+            if (idx >= 0) out.push_back(&side[(size_t)idx]);
+            break;
+        }
+        case 4: { // Alle Verbuendeten (lebend)
+            auto& side = subject.isActor ? mActors : mEnemies;
+            for (auto& b : side) if (!b.isDead) out.push_back(&b);
+            break;
+        }
+        case 5: { // Ein Verbuendeter (tot) — Wiederbelebung
+            auto& side = subject.isActor ? mActors : mEnemies;
+            int idx = chosenFitsOwnSide ? chosen : -1;
+            std::vector<int> dead;
+            for (size_t i = 0; i < side.size(); ++i)
+                if (side[i].isDead && !side[i].escaped) dead.push_back((int)i);
+            if (idx < 0 || idx >= (int)side.size() ||
+                !side[(size_t)idx].isDead || side[(size_t)idx].escaped)
+                idx = randomOf(dead);
+            if (idx >= 0) out.push_back(&side[(size_t)idx]);
+            break;
+        }
+        case 6: { // Alle Verbuendeten (tot)
+            auto& side = subject.isActor ? mActors : mEnemies;
+            for (auto& b : side) if (b.isDead && !b.escaped) out.push_back(&b);
+            break;
+        }
+        case 7: // Anwender
+            out.push_back(&subject);
+            break;
+        default: break; // 0 = kein Ziel (z. B. reine Common-Event-Skills)
+    }
+    return out;
+}
+
 void BattleSystem::ApplyStateSets(Battler& target, const std::vector<int>& plus,
                                   const std::vector<int>& minus) {
     if (target.isDead || (plus.empty() && minus.empty())) return;
@@ -696,14 +777,22 @@ void BattleSystem::ProcessTurn() {
                 if (target->isDead) msg += " " + target->name + " wurde besiegt!";
                 if (onMessage) onMessage(msg);
                 if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                // PAKET 22: XP plus/minus_state_set der Waffe (nur bei Treffer;
+                // ApplyStateSets ignoriert bereits Tote automatisch)
+                if (subject->isActor) {
+                    if (const WeaponData* w = ActorEquippedWeaponData(subject->id))
+                        ApplyStateSets(*target, w->plusStates, w->minusStates);
+                }
             }
         } else if (onMessage) onMessage(subject->name + " greift an... aber da ist niemand!");
     } else if (action.type==BattleActionType::Skill) {
-        // XP-Semantik: scope>=3 = eigene Seite (Heilung um |power|),
-        // sonst Schaden am Gegner (power + atk/2 - def/2).
+        // PAKET 22: XP-Scopes 0..7 zentral ueber ResolveScopeTargets —
+        // Schaden nur auf den Gegner-Scopes 1/2, Heil-/Zustandswirkung auf
+        // 3..7 (eigene Seite; 5/6 treffen Tote, power gilt dort als Prozent
+        // der max. HP — XP-Wiederbelebung).
         const SkillData* sk = Database::Get().GetSkill(action.skillId);
         const int power = sk ? (sk->power < 0 ? -sk->power : sk->power) : 40;
-        const bool allyScope = sk && sk->scope >= 3;
+        const int scope = sk ? sk->scope : 1;
         const std::string sname = sk ? sk->name : "Fertigkeit";
         if (sk) subject->mp = std::max(0, subject->mp - sk->mpCost);
         // PAKET 12: Skill-Animation (XP animation_id; Fallback: Legacy-
@@ -711,82 +800,103 @@ void BattleSystem::ProcessTurn() {
         const int skillAnimId = sk ? (sk->animationId > 0
                                       ? sk->animationId
                                       : FindAnimationIdByName(sk->animation)) : 0;
-        if (!allyScope) {
-            // Schadens-Skill - Zielseite steht in action.targetIsActor
-            Battler* target = targetOf(action);
-            if (target && !target->isDead) {
+        std::vector<Battler*> targets =
+            ResolveScopeTargets(*subject, scope, action.targetIsActor, action.targetIndex);
+        if (targets.empty()) {
+            if (onMessage) onMessage(subject->name + " setzt " + sname +
+                                     " ein... aber ohne Wirkung!");
+        } else if (scope <= 2) {
+            // Schadens-Skill: pro Ziel eigene Miss-/Crit-Wuerfe (XP)
+            std::string msg = subject->name + " setzt " + sname + " ein:";
+            std::uniform_real_distribution<float> uni(0.0f, 1.0f);
+            for (Battler* target : targets) {
                 if (skillAnimId > 0 && onBattleAnimation)
                     onBattleAnimation(*target, skillAnimId);
-                // PAKET 9: gleiche XP-Regel wie beim Angriff (Miss 5%, Crit 1/16 x3)
-                std::uniform_real_distribution<float> uni(0.0f, 1.0f);
                 if (uni(BattleRng()) < 0.05f) {
                     target->NotifyMiss();
-                    if (onMessage) onMessage(subject->name + " setzt " + sname + " ein... Ausgewichen!");
-                } else {
-                    int dmg = std::max(1, power + subject->atk/2 - target->def/2);
-                    if (target->isGuarding) dmg = std::max(1, dmg/2);
-                    const bool crit = uni(BattleRng()) < 0.0625f;
-                    if (crit) dmg *= 3;
-                    target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
-                    std::string msg = subject->name + " setzt " + sname + " ein: " +
-                                      std::to_string(dmg) + " Schaden!";
-                    if (crit) msg += " Kritischer Treffer!";
-                    if (target->isDead) msg += " " + target->name + " wurde besiegt!";
-                    if (onMessage) onMessage(msg);
-                    if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
-                    // PAKET 17: Zustaende des Skills nur bei Treffer (XP)
-                    if (sk) ApplySkillStates(*target, *sk);
+                    msg += "\n" + target->name + ": Ausgewichen!";
+                    continue;
                 }
+                int dmg = std::max(1, power + subject->atk/2 - target->def/2);
+                if (target->isGuarding) dmg = std::max(1, dmg/2);
+                const bool crit = uni(BattleRng()) < 0.0625f;
+                if (crit) dmg *= 3;
+                target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
+                msg += "\n" + target->name + ": " + std::to_string(dmg) + " Schaden!" +
+                       (crit ? " Kritischer Treffer!" : "");
+                if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                if (target->isDead && onEnemyDefeated && !target->isActor)
+                    onEnemyDefeated(target->id);
+                // PAKET 17: Zustaende des Skills nur bei Treffer (XP)
+                if (sk) ApplySkillStates(*target, *sk);
             }
+            if (onMessage) onMessage(msg);
         } else {
-            // Heil-Skill: Ziel = Verbuendeter (Standard: Anwender selbst)
-            Battler* target = subject;
-            if (action.targetIsActor) {
-                if (Battler* t = targetOf(action)) target = t;
+            // Heil-/Zustands-Seite (3..7); 5/6 koennen Tote treffen.
+            std::string msg = subject->name + " setzt " + sname + " ein:";
+            for (Battler* target : targets) {
+                if (skillAnimId > 0 && onBattleAnimation)
+                    onBattleAnimation(*target, skillAnimId);
+                const bool wasDead = target->isDead;
+                if (wasDead) {
+                    // Wiederbelebung: power = Prozent der max. HP (XP)
+                    const int amt = std::max(1, power * target->maxHp / 100);
+                    target->Recover(amt, 0);
+                    msg += "\n" + target->name + " wurde wiederbelebt (+" +
+                           std::to_string(amt) + " HP)!";
+                } else if (power > 0) {
+                    target->Recover(power, 0);
+                    msg += "\n" + target->name + ": +" + std::to_string(power) + " HP";
+                }
+                // PAKET 17: Status-Heilung (minus_state_set, z. B. Esuna);
+                // greift auch am frisch wiederbelebten Ziel.
+                if (sk) ApplySkillStates(*target, *sk);
             }
-            // PAKET 12
-            if (skillAnimId > 0 && onBattleAnimation)
-                onBattleAnimation(*target, skillAnimId);
-            target->Recover(power, 0);
-            if (onMessage) onMessage(subject->name + " setzt " + sname + " ein: " +
-                                     target->name + " +" + std::to_string(power) + " HP");
-            // PAKET 17: Status-Heilung (minus_state_set, z. B. Esuna)
-            if (sk) ApplySkillStates(*target, *sk);
+            if (onMessage) onMessage(msg);
         }
     } else if (action.type==BattleActionType::Item) {
         if (const auto* it = Database::Get().GetItem(action.itemId)) {
-            if (it->hpRecovery < 0) {
-                // Schadens-Item (z. B. Bombe) - Zielseite aus der Aktion
-                Battler* target = targetOf(action);
-                if (target && !target->isDead) {
-                    // PAKET 12
+            // PAKET 22: scope-getrieben (0..7, wie Skills). Kompatibilitaet:
+            // Items mit negativem hpRecovery, deren scope nie gesetzt wurde
+            // (Standard „ein Verbuendeter"), wirken wie bisher auf Gegner.
+            int scope = (int)it->scope;
+            if (it->hpRecovery < 0 && scope >= 3) scope = 1;
+            std::vector<Battler*> targets =
+                ResolveScopeTargets(*subject, scope, action.targetIsActor, action.targetIndex);
+            if (targets.empty()) {
+                if (onMessage) onMessage(subject->name + " benutzt " + it->name +
+                                         "... aber ohne Wirkung!");
+            } else {
+                std::string msg = subject->name + " benutzt " + it->name + ":";
+                for (Battler* target : targets) {
                     if (it->animationId > 0 && onBattleAnimation)
                         onBattleAnimation(*target, it->animationId);
-                    const int dmg = -it->hpRecovery;
-                    target->ApplyDamage(dmg);
-                    std::string msg = subject->name + " benutzt " + it->name + ": " +
-                                      std::to_string(dmg) + " Schaden!";
-                    if (target->isDead) msg += " " + target->name + " wurde besiegt!";
-                    if (onMessage) onMessage(msg);
-                    if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
-                    // PAKET 20: XP-Zustands-Effekte auch von Items (Kampf)
+                    const bool wasDead = target->isDead;
+                    if (wasDead) {
+                        // Wiederbelebung: hpRecovery = Prozent der max. HP (XP)
+                        const int amt = std::max(1, it->hpRecovery * target->maxHp / 100);
+                        target->Recover(amt, it->mpRecovery);
+                        msg += "\n" + target->name + " wurde wiederbelebt (+" +
+                               std::to_string(amt) + " HP)!";
+                    } else if (it->hpRecovery < 0) {
+                        const int dmg = -it->hpRecovery;
+                        target->ApplyDamage(dmg);
+                        msg += "\n" + target->name + ": " + std::to_string(dmg) +
+                               " Schaden!";
+                        if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                        if (target->isDead && onEnemyDefeated && !target->isActor)
+                            onEnemyDefeated(target->id);
+                    } else {
+                        target->Recover(it->hpRecovery, it->mpRecovery);
+                        if (it->hpRecovery > 0 || it->mpRecovery > 0)
+                            msg += "\n" + target->name + ": +" +
+                                   std::to_string(it->hpRecovery) + " HP, +" +
+                                   std::to_string(it->mpRecovery) + " MP";
+                    }
+                    // PAKET 20/22: Zustands-Sets (Antidot, Giftbomben etc.)
                     ApplyStateSets(*target, it->plusStates, it->minusStates);
                 }
-            } else {
-                // Heil-Item auf Verbuendeten (Standard: Anwender selbst)
-                Battler* target = subject;
-                if (action.targetIsActor) {
-                    if (Battler* t = targetOf(action)) target = t;
-                }
-                // PAKET 12
-                if (it->animationId > 0 && onBattleAnimation)
-                    onBattleAnimation(*target, it->animationId);
-                target->Recover(it->hpRecovery, it->mpRecovery);
-                if (onMessage) onMessage(subject->name + " benutzt " + it->name +
-                                         " auf " + target->name + " (+" +
-                                         std::to_string(it->hpRecovery) + " HP)");
-                // PAKET 20: XP minus/plus_state_set (Antidot-Art im Kampf)
-                ApplyStateSets(*target, it->plusStates, it->minusStates);
+                if (onMessage) onMessage(msg);
             }
             Game::Get().Party().GainItem(it->id, -1);
         }

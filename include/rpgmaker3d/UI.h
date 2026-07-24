@@ -243,8 +243,9 @@ public:
     void OpenGameMenu();
     // Untermenue: Inventarliste (Items mit Anzahl; Enter: benutzen/info)
     void OpenItemsMenu();
-    // Untermenue: Ziel fuer benutzbaren Gegenstand (Heil-Items, XP)
-    void OpenItemTargetMenu(int itemId);
+    // Untermenue: Ziel fuer benutzbaren Gegenstand (Heil-Items, XP);
+    // deadOnly=true listet gefallene Mitglieder (Wiederbelebung, PAKET 22)
+    void OpenItemTargetMenu(int itemId, bool deadOnly = false);
     // Untermenue: Fertigkeiten eines Mitglieds (Heil-Skills benutzbar, XP)
     void OpenSkillsMenu();
     // Untermenue: Ausruestung eines Mitglieds (Waffe/Schild/Helm/Koerper/Accessoire)
@@ -381,14 +382,23 @@ public:
 private:
     // Interne Untermenues (Member-Auswahl -> Listen)
     void OpenSkillListMenu(int memberIndex);
-    void OpenSkillTargetMenu(int memberIndex, int skillId);
+    // deadOnly=true listet gefallene Mitglieder (Wiederbelebung, PAKET 22)
+    void OpenSkillTargetMenu(int memberIndex, int skillId, bool deadOnly = false);
+    // PAKET 22: gemeinsame Menue-Anwendung fuer Ziel-, Gruppen- und
+    // Wiederbelebungs-Pfade (XP-Scope 4/5/6/7 ohne eigenes Untermenue)
+    void UseMenuItemOnMember(int itemId, int targetIndex, bool revive);
+    void UseMenuItemOnGroup(int itemId, bool deadOnly);
+    void UseMenuSkillOnMember(int memberIndex, int skillId, int targetIndex, bool revive);
+    void UseMenuSkillOnGroup(int memberIndex, int skillId, bool deadOnly);
     void OpenEquipSlotMenu(int memberIndex, int slotKind); // -1 Uebersicht, -2 Waffe, 0..3 Ruestungstyp
 
     // Interne Kampf-Untermenues
     void OpenBattleSkillMenu(int actorIndex);
     void OpenBattleItemMenu(int actorIndex);
     void OpenBattleTargetMenu(int actorIndex, int mode, int id); // Gegner: mode 0=Angriff, 1=Skill, 2=Item
-    void OpenBattleAllyMenu(int actorIndex, int mode, int id);   // Verbuendete: mode 1=Skill, 2=Item
+    // Verbuendete: mode 1=Skill, 2=Item; deadOnly=true listet nur
+    // Gefallene (XP-Scope „Verbuendeter (tot)", PAKET 22)
+    void OpenBattleAllyMenu(int actorIndex, int mode, int id, bool deadOnly = false);
     void ConfirmBattleAction(int actorIndex, BattleActionType type, int id, int targetIndex, bool targetIsActor);
 
     void UpdateScreenTexts(float dt);

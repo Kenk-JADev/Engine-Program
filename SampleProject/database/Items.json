@@ -1,5 +1,6 @@
 [
   {"id": 1, "name": "Potion", "type": "Regular", "price": 50, "hpRecovery": 100},
   {"id": 2, "name": "Ether", "type": "Regular", "price": 100, "mpRecovery": 50},
-  {"id": 3, "name": "Gegengift", "type": "Regular", "price": 30, "hpRecovery": 0, "minusStates": [1]}
+  {"id": 3, "name": "Gegengift", "type": "Regular", "price": 30, "hpRecovery": 0, "minusStates": [1]},
+  {"id": 4, "name": "Phönixfeder", "type": "Regular", "price": 500, "hpRecovery": 100, "scope": 5}
 ]

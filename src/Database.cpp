@@ -56,7 +56,8 @@ void Database::CreateDefaults() {
         warrior.learnings = {{1, 4}, {2, 2}, {3, 3}};
         mClasses.push_back(warrior);
         ClassData mage; mage.id=2; mage.name="Mage";
-        mage.learnings = {{1, 1}, {4, 2}}; // Fire ab 1, Heal ab 4
+        // Fire ab 1, Heal ab 4, Auferstehung ab 5 (PAKET 22)
+        mage.learnings = {{1, 1}, {4, 2}, {5, 5}};
         mClasses.push_back(mage);
     }
 
@@ -70,12 +71,21 @@ void Database::CreateDefaults() {
         ItemData anti; anti.id=3; anti.name="Gegengift"; anti.price=30;
         anti.hpRecovery=0; anti.minusStates={1}; // heilt „Poison"
         mItems.push_back(anti);
+        // PAKET 22: Wiederbelebungs-Item (XP scope 5 = ein Verbuendeter
+        // (tot); die HP-Genesung gilt dort als PROZENT der max. HP).
+        ItemData fenix; fenix.id=4; fenix.name="Phönixfeder"; fenix.price=500;
+        fenix.hpRecovery=100; fenix.scope=rpg::ItemData::Scope::OneAllyDead;
+        mItems.push_back(fenix);
     }
 
     // Weapons
     if (mWeapons.empty()) {
         WeaponData sword; sword.id=1; sword.name="Iron Sword"; sword.atk=10; sword.price=200;
         mWeapons.push_back(sword);
+        // PAKET 22: Demo-Waffe mit XP-Zustands-Effekt (vergiftet beim Treffer)
+        WeaponData fang; fang.id=2; fang.name="Giftklinge"; fang.atk=6; fang.price=800;
+        fang.plusStates={1};
+        mWeapons.push_back(fang);
     }
 
     // Armors
@@ -102,6 +112,11 @@ void Database::CreateDefaults() {
         SkillData aid; aid.id=4; aid.name="Erste Hilfe"; aid.mpCost=3;
         aid.scope=3; aid.power=0; aid.minusStates={1};
         mSkills.push_back(aid);
+        // PAKET 22: Wiederbelebungs-Skill (XP scope 5 = ein Verbuendeter
+        // (tot); power gilt dort als PROZENT der max. HP — 100 = volle HP).
+        SkillData rev; rev.id=5; rev.name="Auferstehung"; rev.mpCost=20;
+        rev.scope=5; rev.power=100;
+        mSkills.push_back(rev);
     }
 
     // Enemies
@@ -448,6 +463,9 @@ rpg::WeaponData ParseWeaponObject(const std::string& obj) {
     if (TryParseInt(obj, "atk", 0, v)) w.atk = v;
     if (TryParseInt(obj, "animationId", 0, v)) w.animationId = v;
     if (TryParseInt(obj, "iconIndex", 0, v)) w.iconIndex = v;
+    // PAKET 22: XP plus_state_set / minus_state_set (Zustands-IDs)
+    ParseIntArrayInto(obj, "plusStates", w.plusStates);
+    ParseIntArrayInto(obj, "minusStates", w.minusStates);
     return w;
 }
 
@@ -1205,8 +1223,10 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"price\":" << w.price
                   << ",\"atk\":" << w.atk
                   << ",\"iconIndex\":" << w.iconIndex
-                  << ",\"animationId\":" << w.animationId
-                  << "}";
+                  << ",\"animationId\":" << w.animationId;
+                WriteIntArray(f, "plusStates", w.plusStates);   // PAKET 22
+                WriteIntArray(f, "minusStates", w.minusStates); // PAKET 22
+                f << "}";
                 if (i+1<mWeapons.size()) f << ",";
                 f << "\n";
             }

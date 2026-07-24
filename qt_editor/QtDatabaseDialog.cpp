@@ -665,8 +665,11 @@ void QtDatabaseDialog::buildSkillsTab() {
     auto* name = makeLine(formHost);
     auto* desc = makeLine(formHost);
     auto* cost = makeSpin(0, 999, 10, formHost);
+    // PAKET 22: volle XP-Scope-Liste (0..7, wie bei Items) —
+    // Wiederbelebungs-Scopes 5/6; power gilt dort als Prozent der max. HP.
     auto* scope = makeCombo(formHost, {QL("Kein Ziel"), QL("Ein Gegner"), QL("Alle Gegner"),
                                        QL("Ein Verbündeter"), QL("Alle Verbündeten"),
+                                       QL("Verbündeter (tot)"), QL("Alle Verbündeten (tot)"),
                                        QL("Anwender")}, 1);
     auto* power = makeSpin(0, 9999, 100, formHost);
     auto* anim = makeLine(formHost);
@@ -706,7 +709,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         name->setText(QString::fromStdString(s.name));
         desc->setText(QString::fromStdString(s.description));
         cost->setValue(s.mpCost);
-        scope->setCurrentIndex(qBound(0, s.scope, 5));
+        scope->setCurrentIndex(qBound(0, s.scope, 7)); // PAKET 22 (0..7)
         power->setValue(s.power);
         anim->setText(QString::fromStdString(s.animation));
         animId->setValue(s.animationId);
@@ -828,11 +831,20 @@ void QtDatabaseDialog::buildWeaponsTab() {
     auto* price = makeSpin(0, 999999, 100, formHost);
     auto* atk = makeSpin(0, 999, 10, formHost);
     auto* animId = makeSpin(0, 999, 0, formHost);
+    // PAKET 22: XP plus_state_set / minus_state_set der Waffe
+    auto* plusEdit = makeLine(formHost);
+    plusEdit->setToolTip(QL("Zustände, die ein Treffer mit dieser Waffe verhängt (XP plus_state_set).\n"
+                            "IDs kommagetrennt, z. B. 1 (Gift). Trefferchance nach Resistenz-Rang des Ziels."));
+    auto* minusEdit = makeLine(formHost);
+    minusEdit->setToolTip(QL("Zustände, die ein Treffer mit dieser Waffe heilt (XP minus_state_set).\n"
+                             "IDs kommagetrennt."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
     form->addRow(QL("Angriff"), atk);
     form->addRow(QL("Animations-ID"), animId);
+    form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
+    form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
 
     tp->count = [this]() { return (int)mWeapons.size(); };
     tp->nameAt = [this](int i) {
@@ -842,15 +854,17 @@ void QtDatabaseDialog::buildWeaponsTab() {
         mWeapons.resize((size_t)n);
         for (size_t i = 0; i < mWeapons.size(); ++i) mWeapons[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, price, atk, animId](int i) {
+    tp->loadForm = [this, name, desc, price, atk, animId, plusEdit, minusEdit](int i) {
         auto& w = mWeapons[(size_t)i];
         name->setText(QString::fromStdString(w.name));
         desc->setText(QString::fromStdString(w.description));
         price->setValue(w.price);
         atk->setValue(w.atk);
         animId->setValue(w.animationId);
+        plusEdit->setText(JoinIds(w.plusStates));   // PAKET 22
+        minusEdit->setText(JoinIds(w.minusStates)); // PAKET 22
     };
-    tp->storeForm = [this, tp, name, desc, price, atk, animId](int i) {
+    tp->storeForm = [this, tp, name, desc, price, atk, animId, plusEdit, minusEdit](int i) {
         if ((size_t)i >= mWeapons.size()) return;
         auto& w = mWeapons[(size_t)i];
         w.name = name->text().toStdString();
@@ -858,6 +872,8 @@ void QtDatabaseDialog::buildWeaponsTab() {
         w.price = price->value();
         w.atk = atk->value();
         w.animationId = animId->value();
+        w.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 22
+        w.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 22
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);

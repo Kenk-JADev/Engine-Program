@@ -190,6 +190,16 @@ private:
     /// PAKET 20: generische Zustands-Anwendung (Skill UND Item aufrufbar)
     void ApplyStateSets(Battler& target, const std::vector<int>& plus,
                         const std::vector<int>& minus);
+    // ---- PAKET 22: XP-Zielsystem (scope 0..7) fuer Skills UND Items ----
+    /// Loesen einen XP-Scope in die konkrete Zielliste auf:
+    /// 0 kein Ziel / 1 ein Gegner / 2 alle Gegner / 3 ein Verbuendeter /
+    /// 4 alle Verbuendeten / 5 ein Verbuendeter (tot) / 6 alle (tot) /
+    /// 7 Anwender. „Gegner"/„Verbuendeter" aus Sicht von subject;
+    /// chosen = im Menue gewaehlter Index der betreffenden Seite (-1 =
+    /// nicht gewaehlt). Ungueltige Wahl faellt auf ein zufaelliges
+    /// gueltiges Ziel zurueck (XP-Verhalten bei KI/Schnellwahl).
+    std::vector<Battler*> ResolveScopeTargets(Battler& subject, int scope,
+                                              bool targetIsActor, int chosen);
     // ---- PAKET 18: XP-Gegner-Verhaltenstabelle (RPG::Enemy.actions) ----
     /// Waehlt die Aktion eines Gegner-Kaempfers (Bedinungen, Rating-Lostopf
     /// max-3, Skill-MP-Check; Flucht/Nichtstun wird intern abgewickelt und

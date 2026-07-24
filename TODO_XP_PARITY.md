@@ -1218,10 +1218,9 @@ unmoeglich; und die Menue-Nutzung kannte nur HP/MP.
 - [x] **Demo:** „Gegengift" (heilt Poison, id 3) in Fallback-DB und
   SampleProject.
 
-**Bewusst offen:** Wiederbelebungs-Scopes (OneAllyDead/AllAlliesDead —
-Zielwahl lebender Mitglieder bleibt vorgegeben), Parameter-Boni von
-Items; Menu-Skills (Skills aus dem Fertigkeits-Menue auf der Karte)
-sind ein eigener Block.
+**Bewusst offen:** Parameter-Boni von Items; Menu-Skills (Skills aus dem
+Fertigkeits-Menue auf der Karte) sind ein eigener Block.
+*(Update PAKET 22: Wiederbelebungs-Scopes sind jetzt erledigt.)*
 
 **Akzeptanz:** Bat vergiftet einen Akteur (PAKET 18) -> Menue oeffnen,
 „Gegengift" auf den Vergifteten -> „ist nicht mehr Poison" mit
@@ -1256,15 +1255,73 @@ konnte so nie im Menue wirken.
 - [x] Doku: Anlass-Tabelle im Editor-Tooltip/TODO.
 
 **Bewusst offen:** „Schweigen"-Restriktion (Zustand sperrt Skills mit
-Magie-Flag — XP trennt physical/magical) ist nicht modelliert; tote
-Ziele im Menue (Wiederbelebung, Scopes 5/6) bleiben der
-Wiederbelebungs-Block; XP `Game_Actor#skill_can_use?` Ruby-seits.
+Magie-Flag — XP trennt physical/magical) ist nicht modelliert; XP
+`Game_Actor#skill_can_use?` Ruby-seits.
+*(Update PAKET 22: Wiederbelebung + Scopes 5/6 im Menue sind erledigt.)*
 
 **Akzeptanz:** Krieger (Lv 1) oeffnet Menue -> Fertigkeiten -> „Erste
 Hilfe" (3 MP) ist aktiv; bei vergiftetem Ziel erscheint „ist nicht
 mehr Poison" + „(-3 MP)"; im Kampf-Befehlsfenster ist ein Skill mit
 Anlass „Nur im Menue" ausgegraut; Editor-Anlass ueberlebt Speichern
 und Laden (Skills.json `"occasion"`).
+
+## PAKET 22 — Kampf-Zielsystem komplett (XP-Scopes 0..7) + Waffen-Zustaende ✅ ERLEDIGT 2026-07-24
+
+Groesseres Themenpaket (Nutzerwunsch: groessere Bloecke). Bisher
+kannte die Engine nur „ein Gegner" vs. „ein Verbuendeter" — Alle-
+Ziele, Tote/Wiederbelebung, Kein-Ziel und Anwender fehlten komplett,
+Items ignorierten ihre scope, Waffen hatten keine Zustands-Sets.
+
+- [x] **Zentraler Resolver** `BattleSystem::ResolveScopeTargets`
+  (scope 0..7 aus Sicht des Anwenders; eigene Seite vs. Gegnerseite;
+  Menue-Wahl wird uebernommen, sonst XP-konform zufaelliges gueltiges
+  Ziel; Geflohene sind ausgeschlossen). Skills UND Items laufen jetzt
+  darueber — Mehrfachziele (2/4/6) wirken pro Ziel mit eigenen
+  Miss-/Crit-Wuerfen, Animationen und gesammelter Meldung.
+- [x] **Wiederbelebung:** Scopes 5/6 treffen Tote; power bzw.
+  hpRecovery gilt dort als **Prozent der max. HP** (XP), min. 1.
+  Funktioniert im Kampf UND im Menue (Items wie Skills); Ziel-Menues
+  listen dafuer nur Gefallene („Wen wiederbeleben?").
+- [x] **Gruppen-Anwendung im Menue:** Scope 4/6 wirkt mit einem Klick
+  auf alle passenden Mitglieder (ein MP-/Item-Verbrauch, Sammel-
+  meldung); Scope 7 (Anwender) wirkt im Menue direkt auf den
+  Anwender.
+- [x] **Kampf-Untermenues geroutet:** Skill-/Item-Listen waehlen je
+  nach scope Zielmenue (Gegner/Verbuendete/Gefallene), sofortige
+  Gruppen-Bestaetigung (0/2/4/6) oder Selbst (7); Item-Liste laesst
+  nun auch rein zustands-basierte Items zu (war in PAKET 20 nur im
+  Friedens-Menue beruecksichtigt).
+- [x] **Items scope-getrieben im Kampf:** bisher wirkte jedes Item
+  automatisch auf Gegner (hpRecovery<0) oder Verbuendete; jetzt
+  entscheidet die scope. Kompatibilitaetsregel: Schadens-Item ohne
+  gesetzte scope (Standard „Ein Verbuendeter", da scope erst seit
+  PAKET 20 gespeichert wird) wirkt wie bisher auf Gegner.
+- [x] **XP Zustands-Sets der Waffe:** `WeaponData.plusStates/
+  minusStates` (Parse/Save in Weapons.json, Editor-Felder); ein
+  getroffener Standardangriff wuerfelt/heilt sie am Ziel
+  (Resistenz-Rang, nur Akteure mit Waffe, Tote ausgenommen).
+- [x] **Editor:** Fertigkeiten-Scope-Combo auf die volle XP-Liste
+  (0..7, „Verbuendeter (tot)"/„Alle (tot)"/„Anwender") erweitert —
+  **Achtung Datenmigration:** alter Index 5 („Anwender") bedeutet nun
+  „Verbuendeter (tot)", Anwender = 7 (vorherige Demo-DBs nutzten nur
+  1/3, unberuehrt). Waffen-Tab bekam die beiden Zustands-Felder.
+- [x] **Demo:** Waffe 2 „Giftklinge" (vergiftet beim Treffer), Item 4
+  „Phönixfeder" (scope 5, 100 %), Skill 5 „Auferstehung" (scope 5,
+  100 %, Mage ab Lv 5); SampleProject: Held startet mit der
+  Giftklinge; Items per `$game_party.gain_item(id, n)` gebbar.
+
+**Bewusst offen:** Ruestungs-Zustands-Sets (XP hat sie ebenfalls, am
+Traeger passiv — anderes Wirkmodell); Elementar-Raten
+(element_raten / state_element_resist); XP `Game_Battler#skill_effect`
+im Ruby-Layer (nativ vollstaendig).
+
+**Akzeptanz:** Mit `$game_party.gain_item(4, 1)` eine Phönixfeder
+holen -> Held faellt im Kampf -> Item im Kampf („Wen wiederbeleben?")
+oder im Menue benutzen -> „wurde wiederbelebt (+100 % HP)"; Held mit
+Giftklinge greift an -> Gegner „erleidet Poison" (Trefferquote nach
+Rang); Bat wirft Giftstich auf Gruppe; Skill „Auferstehung" im
+Fertigkeiten-Menue auf Gefallenen; Editor speichert scope 5/6 plus
+WeaponStates sauber nach Weapons.json.
 
 ## Arbeitsregeln (für Agenten-Sessions)
 

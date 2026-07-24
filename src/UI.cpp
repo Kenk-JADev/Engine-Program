@@ -552,6 +552,29 @@ void GameUI::OpenGameMenu() {
     };
 }
 
+namespace {
+// PAKET 22: XP plus/minus_state_set im Menue auf ein Gruppenmitglied
+// anwenden (verhaengt und heilt direkt — kein Resistenz-Wurf, wie bei
+// XP-Inventar-Items); sammelt die Meldungszeilen in stateMsg.
+void ApplyMenuStateSets(GameActor& a, const std::vector<int>& plus,
+                        const std::vector<int>& minus, std::string& stateMsg) {
+    for (int sid : plus) {
+        if (std::find(a.states.begin(), a.states.end(), sid) != a.states.end())
+            continue;
+        a.states.push_back(sid);
+        if (const StateData* sd = Database::Get().GetState(sid))
+            stateMsg += "\n" + a.name + " erleidet \"" + sd->name + "\"!";
+    }
+    for (int sid : minus) {
+        const auto pos = std::find(a.states.begin(), a.states.end(), sid);
+        if (pos == a.states.end()) continue;
+        a.states.erase(pos);
+        if (const StateData* sd = Database::Get().GetState(sid))
+            stateMsg += "\n" + a.name + " ist nicht mehr \"" + sd->name + "\".";
+    }
+}
+} // namespace
+
 void GameUI::OpenItemsMenu() {
     std::vector<MenuWindow::Entry> items;
     std::vector<int> itemIds; // Index -> Item-ID (fuer Beschreibung)
@@ -573,11 +596,17 @@ void GameUI::OpenItemsMenu() {
             if (idx < 0 || idx >= (int)itemIds.size()) return;
             const auto* it = Database::Get().GetItem(itemIds[idx]);
             if (!it) return;
-            // XP: Verbrauchsgueter mit Heil-/Zustandswirkung werden BENUTZT
-            // (Ziel waehlen), alle anderen zeigen ihren Beschreibungstext.
+            // XP: Verbrauchsgueter mit Wirkung auf die eigene Gruppe werden
+            // BENUTZT; gegner-zielende Items gehoeren in den Kampf, alle
+            // anderen zeigen ihren Beschreibungstext.
             const bool hasStateEffect = !it->minusStates.empty() || !it->plusStates.empty(); // PAKET 20
-            if (it->consumable && (it->hpRecovery > 0 || it->mpRecovery > 0 || hasStateEffect)) {
-                OpenItemTargetMenu(it->id);
+            const bool hasEffect = it->hpRecovery != 0 || it->mpRecovery != 0 || hasStateEffect;
+            const int sc = (int)it->scope;
+            if (it->consumable && hasEffect && sc >= 3) {
+                // PAKET 22: XP-Scope-Unterscheidung (Zielwahl / Gruppe / tot)
+                if (sc == 5)           OpenItemTargetMenu(it->id, true);
+                else if (sc == 4 || sc == 6) UseMenuItemOnGroup(it->id, sc == 6);
+                else                   OpenItemTargetMenu(it->id, false);
             } else if (!it->description.empty()) {
                 ShowMessage(it->description);
             }
@@ -585,58 +614,98 @@ void GameUI::OpenItemsMenu() {
     mMenu.onCancel = [this]() { OpenGameMenu(); };
 }
 
-void GameUI::OpenItemTargetMenu(int itemId) {
+void GameUI::OpenItemTargetMenu(int itemId, bool deadOnly) {
     const auto* it = Database::Get().GetItem(itemId);
     if (!it) { OpenItemsMenu(); return; }
 
+    // PAKET 22: Ziel-Liste je nach Scope — Lebende ODER Gefallene
     std::vector<MenuWindow::Entry> items;
+    std::vector<int> memberIdx;
     auto& members = Game::Get().Party().Members();
-    for (const auto& a : members) {
-        // XP: Tote Mitglieder koennen nicht das Ziel von Heil-Items sein
-        items.push_back({a.name + "   HP " + std::to_string(a.hp) +
-                         " | MP " + std::to_string(a.mp), a.hp > 0});
+    for (size_t i = 0; i < members.size(); ++i) {
+        const auto& a = members[i];
+        const bool dead = a.hp <= 0;
+        if (dead != deadOnly) continue;
+        items.push_back({a.name + (deadOnly ? "   GEFALLEN"
+                         : "   HP " + std::to_string(a.hp) +
+                           " | MP " + std::to_string(a.mp)), true});
+        memberIdx.push_back((int)i);
     }
-    if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
+    if (items.empty())
+        items.push_back({deadOnly ? "(niemand gefallen)" : "(kein Gruppenmitglied)", false});
 
-    mMenu.Show(it->name + " benutzen: Ziel wählen", items, [this, itemId](int idx) {
-        const auto* it2 = Database::Get().GetItem(itemId);
-        auto& party = Game::Get().Party();
-        if (it2 && idx >= 0 && idx < (int)party.Members().size()) {
-            auto& a = party.Members()[(size_t)idx];
-            // Heil-Obergrenzen aus den Datenbank-Werten (initialStats + Kurve)
+    mMenu.Show(it->name + (deadOnly ? ": Wen wiederbeleben?" : " benutzen: Ziel wählen"),
+        items, [this, itemId, deadOnly, memberIdx](int idx) {
+            if (idx >= 0 && idx < (int)memberIdx.size())
+                UseMenuItemOnMember(itemId, memberIdx[(size_t)idx], deadOnly);
+            OpenItemsMenu(); // zurueck zur Liste (Anzahl wird aktualisiert)
+        });
+    mMenu.onCancel = [this]() { OpenItemsMenu(); };
+}
+
+// PAKET 22: Item im Menue auf EIN Mitglied anwenden (Heilung, Zustaende
+// oder Wiederbelebung — XP: Genesung gilt bei Toten als Prozent der max. HP)
+void GameUI::UseMenuItemOnMember(int itemId, int targetIndex, bool revive) {
+    const auto* it2 = Database::Get().GetItem(itemId);
+    auto& party = Game::Get().Party();
+    if (!it2 || targetIndex < 0 || targetIndex >= (int)party.Members().size()) return;
+    auto& a = party.Members()[(size_t)targetIndex];
+    if (revive) {
+        const int amt = std::min(std::max(1, it2->hpRecovery * a.MaxHp() / 100), a.MaxHp());
+        a.hp = amt;
+        party.GainItem(itemId, -1);
+        EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+        ShowMessage(a.name + " wurde wiederbelebt (+" + std::to_string(amt) + " HP)!");
+        return;
+    }
+    // Heil-Obergrenzen aus den Datenbank-Werten (initialStats + Kurve)
+    a.hp = std::min(a.hp + it2->hpRecovery, a.MaxHp());
+    a.mp = std::min(a.mp + it2->mpRecovery, a.MaxMp());
+    // PAKET 20/22: XP-Zustands-Effekte auch im Menue (Antidot-Art)
+    std::string stateMsg;
+    ApplyMenuStateSets(a, it2->plusStates, it2->minusStates, stateMsg);
+    party.GainItem(itemId, -1);
+    EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+    std::string msg = a.name + " erholt sich: +" + std::to_string(it2->hpRecovery) +
+                      " HP, +" + std::to_string(it2->mpRecovery) + " MP";
+    if (it2->hpRecovery <= 0 && it2->mpRecovery <= 0)
+        msg = a.name + " benutzt " + it2->name + ".";
+    ShowMessage(msg + stateMsg);
+}
+
+// PAKET 22: Item im Menue auf die ganze Gruppe (XP scope 4 = alle
+// Lebenden) bzw. auf alle Gefallenen (scope 6 = Massenwiederbelebung)
+void GameUI::UseMenuItemOnGroup(int itemId, bool deadOnly) {
+    const auto* it2 = Database::Get().GetItem(itemId);
+    auto& party = Game::Get().Party();
+    if (!it2) { OpenItemsMenu(); return; }
+    std::string msg, stateMsg;
+    bool any = false;
+    for (auto& a : party.Members()) {
+        if ((a.hp <= 0) != deadOnly) continue;
+        if (deadOnly) {
+            const int amt = std::min(std::max(1, it2->hpRecovery * a.MaxHp() / 100), a.MaxHp());
+            a.hp = amt;
+            msg += (msg.empty() ? "" : "\n") + a.name + " wurde wiederbelebt (+" +
+                   std::to_string(amt) + " HP)!";
+        } else {
             a.hp = std::min(a.hp + it2->hpRecovery, a.MaxHp());
             a.mp = std::min(a.mp + it2->mpRecovery, a.MaxMp());
-            // PAKET 20: XP-Zustands-Effekte auch im Menue (Antidot-Art) —
-            // verhaengen direkt (kein Resistenz-Wurf im Menue, wie XP-Items
-            // aus dem Inventar), heilen (minus_state_set) ebenfalls direkt.
-            std::string stateMsg;
-            for (int sid : it2->plusStates) {
-                if (std::find(a.states.begin(), a.states.end(), sid) != a.states.end())
-                    continue;
-                a.states.push_back(sid);
-                if (const StateData* sd = Database::Get().GetState(sid))
-                    stateMsg += (stateMsg.empty() ? "\n" : "\n") + a.name +
-                                " erleidet \"" + sd->name + "\"!";
-            }
-            for (int sid : it2->minusStates) {
-                const auto pos = std::find(a.states.begin(), a.states.end(), sid);
-                if (pos == a.states.end()) continue;
-                a.states.erase(pos);
-                if (const StateData* sd = Database::Get().GetState(sid))
-                    stateMsg += (stateMsg.empty() ? "\n" : "\n") + a.name +
-                                " ist nicht mehr \"" + sd->name + "\".";
-            }
-            party.GainItem(itemId, -1);
-            EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
-            std::string msg = a.name + " erholt sich: +" + std::to_string(it2->hpRecovery) +
-                              " HP, +" + std::to_string(it2->mpRecovery) + " MP";
-            if (it2->hpRecovery <= 0 && it2->mpRecovery <= 0)
-                msg = a.name + " benutzt " + it2->name + ".";
-            ShowMessage(msg + stateMsg);
+            msg += (msg.empty() ? "" : "\n") + a.name + " +" +
+                   std::to_string(it2->hpRecovery) + " HP";
         }
-        OpenItemsMenu(); // zurueck zur Liste (Anzahl wird aktualisiert)
-    });
-    mMenu.onCancel = [this]() { OpenItemsMenu(); };
+        ApplyMenuStateSets(a, it2->plusStates, it2->minusStates, stateMsg);
+        any = true;
+    }
+    if (!any) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        ShowMessage(deadOnly ? "Niemand ist gefallen." : "Kein passendes Ziel vorhanden.");
+    } else {
+        party.GainItem(itemId, -1);
+        EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+        ShowMessage(msg + stateMsg);
+    }
+    OpenItemsMenu();
 }
 
 void GameUI::OpenStatusMenu() {
@@ -705,67 +774,119 @@ void GameUI::OpenSkillListMenu(int memberIndex) {
     mMenu.Show(actor.name + ": Fertigkeiten   (MP " + std::to_string(actor.mp) +
                " / " + std::to_string(actor.MaxMp()) + ")", items,
         [this, memberIndex, skillIds](int idx) {
-            if (idx >= 0 && idx < (int)skillIds.size())
-                OpenSkillTargetMenu(memberIndex, skillIds[(size_t)idx]);
+            if (idx < 0 || idx >= (int)skillIds.size()) return;
+            const int sid = skillIds[(size_t)idx];
+            const auto* sk = Database::Get().GetSkill(sid);
+            const int sc = sk ? sk->scope : 3;
+            // PAKET 22: XP-Scope-Unterscheidung (Zielwahl/Gruppe/tot/Anwender)
+            if (sc == 5)                OpenSkillTargetMenu(memberIndex, sid, true);
+            else if (sc == 4 || sc == 6) UseMenuSkillOnGroup(memberIndex, sid, sc == 6);
+            else if (sc == 7)           UseMenuSkillOnMember(memberIndex, sid, memberIndex, false);
+            else                        OpenSkillTargetMenu(memberIndex, sid, false);
         });
     mMenu.onCancel = [this]() { OpenSkillsMenu(); };
 }
 
-void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId) {
+void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId, bool deadOnly) {
     const auto* sk = Database::Get().GetSkill(skillId);
     if (!sk) { OpenSkillsMenu(); return; }
+    // PAKET 22: Ziel-Liste je nach Scope — Lebende ODER Gefallene
     std::vector<MenuWindow::Entry> items;
+    std::vector<int> memberIdx;
     auto& members = Game::Get().Party().Members();
-    for (const auto& a : members)
-        items.push_back({a.name + "   HP " + std::to_string(a.hp) +
-                         " / " + std::to_string(a.MaxHp()), a.hp > 0});
-    if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
+    for (size_t i = 0; i < members.size(); ++i) {
+        const auto& a = members[i];
+        const bool dead = a.hp <= 0;
+        if (dead != deadOnly) continue;
+        items.push_back({a.name + (deadOnly ? "   GEFALLEN"
+                         : "   HP " + std::to_string(a.hp) +
+                           " / " + std::to_string(a.MaxHp())), true});
+        memberIdx.push_back((int)i);
+    }
+    if (items.empty())
+        items.push_back({deadOnly ? "(niemand gefallen)" : "(kein Gruppenmitglied)", false});
 
-    mMenu.Show(sk->name + ": Ziel wählen", items,
-        [this, memberIndex, skillId](int ti) {
-            const auto* sk2 = Database::Get().GetSkill(skillId);
-            auto& party = Game::Get().Party();
-            if (sk2 && memberIndex >= 0 && memberIndex < (int)party.Members().size() &&
-                ti >= 0 && ti < (int)party.Members().size()) {
-                auto& caster = party.Members()[(size_t)memberIndex];
-                auto& target = party.Members()[(size_t)ti];
-                if (caster.mp >= sk2->mpCost) {
-                    caster.mp -= sk2->mpCost;
-                    target.hp = std::min(target.hp + sk2->power, target.MaxHp());
-                    EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
-                    // PAKET 21: XP minus/plus_state_set wirkt auch aus dem
-                    // Menue (Esuna-Art: heilt auf der Karte, wie bei Items).
-                    std::string stateMsg;
-                    for (int sid : sk2->plusStates) {
-                        if (std::find(target.states.begin(), target.states.end(), sid) != target.states.end())
-                            continue;
-                        target.states.push_back(sid);
-                        if (const StateData* sd = Database::Get().GetState(sid))
-                            stateMsg += "\n" + target.name + " erleidet \"" + sd->name + "\"!";
-                    }
-                    for (int sid : sk2->minusStates) {
-                        const auto pos = std::find(target.states.begin(), target.states.end(), sid);
-                        if (pos == target.states.end()) continue;
-                        target.states.erase(pos);
-                        if (const StateData* sd = Database::Get().GetState(sid))
-                            stateMsg += "\n" + target.name + " ist nicht mehr \"" + sd->name + "\".";
-                    }
-                    std::string msg;
-                    if (sk2->power > 0)
-                        msg = target.name + " erholt sich um " +
-                              std::to_string(sk2->power) + " HP.";
-                    else
-                        msg = caster.name + " setzt " + sk2->name + " bei " +
-                              target.name + " ein.";
-                    ShowMessage(msg + stateMsg + "  (-" +
-                                std::to_string(sk2->mpCost) + " MP)");
-                } else {
-                    EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
-                }
-            }
+    mMenu.Show(sk->name + (deadOnly ? ": Wen wiederbeleben?" : ": Ziel wählen"), items,
+        [this, memberIndex, skillId, deadOnly, memberIdx](int ti) {
+            if (ti >= 0 && ti < (int)memberIdx.size())
+                UseMenuSkillOnMember(memberIndex, skillId, memberIdx[(size_t)ti], deadOnly);
             OpenSkillListMenu(memberIndex);
         });
     mMenu.onCancel = [this, memberIndex]() { OpenSkillListMenu(memberIndex); };
+}
+
+// PAKET 22: Skill im Menue auf EIN Mitglied anwenden (Heilung, Zustaende
+// oder Wiederbelebung — XP: power gilt bei Toten als Prozent der max. HP)
+void GameUI::UseMenuSkillOnMember(int memberIndex, int skillId, int targetIndex, bool revive) {
+    const auto* sk2 = Database::Get().GetSkill(skillId);
+    auto& party = Game::Get().Party();
+    if (!sk2 || memberIndex < 0 || memberIndex >= (int)party.Members().size() ||
+        targetIndex < 0 || targetIndex >= (int)party.Members().size()) return;
+    auto& caster = party.Members()[(size_t)memberIndex];
+    auto& target = party.Members()[(size_t)targetIndex];
+    if (caster.mp < sk2->mpCost) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        return;
+    }
+    caster.mp -= sk2->mpCost;
+    EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+    std::string msg;
+    if (revive) {
+        const int amt = std::min(std::max(1, sk2->power * target.MaxHp() / 100), target.MaxHp());
+        target.hp = amt;
+        msg = target.name + " wurde wiederbelebt (+" + std::to_string(amt) + " HP)!";
+    } else {
+        target.hp = std::min(target.hp + sk2->power, target.MaxHp());
+        if (sk2->power > 0)
+            msg = target.name + " erholt sich um " + std::to_string(sk2->power) + " HP.";
+        else
+            msg = caster.name + " setzt " + sk2->name + " bei " + target.name + " ein.";
+    }
+    // PAKET 21/22: XP minus/plus_state_set wirkt auch aus dem Menue
+    std::string stateMsg;
+    ApplyMenuStateSets(target, sk2->plusStates, sk2->minusStates, stateMsg);
+    ShowMessage(msg + stateMsg + "  (-" + std::to_string(sk2->mpCost) + " MP)");
+}
+
+// PAKET 22: Skill im Menue auf die ganze Gruppe (XP scope 4 = alle
+// Lebenden) bzw. alle Gefallenen (scope 6 = Massenwiederbelebung)
+void GameUI::UseMenuSkillOnGroup(int memberIndex, int skillId, bool deadOnly) {
+    const auto* sk2 = Database::Get().GetSkill(skillId);
+    auto& party = Game::Get().Party();
+    if (!sk2 || memberIndex < 0 || memberIndex >= (int)party.Members().size()) return;
+    auto& caster = party.Members()[(size_t)memberIndex];
+    if (caster.mp < sk2->mpCost) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        return;
+    }
+    std::string msg, stateMsg;
+    bool any = false;
+    for (auto& a : party.Members()) {
+        if ((a.hp <= 0) != deadOnly) continue;
+        if (deadOnly) {
+            const int amt = std::min(std::max(1, sk2->power * a.MaxHp() / 100), a.MaxHp());
+            a.hp = amt;
+            msg += (msg.empty() ? "" : "\n") + a.name + " wurde wiederbelebt (+" +
+                   std::to_string(amt) + " HP)!";
+        } else {
+            a.hp = std::min(a.hp + sk2->power, a.MaxHp());
+            if (sk2->power > 0)
+                msg += (msg.empty() ? "" : "\n") + a.name + ": +" +
+                       std::to_string(sk2->power) + " HP";
+        }
+        ApplyMenuStateSets(a, sk2->plusStates, sk2->minusStates, stateMsg);
+        any = true;
+    }
+    if (!any) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        ShowMessage(deadOnly ? "Niemand ist gefallen." : "Kein passendes Ziel vorhanden.");
+    } else {
+        caster.mp -= sk2->mpCost;
+        EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+        const std::string head = msg.empty() ? (caster.name + " setzt " + sk2->name + " ein.") : msg;
+        ShowMessage(head + stateMsg + "  (-" + std::to_string(sk2->mpCost) + " MP)");
+    }
+    OpenSkillListMenu(memberIndex);
 }
 
 // ============================================================================
@@ -1191,32 +1312,61 @@ void GameUI::OpenBattleSkillMenu(int actorIndex) {
             if (idx < 0 || idx >= (int)skillIds.size()) return;
             const int sid = skillIds[(size_t)idx];
             const auto* sk = Database::Get().GetSkill(sid);
-            const bool allyScope = sk && sk->scope >= 3; // XP: zielt auf eigene Seite
-            if (allyScope) {
-                OpenBattleAllyMenu(actorIndex, 1, sid);
-            } else {
-                int alive = 0, last = 0;
-                auto& bs2 = BattleSystem::Get();
-                for (size_t i = 0; i < bs2.Enemies().size(); ++i)
-                    if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
-                if (alive <= 1)
-                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, last, false);
-                else
-                    OpenBattleTargetMenu(actorIndex, 1, sid);
+            const int scope = sk ? sk->scope : 1;
+            auto& bs2 = BattleSystem::Get();
+            // PAKET 22: vollstaendiges XP-Scope-Routing (0..7)
+            switch (scope) {
+                case 0: // Kein Ziel — direkt bestaetigen
+                case 2: // Alle Gegner
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, -1, false);
+                    break;
+                case 1: { // Ein Gegner (auto, wenn nur einer lebt)
+                    int alive = 0, last = 0;
+                    for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                        if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                    if (alive <= 1)
+                        ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, last, false);
+                    else
+                        OpenBattleTargetMenu(actorIndex, 1, sid);
+                    break;
+                }
+                case 3: { // Ein Verbuendeter (auto, wenn nur einer lebt)
+                    int alive = 0, last = 0;
+                    for (size_t i = 0; i < bs2.Actors().size(); ++i)
+                        if (!bs2.Actors()[i].isDead) { ++alive; last = (int)i; }
+                    if (alive <= 1)
+                        ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, last, true);
+                    else
+                        OpenBattleAllyMenu(actorIndex, 1, sid);
+                    break;
+                }
+                case 4: // Alle Verbuendeten
+                case 6: // Alle Verbuendeten (tot)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, -1, true);
+                    break;
+                case 5: // Ein Verbuendeter (tot) — Wiederbelebung
+                    OpenBattleAllyMenu(actorIndex, 1, sid, true);
+                    break;
+                case 7: // Anwender selbst
+                default:
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, actorIndex, true);
+                    break;
             }
         });
     mMenu.onCancel = [this]() { OpenBattleCommands(); };
 }
 
 void GameUI::OpenBattleItemMenu(int actorIndex) {
-    // Im Kampf benutzbar: Heil-Items (HP/MP) und Schadens-Items (Bombe etc.)
+    // Im Kampf benutzbar: Items mit Wirkung (Heilung, Schaden ODER
+    // Zustands-Sets — PAKET 22; vorher fehlten zustands-basierte Items)
     std::vector<MenuWindow::Entry> items;
     std::vector<int> itemIds;
     for (const auto& kv : Game::Get().Party().Items()) {
         if (kv.second <= 0) continue;
         const auto* it = Database::Get().GetItem(kv.first);
         if (!it) continue;
-        const bool usable = (it->hpRecovery != 0 || it->mpRecovery > 0);
+        const bool usable = (it->hpRecovery != 0 || it->mpRecovery > 0 ||
+                             !it->plusStates.empty() || !it->minusStates.empty());
         items.push_back({it->name + "   x" + std::to_string(kv.second), usable});
         itemIds.push_back(kv.first);
     }
@@ -1226,26 +1376,48 @@ void GameUI::OpenBattleItemMenu(int actorIndex) {
         if (idx < 0 || idx >= (int)itemIds.size()) return;
         const int iid = itemIds[(size_t)idx];
         const auto* it = Database::Get().GetItem(iid);
-        if (it && it->hpRecovery < 0) {
-            // Schadens-Item -> Gegner waehlen
-            int alive = 0, last = 0;
-            auto& bs2 = BattleSystem::Get();
-            for (size_t i = 0; i < bs2.Enemies().size(); ++i)
-                if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
-            if (alive <= 1)
-                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, false);
-            else
-                OpenBattleTargetMenu(actorIndex, 2, iid);
-        } else {
-            // Heil-Item -> Verbuendeten waehlen (direkt, wenn nur einer lebt)
-            int alive = 0, last = 0;
-            auto& bs2 = BattleSystem::Get();
-            for (size_t i = 0; i < bs2.Actors().size(); ++i)
-                if (!bs2.Actors()[i].isDead) { ++alive; last = (int)i; }
-            if (alive <= 1)
-                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, true);
-            else
-                OpenBattleAllyMenu(actorIndex, 2, iid);
+        if (!it) return;
+        auto& bs2 = BattleSystem::Get();
+        // PAKET 22: XP-Scope-Routing — Kompatibilitaet wie im BattleSystem:
+        // Schadens-Items ohne gesetzten Scope wirken auf Gegner.
+        int scope = (int)it->scope;
+        if (it->hpRecovery < 0 && scope >= 3) scope = 1;
+        switch (scope) {
+            case 0: // Kein Ziel
+            case 2: // Alle Gegner
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, -1, false);
+                break;
+            case 1: { // Ein Gegner
+                int alive = 0, last = 0;
+                for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                    if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, false);
+                else
+                    OpenBattleTargetMenu(actorIndex, 2, iid);
+                break;
+            }
+            case 3: { // Ein Verbuendeter
+                int alive = 0, last = 0;
+                for (size_t i = 0; i < bs2.Actors().size(); ++i)
+                    if (!bs2.Actors()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, true);
+                else
+                    OpenBattleAllyMenu(actorIndex, 2, iid);
+                break;
+            }
+            case 4: // Alle Verbuendeten
+            case 6: // Alle Verbuendeten (tot)
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, -1, true);
+                break;
+            case 5: // Ein Verbuendeter (tot) — Wiederbelebung
+                OpenBattleAllyMenu(actorIndex, 2, iid, true);
+                break;
+            case 7: // Anwender selbst
+            default:
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, actorIndex, true);
+                break;
         }
     });
     mMenu.onCancel = [this]() { OpenBattleCommands(); };
@@ -1278,20 +1450,25 @@ void GameUI::OpenBattleTargetMenu(int actorIndex, int mode, int id) {
     };
 }
 
-void GameUI::OpenBattleAllyMenu(int actorIndex, int mode, int id) {
-    // Verbuendeten-Zielwahl fuer Heilungen (mode: 1=Skill, 2=Item)
+void GameUI::OpenBattleAllyMenu(int actorIndex, int mode, int id, bool deadOnly) {
+    // Verbuendeten-Zielwahl fuer Heilungen (mode: 1=Skill, 2=Item);
+    // deadOnly=true listet nur Gefallene (XP-Scope „Verbuendeter (tot)")
     auto& bs = BattleSystem::Get();
     std::vector<MenuWindow::Entry> items;
     std::vector<int> targets;
     for (size_t i = 0; i < bs.Actors().size(); ++i) {
         const auto& a = bs.Actors()[i];
-        items.push_back({a.name + "   HP " + std::to_string(a.hp) + " / " +
-                         std::to_string(a.maxHp), !a.isDead});
+        if (a.isDead != deadOnly) continue; // PAKET 22: Lebende ODER Gefallene
+        items.push_back({a.name + (deadOnly ? "   GEFALLEN"
+                         : "   HP " + std::to_string(a.hp) + " / " +
+                           std::to_string(a.maxHp)), true});
         targets.push_back((int)i);
     }
-    if (items.empty()) items.push_back({"(keine Mitglieder)", false});
+    if (items.empty())
+        items.push_back({deadOnly ? "(niemand gefallen)" : "(keine Mitglieder)", false});
 
-    mMenu.Show("Auf wen?", items, [this, actorIndex, mode, id, targets](int idx) {
+    mMenu.Show(deadOnly ? "Wen wiederbeleben?" : "Auf wen?", items,
+        [this, actorIndex, mode, id, targets](int idx) {
         if (idx < 0 || idx >= (int)targets.size()) return;
         const BattleActionType t = (mode == 1) ? BattleActionType::Skill
                                                : BattleActionType::Item;

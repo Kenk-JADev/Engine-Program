@@ -89,6 +89,11 @@ struct WeaponData {
     int price = 100;
     int atk = 10;
     int animationId = 0;
+    // PAKET 22: XP plus_state_set / minus_state_set der Waffe — die IDs
+    // werden beim Standardangriff auf das getroffene Ziel gewuerfelt
+    // (Resistenz-Rang) bzw. sicher geheilt.
+    std::vector<int> plusStates;
+    std::vector<int> minusStates;
 };
 
 struct ArmorData {
