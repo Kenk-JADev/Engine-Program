@@ -193,6 +193,19 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         RPG_LOG_INFO("Map-Wechsel auf Karte " + std::to_string(mapId));
     });
 
+    // PAKET 14: Transfer-Befehl (201) mit XP-Crossfade — die Engine bekommt
+    // den kompletten Wechsel als verzoegerten Swap (Freeze am jetzigen Tick,
+    // Positions-/Kartenwechsel erst wenn der Snapshot steht, dann Fade).
+    // Wie XP Scene_Map#transfer_player: freeze + transfer + transition(10).
+    EventSystem_SetTransferTransitionHandler(
+        [this](int x, int y, int z, int mapId) {
+            RequestTransition([x, y, z, mapId]() {
+                Game::Get().Player().SetPosition(
+                    Vec3((float)x, (float)y + 0.05f, (float)z));
+                if (mapId > 0) EventSystem_NotifyMapChanged(mapId);
+            });
+        });
+
     // Spielmenue-Callbacks (XP) EINMAL zentral verdrahten - sie gelten fuer
     // Editor-Playtest UND Player gleichermassen (vorher nur im Editor-Zweig
     // von SetPlaying: im Player tat "Spiel beenden" deshalb nichts).
@@ -586,19 +599,25 @@ void Engine::StartTitleMode() {
     }
 
     title.onNewGame = [this]() {
-        EndTitleMode();
-        Game::Get().NewGame();
-        SetPlaying(true); // Player-Zweig: laedt Events + fuehrt Skripte aus
+        // PAKET 14: XP-Crossfade Titel → Karte (Wechsel erst nach Snapshot)
+        RequestTransition([this]() {
+            EndTitleMode();
+            Game::Get().NewGame();
+            SetPlaying(true); // Player-Zweig: laedt Events + fuehrt Skripte aus
+        });
     };
     title.onContinue = [this]() {
         // Lade-Ansicht des Speicherbildschirms; danach: entweder Spiel
         // weiterfuehren (Slot geladen) oder Abbruch -> zurueck zum Titel.
         GameUI::Get().ShowSaveScreen(false, [this]() {
             if (Game::Get().IsGameStarted()) {
-                EndTitleMode();
-                // Karte/Events/BGM kamen bereits per Game::Load-
-                // Map-Wechsel-Hook; SetPlaying startet Logik + Skripte.
-                SetPlaying(true);
+                // PAKET 14: XP-Crossfade Ladebildschirm → Karte
+                RequestTransition([this]() {
+                    EndTitleMode();
+                    // Karte/Events/BGM kamen bereits per Game::Load-
+                    // Map-Wechsel-Hook; SetPlaying startet Logik + Skripte.
+                    SetPlaying(true);
+                });
             } else {
                 GameUI::Get().Title().Show();
             }
@@ -628,6 +647,58 @@ void Engine::ReturnToTitle() {
     Game::Get().Player().SetLocked(false);
     SetPlaying(false);
     StartTitleMode();
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 14: XP-Uebergaenge (Graphics.freeze → Swap → Graphics.transition)
+// ---------------------------------------------------------------------------
+// XP-Vorlage (Scene_Map#transfer_player / Scene_Base): Graphics.freeze
+// haelt das Bild an, der Szenenwechsel passiert darunter, dann fadet
+// Graphics.transition(10) weich ueber. Bei uns erstellt der Freeze-Snapshot
+// host-sicher am ENDE des naechsten Render (kein Readback nach Swap) — der
+// Arbiter wartet deshalb genau einen Tick, bevor er wechselt + fadet.
+void Engine::RequestTransition(std::function<void()> swapNow, int durFrames) {
+    const bool uiVisible = mPlayMode || !mEditorMode;
+    if (!uiVisible || !mWindow) {       // kein Overlay-Kanal sichtbar
+        if (swapNow) swapNow();         // (Editor-Scene-View o. Playtest)
+        return;
+    }
+    // bereits anstehende Anfrage sofort abschliessen — kein Verlust,
+    // kein Ueberschreiben (z. B. zwei Transfer-Befehle hintereinander)
+    if (mTransitionReq.active) {
+        auto prev = std::move(mTransitionReq.swap);
+        mTransitionReq = TransitionRequest{};
+        if (prev) prev();
+    }
+    RgssGraphicsFreeze();
+    mTransitionReq.swap = std::move(swapNow);
+    mTransitionReq.durationFrames = durFrames;
+    mTransitionReq.framesWaited = 0;
+    mTransitionReq.active = true;
+}
+
+void Engine::UpdateTransitionRequest() {
+    if (!mTransitionReq.active) return;
+    // Snapshot kommt am Ende des naechsten Render-Laufs — bis dahin heisst
+    // es warten (ein Frame alte Ansicht, wie XP-Freeze).
+    if (!RgssGraphicsHasSnapshot()) {
+        // Sicherheitsnetz: stockt der Render-Takt des Hosts (z. B. Qt ohne
+        // Repaint), darf der Szenenwechsel nicht haengen — nach ~0,5 s
+        // ohne Fade sofort wechseln statt ewig zu warten.
+        if (++mTransitionReq.framesWaited > 30) {
+            auto fnLate = std::move(mTransitionReq.swap);
+            mTransitionReq = TransitionRequest{};
+            if (fnLate) fnLate();
+            RPG_LOG_WARN("[PAKET 14] Uebergangs-Snapshot wartete zu lange - Wechsel ohne Fade");
+        }
+        return;
+    }
+    auto fn = std::move(mTransitionReq.swap);
+    const int dur = mTransitionReq.durationFrames;
+    mTransitionReq = TransitionRequest{};
+    if (fn) fn();
+    // Crossfade ohne Maskengrafik (XP Graphics.transition(10) ≈ 15 @60fps)
+    RgssGraphicsTransition(std::max(1, dur), "", 40.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -977,6 +1048,10 @@ static Key MapSDLKey(SDL_Scancode code) {
 
 void Engine::Update(float dt) {
     mInput->Update();
+
+    // PAKET 14: anstehende XP-Uebergaenge vollfuehren, sobald der
+    // Freeze-Snapshot steht (Swap + Crossfade, siehe RequestTransition).
+    UpdateTransitionRequest();
 
     // XP-Verhalten: Alt+Enter schaltet Vollbild um. Window::ToggleFullscreen
     // ist im Foreign-Modus (Qt-Host) ein No-op, bei SDL fehlschlagsfest.

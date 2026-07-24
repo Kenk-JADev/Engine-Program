@@ -938,6 +938,48 @@ RGSS-Text; ein `Sprite` mit `wave_amp > 0` wellt sich sichtbar und
 laeuft phasenverschoben weiter (mit `wave_speed`/`wave_length`
 steuerbar); ohne Nutzung bleibt alles pixelgleich.
 
+## PAKET 14 — XP-Übergänge (Graphics.freeze/transition an Szenenwechsel) ✅ ERLEDIGT 2026-07-24
+
+Das Graphics-transition-Grundgeruest (Ruby-Bindings, Maske-Laden,
+DrawTransition-Shader, Freeze-Snapshot host-sicher am Render-Ende)
+lag bereits vor — es fehlte die **Einbindung in die echten
+Szenenwechsel**: Kartenwechsel per Transfer-Befehl (201) und
+Titel↔Spiel sprangen hart um.
+
+- [x] **Engine-Uebergangs-Arbiter (`RequestTransition`/`UpdateTransitionRequest`):**
+  XP-Vorlage `Scene_Map#transfer_player`
+  (Graphics.freeze → wechseln → Graphics.transition(10)). Weil der
+  Freeze-Snapshot bewusst host-sicher erst am ENDE des naechsten
+  Render entsteht (kein Backbuffer-Readback nach Swap — waere
+  spec-seitig undefiniert), wartet der Arbiter genau einen Tick:
+  Render des Freeze-Ticks zeichnet noch die alte Ansicht + Snapshot
+  vom alten Bild, dann Swap + Crossfade (15 Frames ≈ XP-10 bei
+  60 fps, ohne Maskengrafik). Neu: `RgssGraphicsHasSnapshot()`-Takt,
+  `EventSystem_SetTransferTransitionHandler` (Fallback: bisheriger
+  Sofortpfad fuer headless/Tests). Sicherheitsnetze: doppelte
+  Anfrage flusht die Vorige statt sie zu verlieren; 30-Tick-Timeout
+  wechselt ohne Fade, falls der Render-Takt stockt (kein Haenger);
+  im Editor ohne laufenden Playtest sofortiger Swap (kein Overlay
+  sichtbar).
+- [x] **Verdrahtet:** Transfer-Befehl (201, Position + Karte im Swap),
+  Titel „Neues Spiel" (Titel → Karte), Titel „Weiterspielen"
+  (Ladebildschirm → Karte). `Graphics.transition(dauer, datei,
+  vague)` aus Ruby laeuft unveraendert weiter (Maskengrafik aus
+  `Graphics/Transitions/` via RgssResolveGraphic).
+- [x] **Nebenbefund erledigt:** `ClearAll` hat Freeze-Snapshot- und
+  Masken-Texturen bislang nicht freigegeben (Leck pro Playtest-Stopp)
+  — jetzt glDeleteTextures vor dem State-Reset.
+- [x] **Ehrliche Grenzen:** Rueckkehr zum Titel (`ReturnToTitle`) und
+  Kampfbeginn bleiben ohne Crossfade: `SetPlaying(false)` raeumt den
+  RGSS-Kanal per ClearAll hart ab (degradiert glatt zum No-op, ist so
+  abgesichert), und ein Kampf-Fade brauchte eine Setup-Verschiebung
+  — bewusst ausgenommen, dokumentiert. Der Editor-Playtest-Startknopf
+  (Qt) startet unveraendert sofort.
+
+**Akzeptanz:** Tuer-/Portal-Event mit Transfer-Befehl fadet sichtbar
+weich von alter zu neuer Karte (≈0,25 s), Titel-Neustart fadet in die
+Startkarte; ohne Assets zusaetzlich noetig (Standard-Crossfade).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

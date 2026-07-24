@@ -433,6 +433,12 @@ void EventSystem_PlayAudio(const std::string& name, int kind, bool loop);
 void EventSystem_SetMapChangeHandler(std::function<void(int mapId)> fn);
 /// Loest den injizierten Handler aus (no-op, wenn nichts injiziert wurde).
 void EventSystem_NotifyMapChanged(int mapId);
+/// PAKET 14: XP-Uebergang beim Transfer-Befehl (201) — wenn die Engine hier
+/// einen Handler injiziert, bekommt sie den kompletten Transfer (x,y,z,mapId)
+/// zum verzoegert-ausgefuehrten Szenenwechsel (Freeze → Swap → Crossfade).
+/// Ohne Handler laeuft der bisherige Sofort-Pfad (headless/Tests).
+void EventSystem_SetTransferTransitionHandler(
+    std::function<void(int x, int y, int z, int mapId)> fn);
 
 class EventSystem {
 public:

@@ -56,6 +56,13 @@ void EventSystem_NotifyMapChanged(int mapId) {
     if (s_mapChangeHandler) s_mapChangeHandler(mapId);
 }
 
+// PAKET 14: Uebergangs-Handler fuer Transfer 201 (Engine injiziert)
+static std::function<void(int, int, int, int)> s_transferTransition;
+void EventSystem_SetTransferTransitionHandler(
+    std::function<void(int, int, int, int)> fn) {
+    s_transferTransition = std::move(fn);
+}
+
 // ============================================================================
 // Screen Effects (223 / 224 / 225)
 // ============================================================================
@@ -1185,9 +1192,17 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
         if (!p.empty()) RPG_LOG_INFO("[Event] SE: " + p);
     };
     interp.onTransferPlayer = [](int x, int y, int z, int mapId) {
-        Game::Get().Player().SetPosition(Vec3((float)x, (float)y + 0.05f, (float)z));
-        // XP: Karte wirklich wechseln (Visual + Events + BGM via Engine-Hook)
-        if (mapId > 0) EventSystem_NotifyMapChanged(mapId);
+        // PAKET 14: XP-Uebergang — mit injiziertem Handler laeuft der
+        // komplette Wechsel ueber den Engine-Arbiter (Freeze → 1 Frame
+        // alte Ansicht → Swap → Crossfade, wie XP Scene_Map#transfer_player:
+        // Graphics.freeze + transfer + Graphics.transition(10)).
+        if (s_transferTransition) {
+            s_transferTransition(x, y, z, mapId);
+        } else {
+            Game::Get().Player().SetPosition(Vec3((float)x, (float)y + 0.05f, (float)z));
+            // XP: Karte wirklich wechseln (Visual + Events + BGM via Engine-Hook)
+            if (mapId > 0) EventSystem_NotifyMapChanged(mapId);
+        }
         RPG_LOG_INFO("[Event] Transfer: Map " + std::to_string(mapId) +
                      " (" + std::to_string(x) + "," + std::to_string(z) + ")");
     };

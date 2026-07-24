@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <chrono>
+#include <functional>
 #include "Types.h"
 #include "Model.h"
 
@@ -158,6 +159,22 @@ private:
     void EndTitleMode();
     /// „Zum Titelbildschirm" aus dem Menue: Spiel sauber stoppen + Titel
     void ReturnToTitle();
+
+    // ---- PAKET 14: XP-Uebergaenge (Graphics.freeze → Swap → transition) --
+    /// Szenenwechsel mit XP-Crossfade: Freeze anfordern, am naechsten Tick
+    /// (sobald der Snapshot existiert) <swapNow> ausfuehren, dann
+    /// Graphics.transition(<durFrames>) ohne Maskengrafik (= XP-Crossfade).
+    /// Ohne sichtbaren Overlay-Kanal (Editor ohne Playtest) sofort swap.
+    void RequestTransition(std::function<void()> swapNow, int durFrames = 15);
+    /// Arbiter im Update: wartet haveSnapshot ab, dann swap + transition.
+    void UpdateTransitionRequest();
+    struct TransitionRequest {          // eine anstehende Uebergangs-Anfrage
+        std::function<void()> swap;
+        int durationFrames = 15;        // XP 10 Frames @40fps ≈ 15 @60fps
+        int framesWaited = 0;           // Warte-Ticks auf den Snapshot
+        bool active = false;
+    };
+    TransitionRequest mTransitionReq;
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
     std::unique_ptr<Input> mInput;

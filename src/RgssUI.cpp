@@ -975,6 +975,10 @@ void RgssUI::ClearAll() {
     s_tones.Clear();
     s_fonts.Clear();
     s_fontDefaults.reset();
+    // PAKET 14: Freeze-Snapshot-/Transitionsmasken-Texturen nicht leaken
+    // (fallen pro ClearAll an, z. B. Playtest-Stopp)
+    if (s_graphics.snapshotTexId) { glDeleteTextures(1, &s_graphics.snapshotTexId); s_graphics.snapshotTexId = 0; }
+    if (s_graphics.maskTexId)     { glDeleteTextures(1, &s_graphics.maskTexId);     s_graphics.maskTexId = 0; }
     s_graphics = RgssGraphicsState{};
 }
 
@@ -1663,6 +1667,10 @@ void RgssGraphicsFreeze() {
     auto& g = s_graphics;
     g.freezeActive = true;       // naechster Render friert den Frame ein
     g.haveSnapshot = false;
+}
+
+bool RgssGraphicsHasSnapshot() {  // PAKET 14 (Arbiter-Takt)
+    return s_graphics.haveSnapshot;
 }
 
 void RgssGraphicsTransition(int durationFrames, const std::string& filename, float vague) {

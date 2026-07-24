@@ -213,6 +213,11 @@ struct RgssGraphicsState {
 RgssGraphicsState& RgssGraphics();
 void RgssGraphicsFreeze();
 void RgssGraphicsTransition(int durationFrames, const std::string& filename, float vague);
+/// PAKET 14: true, sobald der per RgssGraphicsFreeze() angeforderte Snapshot
+/// tatsaechlich erstellt ist (passiert am Ende des naechsten RgssUI::Render
+/// — host-sicher, kein Readback nach Swap). Engine-Uebergangs-Arbiter nutzt
+/// das als Takt: Freeze anfordern → warten → Szene wechseln → transition().
+bool RgssGraphicsHasSnapshot();
 
 // ---------------------------------------------------------------------------
 // Window (komplette XP-Fensterklasse)
