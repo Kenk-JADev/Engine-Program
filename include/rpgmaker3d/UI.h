@@ -308,6 +308,12 @@ public:
 
     /// Compact playtest/game HUD (HP/Gold/hints)
     void DrawPlayHud(bool playtest);
+
+    // PAKET 37: Anzeigeflaeche (px) — Engine setzt sie pro Render-Frame
+    // aus mWindow, damit RUI-Fenster unabhaengig von ImGui bemessen sind.
+    void SetDisplaySize(float w, float h) { mDisplayW = w; mDisplayH = h; }
+    float DisplayWidth() const { return mDisplayW; }
+    float DisplayHeight() const { return mDisplayH; }
     /// PAKET 10: HUD-Sichtbarkeit (F9; Startwert aus CustomConfig::nativeHud)
     void ToggleHud() { mHudVisible = !mHudVisible; }
     void SetHudVisible(bool v) { mHudVisible = v; }
@@ -457,6 +463,18 @@ private:
     void DrawNumberInput();
     void DrawNameInput();
     bool mHudVisible = true; // HUD-Sichtbarkeit (F9)
+
+    // PAKET 37: Anzeigeflaechen-Groesse OHNE ImGui (Engine setzt sie pro
+    // Frame aus mWindow). RUI-Fenster bemessen sich in echten Pixeln.
+    float mDisplayW = 1280.0f;
+    float mDisplayH = 720.0f;
+    // FPS als gleitender Schnitt (DrawPlayHud; ImGui::GetIO().Framerate
+    // faellt im ImGui-freien Pfad weg).
+    float mFpsEma = 60.0f;
+    // Lebenszyklus der RUI-HUD-Fenster: welche Fenster-IDs existieren
+    // bereits (stale Fenster verschwindener Texte/Bilder entfernen).
+    std::vector<int> mRuiTextIds;
+    std::vector<int> mRuiPictureIds;
 
     // PAKET 11: Bildschirm-Effekte (Befehle 223/224) und Wetter (236) als
     // Vollbild-Overlays; Shake (225) zittert die Kamera (Engine-Seite).

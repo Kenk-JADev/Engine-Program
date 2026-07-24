@@ -84,8 +84,16 @@ public:
     /// PAKET 33: texturiertes Quad (Windowskin/Nine-Patch). texture ist
     /// adapter-opak (ImGui-Adapter: ImTextureID). src/dst in px,
     /// imgW/imgH = Quellgrosses fuers UV-Mapping.
+    /// PAKET 37: rotationDeg dreht das Zielquad um seine MITTE (Grad,
+    /// positiv im Uhrzeigersinn; 0 = schneller Standardpfad).
     virtual void Image(void* texture, int imgW, int imgH,
-                       const Rect& src, const Rect& dst, const Color4& tint) = 0;
+                       const Rect& src, const Rect& dst, const Color4& tint,
+                       float rotationDeg = 0.0f) = 0;
+    /// PAKET 37: Linien-/Kreis-Primitive (Wetter-Partikel, spaeter Pfad-
+    /// und Ziel-Markierungen fuer Skripte).
+    virtual void Line(float x0, float y0, float x1, float y1,
+                      const Color4& c, float thickness = 1.0f) = 0;
+    virtual void FillCircle(float cx, float cy, float radius, const Color4& c) = 0;
     virtual void ClipPush(const Rect& r) = 0;
     virtual void ClipPop() = 0;
 };
@@ -132,6 +140,31 @@ public:
     Rect src{0, 0, 1e9f, 1e9f}; // Teilbild (px); Overrun wird auf Bild geklemmt
     Color4 tint{1, 1, 1, 1};
     bool keepAspect = true;
+    float rotation = 0.0f;      // PAKET 37: Drehung um die Mitte (Grad)
+    void Draw(DrawTarget& t) override;
+};
+
+// PAKET 37: Textzeile mit optionalem Hintergrundkasten (Screen-Texts,
+// HUD-Zeilen). rect.x/rect.y = ANKERPUNKT; pivot 0.0 = links/oben,
+// pivot 0.5 = zentriert am Anker (so arbeiteten die alten Overlay-Fenster).
+// back.a == 0 -> kein Kasten.
+class Banner : public Widget {
+public:
+    std::string text;
+    Color4 color{1, 1, 1, 1};
+    Color4 back{0, 0, 0, 0};
+    float scale = 1.0f;
+    float pivotX = 0.0f, pivotY = 0.0f;
+    float backPad = 4.0f;
+    void Draw(DrawTarget& t) override;
+};
+
+// PAKET 37: Frei-Zeichen-Widget (Wetter-Partikel, Farbton-Schleier) —
+// der Fenster-Code liefert den Inhalt per Callback, das Framework
+// kuemmert sich um Sichtbarkeit/Z-Ordnung.
+class Custom : public Widget {
+public:
+    std::function<void(DrawTarget&, const Rect&)> onDraw;
     void Draw(DrawTarget& t) override;
 };
 
@@ -205,6 +238,7 @@ public:
     float openness = 255.0f;   // 0=zu, 255=offen (XP-Massstab)
     float openSpeed = 6.0f;    // pro Sekunde * 255
     bool focus = false;
+    int z = 50;                // PAKET 37: Stapeltiefe (stabile Sortierung)
     void Update(float dt);
     void Open()  { if (openness <= 0.0f) openness = 1.0f; }
     void Close() { /* zu-Animation laeuft in Update */ }
@@ -266,6 +300,8 @@ public:
 private:
     Manager() = default;
     void EnsureSkinLoaded();       // Lazy-Loader (Draw-Zeitpunkt, GL ok)
+    /// PAKET 37: stabile Z-Ordnung (Window::z, gleiche Werte = Anlegefolge)
+    std::vector<Window*> SortedWindows() const;
     Theme mTheme;
     DrawTarget* mDrawTarget = nullptr;
     std::vector<std::unique_ptr<Window>> mWindows;
@@ -282,5 +318,8 @@ bool GetMousePressed();
 /// Blink-Uhr (Cursor/Puls), von Manager::Update getaktet — auch fuer
 /// Fenster-Inhalte ausserhalb der Widgets nutzbar (PAKET 36).
 float GetBlinkTime();
+/// PAKET 37: eigene Spieluhr (Sekunden, von Manager::Update getaktet) —
+/// Partikel/Animationen ohne Abhaengigkeit von einer Render-Bibliothek.
+float GetTime();
 
 } // namespace rui

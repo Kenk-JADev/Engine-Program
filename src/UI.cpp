@@ -6,12 +6,11 @@
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
-#include "rpgmaker3d/Rui.h" // PAKET 31: Message-Box rendert ueber das eigene Framework
-// ImGui-Editor ist entfernt. GameUI-Overlay war historisch ImGui-basiert;
-// ohne RPGMAKER3D_ENABLE_IMGUI sind Draw()-Pfade No-Ops (RmlUi/Logic bleibt).
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-#include <imgui.h>
-#endif
+#include "rpgmaker3d/Rui.h" // PAKET 31/37: Die gesamte Spielanzeige rendert ueber RUI
+// PAKET 37: UI.cpp ist jetzt ImGui-FREI — alle Fenster/Overlays (Message,
+// Menues, Zahl/Name, Kampfstatus, Pictures, Screen-Texts, Farbton, Wetter,
+// HUD) laufen ueber das eigene RUI-Framework; die Render-Technik steckt
+// hinter rui::DrawTarget (ImGui nur noch optionaler Adapter, PAKET 39: GL).
 #include <algorithm>
 #include <unordered_map>
 #include <filesystem>
@@ -110,11 +109,8 @@ void MessageWindow::Draw() {
         return;
     }
 
-    float dispW = 1280.0f, dispH = 720.0f;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    dispW = ImGui::GetIO().DisplaySize.x;
-    dispH = ImGui::GetIO().DisplaySize.y;
-#endif
+    const float dispW = GameUI::Get().DisplayWidth();
+    const float dispH = GameUI::Get().DisplayHeight();
     const auto& th = rui::Theme::Get();
     const bool typeDone = mCharIndex >= mText.size();
     const bool hasChoices = typeDone && !mChoices.empty();
@@ -126,6 +122,7 @@ void MessageWindow::Draw() {
     if (!win) {
         auto nw = std::make_unique<rui::Window>();
         nw->id = "rui.msgbox";
+        nw->z = 20; // PAKET 37: ueber Welt, unter Bildern/Menues
         nw->openness = 0.0f;
         nw->Open();
         nw->rect = wRect;
@@ -301,15 +298,13 @@ void MenuWindow::Draw() {
     if (!win) {
         auto nw = std::make_unique<rui::Window>();
         nw->id = "rui.menu";
+        nw->z = 60; // PAKET 37: modal ganz oben
         nw->openness = 255.0f; // sofort offen (kein Aufrollen bei Menues)
         win = &mgr.AddWindow(std::move(nw));
     }
 
-    float dispW = 1280.0f, dispH = 720.0f;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    dispW = ImGui::GetIO().DisplaySize.x;
-    dispH = ImGui::GetIO().DisplaySize.y;
-#endif
+    const float dispW = GameUI::Get().DisplayWidth();
+    const float dispH = GameUI::Get().DisplayHeight();
     const auto& th = rui::Theme::Get();
     const bool titleMode = GameUI::Get().Title().IsVisible();
     const float w = dispW * (titleMode ? 0.40f : 0.46f);
@@ -381,6 +376,12 @@ void GameUI::Update(float dt) {
     mTitle.Update(dt);
     UpdateScreenTexts(dt);
     UpdatePictures(dt);
+    // PAKET 37: FPS als gleitender Schnitt (ImGui::GetIO().Framerate faellt
+    // im ImGui-freien Pfad weg); dt-Spitzen werden geglaettet.
+    if (dt > 0.0001f) {
+        const float inst = 1.0f / dt;
+        mFpsEma += (inst - mFpsEma) * 0.05f;
+    }
 }
 void GameUI::Draw() {
     if (mTitle.IsVisible()) mTitle.Draw();
@@ -417,123 +418,148 @@ namespace {
 // Alpha-Mischung ist das eine bewusste Naeherung (dokumentiert): positives
 // Signal legt einen Farbveil, negatives dunkelt ab, Grau legt Sepia.
 void GameUI::DrawScreenEffects() {
-#ifdef RPGMAKER3D_ENABLE_IMGUI
+    // PAKET 37: Farbton (223) + Blitz (224) als RUI-Vollbild-Schleier
+    // (z = 0, d.h. unter ALLEN anderen Fenstern). Gewichtung wie bisher:
+    // Farbveil aus positiven Kanaelen, Abdunklung aus negativen, Sepia aus
+    // Grauanteil — bewusste Naeherung an den dokumentierten Kanal-Mix.
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.screenfx");
     const auto& fx = GetScreenEffects();
     const float tr = fx.toneCurrent.r, tg = fx.toneCurrent.g,
                 tb = fx.toneCurrent.b, tgr = fx.toneCurrent.a;
     const bool hasTone = (tr != 0.0f || tg != 0.0f || tb != 0.0f || tgr > 0.0f);
     const bool hasFlash = (fx.flashTimer > 0.0f && fx.flashDuration > 0.0f);
-    if (!hasTone && !hasFlash) return;
+    if (!hasTone && !hasFlash) {
+        if (win) mgr.RemoveWindow("rui.screenfx");
+        return;
+    }
 
-    ImGuiIO& io = ImGui::GetIO();
-    // Unsichtbares Vollbild-Fenster GANZ UNTEN in der ImGui-Ordnung (wird vor
-    // den anderen Overlays gerufen): liegt ueber der 3D-Welt, aber unter
-    // Menues/Nachrichten — wie in XP, wo Fenster nicht gefaerbt werden.
-    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
-    ImGui::SetNextWindowSize(io.DisplaySize);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    ImGui::Begin("##ScreenFx", nullptr,
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
-        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-
+    // Farben einmal je Frame vorberechnen (nicht im Draw-Callback)
+    float toneR = 0.0f, toneG = 0.0f, toneB = 0.0f, toneA = 0.0f;
     if (hasTone) {
         const float posR = std::max(0.0f, tr), posG = std::max(0.0f, tg),
                     posB = std::max(0.0f, tb);
         const float negL = (std::max(0.0f, -tr) + std::max(0.0f, -tg) +
                             std::max(0.0f, -tb)) / 3.0f;
         const float posL = (posR + posG + posB) / 3.0f;
-        // gewichteter Veil: Farbe aus positiven Kanaelen, Abdunklung aus
-        // negativen, Sepia aus Grauanteil.
         const float wPos = posL * 0.65f, wNeg = negL * 0.75f,
                     wGray = tgr * 0.55f;
         const float wSum = wPos + wNeg + wGray;
         if (wSum > 0.004f) {
             float cr = 0.0f, cg = 0.0f, cb = 0.0f;
-            if (posL > 0.0f) { // Farbe des positiven Tons (normiert)
-                cr = posR / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
-                cg = posG / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
-                cb = posB / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+            if (posL > 0.0f) {
+                const float den = (posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f;
+                cr = posR / den; cg = posG / den; cb = posB / den;
             }
-            const float sep = 0.20f; // Sepia-Grau
-            const float mr = (cr * wPos + 0.0f * wNeg + sep * wGray);
-            const float mg = (cg * wPos + 0.0f * wNeg + (sep * 0.85f) * wGray);
-            const float mb = (cb * wPos + 0.0f * wNeg + (sep * 0.65f) * wGray);
+            const float sep = 0.20f;
+            const float mr = cr * wPos + sep * wGray;
+            const float mg = cg * wPos + (sep * 0.85f) * wGray;
+            const float mb = cb * wPos + (sep * 0.65f) * wGray;
             const float inv = 1.0f / wSum;
-            dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
-                IM_COL32((int)(std::clamp(mr * inv, 0.0f, 1.0f) * 255.0f),
-                         (int)(std::clamp(mg * inv, 0.0f, 1.0f) * 255.0f),
-                         (int)(std::clamp(mb * inv, 0.0f, 1.0f) * 255.0f),
-                         (int)(std::clamp(wSum, 0.0f, 0.92f) * 255.0f)));
+            toneR = std::clamp(mr * inv, 0.0f, 1.0f);
+            toneG = std::clamp(mg * inv, 0.0f, 1.0f);
+            toneB = std::clamp(mb * inv, 0.0f, 1.0f);
+            toneA = std::clamp(wSum, 0.0f, 0.92f);
         }
     }
+    float flashA = 0.0f;
+    rui::Color4 flashCol(1.0f, 1.0f, 1.0f, 0.0f);
     if (hasFlash) {
-        const float k = fx.flashTimer / fx.flashDuration; // 1 -> 0
-        const Color& c = fx.flashColor;
-        dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
-            IM_COL32((int)(std::clamp(c.r, 0.0f, 1.0f) * 255.0f),
-                     (int)(std::clamp(c.g, 0.0f, 1.0f) * 255.0f),
-                     (int)(std::clamp(c.b, 0.0f, 1.0f) * 255.0f),
-                     (int)(std::clamp(c.a * k, 0.0f, 1.0f) * 255.0f)));
+        float k = fx.flashTimer / fx.flashDuration; // 1 -> 0
+        if (k > 1.0f) k = 1.0f;
+        flashCol = rui::Color4(std::clamp(fx.flashColor.r, 0.0f, 1.0f),
+                               std::clamp(fx.flashColor.g, 0.0f, 1.0f),
+                               std::clamp(fx.flashColor.b, 0.0f, 1.0f),
+                               std::clamp(fx.flashColor.a * k, 0.0f, 1.0f));
+        flashA = flashCol.a;
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-#endif
+    if (toneA <= 0.004f && flashA <= 0.004f) {
+        if (win) mgr.RemoveWindow("rui.screenfx");
+        return;
+    }
+
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.screenfx";
+        nw->z = 0;             // PAKET 37: unter allen anderen Fenstern
+        nw->skinned = false;   // keine Fensterhaut
+        nw->enabled = false;   // kein Klick-Konsum
+        win = &mgr.AddWindow(std::move(nw));
+    }
+    win->rect = rui::Rect{0.0f, 0.0f, mDisplayW, mDisplayH};
+    win->children.clear();
+    auto veil = std::make_unique<rui::Custom>();
+    veil->rect = win->rect;
+    const rui::Color4 toneCol(toneR, toneG, toneB, toneA);
+    veil->onDraw = [toneCol, flashCol](rui::DrawTarget& t, const rui::Rect& r) {
+        if (toneCol.a > 0.004f) t.FillRect(r, toneCol);
+        if (flashCol.a > 0.004f) t.FillRect(r, flashCol);
+    };
+    win->children.push_back(std::move(veil));
 }
 
-// XP-Wetter (Befehl 236): Regen/Sturm = schraege Streifen, Schnee =
-// treibende Flocken; Partikel deterministisch aus Index+Zeit (kein rand()).
-// Laeuft als globales Overlay — auf der Karte UND im Kampf.
+// Wetter (Befehl 236) ueber RUI (PAKET 37): Regen/Sturm = schraege Streifen
+// (Line), Schnee = treibende Flocken (FillCircle); Partikel deterministisch
+// aus Index + eigener Spieluhr (rui::GetTime — kein rand() pro Frame).
+// Eigenes Vollbild-Fenster (z = 10): laeuft auf Karte UND im Kampf.
 void GameUI::DrawWeather() {
-#ifdef RPGMAKER3D_ENABLE_IMGUI
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.weather");
     const auto& fx = GetScreenEffects();
     const int type = fx.weatherType;
     const float power = fx.weatherPower; // gelerpt, 0..9
-    if (type <= 0 || power < 0.05f) return;
-
-    ImGuiIO& io = ImGui::GetIO();
-    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
-    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
-    ImGui::SetNextWindowSize(io.DisplaySize);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    ImGui::Begin("##WeatherFx", nullptr,
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
-        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float t = (float)ImGui::GetTime();
-
-    if (type == 1 || type == 2) { // Regen / Sturm
-        const bool storm = (type == 2);
-        const int drops = (int)(power * (storm ? 26.0f : 14.0f));
-        const float slant = storm ? 0.45f : 0.18f;
-        const float speed = storm ? 1450.0f : 950.0f;
-        const ImU32 col = IM_COL32(170, 190, 255, (int)std::clamp(90.0f + power * 14.0f, 0.0f, 255.0f));
-        for (int i = 0; i < drops; ++i) {
-            const float hx = WeatherHash01((unsigned)(i * 37 + 1));
-            const float hy = WeatherHash01((unsigned)(i * 57 + 7));
-            const float len = 14.0f + WeatherHash01((unsigned)(i * 11)) * 16.0f;
-            const float vmul = 0.75f + 0.5f * WeatherHash01((unsigned)(i * 17));
-            const float y = fmodf(hy * H + t * speed * vmul, H + 40.0f) - 20.0f;
-            const float x = fmodf(hx * W - t * speed * slant * 0.35f + W * 8.0f, W + 80.0f) - 40.0f;
-            dl->AddLine(ImVec2(x, y), ImVec2(x + len * slant, y + len), col, storm ? 1.6f : 1.1f);
-        }
-    } else if (type == 3) { // Schnee
-        const int flakes = (int)(power * 10.0f);
-        const ImU32 col = IM_COL32(255, 255, 255, (int)std::clamp(120.0f + power * 13.0f, 0.0f, 255.0f));
-        for (int i = 0; i < flakes; ++i) {
-            const float hx = WeatherHash01((unsigned)(i * 41 + 3));
-            const float hy = WeatherHash01((unsigned)(i * 67 + 13));
-            const float y = fmodf(hy * H + t * (45.0f + 55.0f * WeatherHash01((unsigned)(i * 19))), H + 20.0f) - 10.0f;
-            const float x = hx * W + sinf(t * (1.5f + WeatherHash01((unsigned)(i * 23))) + (float)i) * 22.0f;
-            const float r = 1.2f + 2.2f * WeatherHash01((unsigned)(i * 29));
-            dl->AddCircleFilled(ImVec2(x, y), r, col);
-        }
+    if (type <= 0 || power < 0.05f) {
+        if (win) mgr.RemoveWindow("rui.weather");
+        return;
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-#endif
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.weather";
+        nw->z = 10;            // PAKET 37: ueber Farbton, unter Fenstern
+        nw->skinned = false;
+        nw->enabled = false;
+        win = &mgr.AddWindow(std::move(nw));
+    }
+    win->rect = rui::Rect{0.0f, 0.0f, mDisplayW, mDisplayH};
+    win->children.clear();
+
+    const float rainA = std::clamp(90.0f + power * 14.0f, 0.0f, 255.0f) / 255.0f;
+    const float snowA = std::clamp(120.0f + power * 13.0f, 0.0f, 255.0f) / 255.0f;
+    auto part = std::make_unique<rui::Custom>();
+    part->rect = win->rect;
+    part->onDraw = [type, power, rainA, snowA](rui::DrawTarget& t,
+                                               const rui::Rect& r) {
+        const float W = r.w, H = r.h;
+        const float now = rui::GetTime();
+        if (type == 1 || type == 2) { // Regen / Sturm
+            const bool storm = (type == 2);
+            const int drops = (int)(power * (storm ? 26.0f : 14.0f));
+            const float slant = storm ? 0.45f : 0.18f;
+            const float speed = storm ? 1450.0f : 950.0f;
+            const rui::Color4 col(170.0f / 255.0f, 190.0f / 255.0f, 1.0f, rainA);
+            for (int k = 0; k < drops; ++k) {
+                const float hx = WeatherHash01((unsigned)(k * 37 + 1));
+                const float hy = WeatherHash01((unsigned)(k * 57 + 7));
+                const float len = 14.0f + WeatherHash01((unsigned)(k * 11)) * 16.0f;
+                const float vmul = 0.75f + 0.5f * WeatherHash01((unsigned)(k * 17));
+                const float y = fmodf(hy * H + now * speed * vmul, H + 40.0f) - 20.0f;
+                const float x = fmodf(hx * W - now * speed * slant * 0.35f + W * 8.0f, W + 80.0f) - 40.0f;
+                t.Line(x, y, x + len * slant, y + len, col, storm ? 1.6f : 1.1f);
+            }
+        } else if (type == 3) { // Schnee
+            const int flakes = (int)(power * 10.0f);
+            const rui::Color4 col(1.0f, 1.0f, 1.0f, snowA);
+            for (int k = 0; k < flakes; ++k) {
+                const float hx = WeatherHash01((unsigned)(k * 41 + 3));
+                const float hy = WeatherHash01((unsigned)(k * 67 + 13));
+                const float y = fmodf(hy * H + now * (45.0f + 55.0f * WeatherHash01((unsigned)(k * 19))), H + 20.0f) - 10.0f;
+                const float x = hx * W + sinf(now * (1.5f + WeatherHash01((unsigned)(k * 23))) + (float)k) * 22.0f;
+                const float rad = 1.2f + 2.2f * WeatherHash01((unsigned)(k * 29));
+                t.FillCircle(r.x + x, r.y + y, rad, col);
+            }
+        }
+    };
+    win->children.push_back(std::move(part));
 }
 void GameUI::ShowMessage(const std::string& text) {
     mMessage.Show(text);
@@ -1747,15 +1773,13 @@ void GameUI::DrawNumberInput() {
     if (!win) {
         auto nw = std::make_unique<rui::Window>();
         nw->id = "rui.numberinput";
+        nw->z = 60; // PAKET 37: modal
         nw->openness = 255.0f; // Eingaben oeffnen sofort (kein Aufrollen)
         win = &mgr.AddWindow(std::move(nw));
     }
 
-    float dispW = 1280.0f, dispH = 720.0f;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    dispW = ImGui::GetIO().DisplaySize.x;
-    dispH = ImGui::GetIO().DisplaySize.y;
-#endif
+    const float dispW = GameUI::Get().DisplayWidth();
+    const float dispH = GameUI::Get().DisplayHeight();
     const auto& th = rui::Theme::Get();
     const float rowH = th.rowHeight;
     const float digitH = rowH * 1.5f + 6.0f;
@@ -1832,15 +1856,13 @@ void GameUI::DrawNameInput() {
     if (!win) {
         auto nw = std::make_unique<rui::Window>();
         nw->id = "rui.nameinput";
+        nw->z = 60; // PAKET 37: modal
         nw->openness = 255.0f; // Eingaben oeffnen sofort
         win = &mgr.AddWindow(std::move(nw));
     }
 
-    float dispW = 1280.0f, dispH = 720.0f;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    dispW = ImGui::GetIO().DisplaySize.x;
-    dispH = ImGui::GetIO().DisplaySize.y;
-#endif
+    const float dispW = GameUI::Get().DisplayWidth();
+    const float dispH = GameUI::Get().DisplayHeight();
     const auto& th = rui::Theme::Get();
     const float rowH = th.rowHeight;
     const int padRows = (int)kNamePadRows.size();
@@ -1921,41 +1943,72 @@ void GameUI::DrawNameInput() {
 }
 
 void GameUI::DrawPlayHud(bool playtest) {
-    if (mTitle.IsVisible() || mPause.IsVisible()) return;
-    if (!mHudVisible) return; // PAKET 10: F9-Toggle
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-    ImGui::SetNextWindowPos(ImVec2(12, 12));
-    ImGui::SetNextWindowBgAlpha(0.55f);
-    ImGui::Begin("##PlayHUD", nullptr,
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-    if (playtest) {
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.5f, 1.0f), "PLAYTEST");
-        ImGui::SameLine();
-        ImGui::TextDisabled("F5 Stop");
+    // PAKET 37: Play-HUD ueber RUI (z = 70 — Debug-Anzeige ueber allem).
+    // Inhalt wie bisher: Playtest-Markierung, HP/Gold, Position, Hinweise,
+    // FPS (jetzt eigener gleitender Schnitt, kein ImGui::GetIO mehr).
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.playhud");
+    const bool show = mHudVisible && !mTitle.IsVisible() && !mPause.IsVisible();
+    if (!show) {
+        if (win) mgr.RemoveWindow("rui.playhud"); // PAKET 36-Muster: sofort zu
+        return;
     }
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.playhud";
+        nw->z = 70;
+        nw->skinned = false;
+        nw->enabled = false;
+        win = &mgr.AddWindow(std::move(nw));
+    }
+    const auto& th = rui::Theme::Get();
+    const float rowH = th.rowHeight;
+
+    struct HudLine { std::string text; rui::Color4 col; };
+    std::vector<HudLine> lines;
+    if (playtest)
+        lines.push_back({"PLAYTEST   F5 Stop", rui::Color4(0.4f, 1.0f, 0.5f, 1.0f)});
     auto& party = Game::Get().Party();
-    int hp = 0, maxhp = 0;
-    if (!party.Members().empty()) {
-        hp = party.Members()[0].hp;
-        maxhp = std::max(hp, 100);
+    int hp = 0;
+    if (!party.Members().empty()) hp = party.Members()[0].hp;
+    lines.push_back({"HP " + std::to_string(hp) + "  |  Gold " +
+                     std::to_string(party.GetGold()), th.text});
+    const Vec3 ppos = Game::Get().Player().GetPosition();
+    char posBuf[64];
+    std::snprintf(posBuf, sizeof(posBuf), "Pos %.1f, %.1f",
+                  (double)ppos.x, (double)ppos.z);
+    lines.push_back({posBuf, th.text});
+    if (!EventSystem::Get().IsAnyEventRunning())
+        lines.push_back({"E: Sprechen  |  WASD: Bewegen", th.textDisabled});
+    else if (EventSystem::Get().IsWaitingForMessage())
+        lines.push_back({"Dialog...", rui::Color4(1.0f, 0.9f, 0.4f, 1.0f)});
+    char fpsBuf[64];
+    std::snprintf(fpsBuf, sizeof(fpsBuf), "%.0f FPS  |  F9 HUD ein/aus",
+                  (double)mFpsEma);
+    lines.push_back({fpsBuf, th.textDisabled});
+
+    const float pad = 8.0f;
+    const float w = 250.0f;
+    const float h = 2 * pad + rowH * (float)lines.size();
+    win->rect = rui::Rect{12.0f, 12.0f, w, h};
+    win->children.clear();
+
+    auto bg = std::make_unique<rui::Custom>();
+    bg->rect = win->rect;
+    bg->onDraw = [](rui::DrawTarget& t, const rui::Rect& r) {
+        t.FillRect(r, rui::Color4(0.0f, 0.0f, 0.0f, 0.45f), 4.0f);
+    };
+    win->children.push_back(std::move(bg));
+
+    float ly = win->rect.y + pad;
+    for (const auto& l : lines) {
+        auto lb = std::make_unique<rui::Label>();
+        lb->text = l.text;
+        lb->color = l.col;
+        lb->rect = rui::Rect{win->rect.x + pad, ly, w - 2 * pad, rowH};
+        win->children.push_back(std::move(lb));
+        ly += rowH;
     }
-    ImGui::Text("HP %d  |  Gold %d", hp, party.GetGold());
-    Vec3 p = Game::Get().Player().GetPosition();
-    ImGui::Text("Pos %.1f, %.1f", p.x, p.z);
-    if (!EventSystem::Get().IsAnyEventRunning()) {
-        ImGui::TextDisabled("E: Sprechen  |  WASD: Bewegen");
-    } else if (EventSystem::Get().IsWaitingForMessage()) {
-        ImGui::TextColored(ImVec4(1,0.9f,0.4f,1), "Dialog...");
-    }
-    ImGui::TextDisabled("%.0f FPS  |  F9 HUD ein/aus", io.Framerate);
-    ImGui::End();
-    (void)io;
-    (void)maxhp;
-#else
-    (void)playtest;
-#endif
 }
 
 // === Screen Text System ===
@@ -2074,47 +2127,61 @@ void GameUI::TweenScreenText(int id, Vec2 targetPos, float targetScale, float du
 }
 
 void GameUI::DrawScreenTexts() {
-    if (mScreenTexts.empty()) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-
+    // PAKET 37: Screen-/World-Texts als RUI-Fenster (z = 40). Banner mit
+    // Anker+Pivot ersetzt die alten autosizierten Overlay-Fenster eins zu
+    // eins; Fenster verschwundener Texte werden entfernt (Lebenszyklus).
+    rui::Manager& mgr = rui::Manager::Get();
+    std::vector<int> live;
     for (const auto& st : mScreenTexts) {
         if (st.text.empty()) continue;
         float alpha = 1.0f;
         if (st.fading && st.duration > 0.0f) {
-            float remaining = st.duration - st.elapsed;
+            const float remaining = st.duration - st.elapsed;
             if (remaining < 1.0f) alpha = remaining;
         }
         if (alpha <= 0.0f) continue;
 
-        ImVec4 col(st.color.r, st.color.g, st.color.b, st.color.a * alpha);
-        ImVec2 pos;
-
+        float px, py;
         if (st.worldSpace) {
-            pos = ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-            pos.x += st.worldPos.x * 20.0f;
-            pos.y -= st.worldPos.z * 20.0f + st.worldPos.y * 10.0f;
+            px = mDisplayW * 0.5f + st.worldPos.x * 20.0f;
+            py = mDisplayH * 0.5f - (st.worldPos.z * 20.0f + st.worldPos.y * 10.0f);
         } else {
-            pos = ImVec2(st.screenPos.x * io.DisplaySize.x + st.pixelOffset.x,
-                         st.screenPos.y * io.DisplaySize.y + st.pixelOffset.y);
+            px = st.screenPos.x * mDisplayW + st.pixelOffset.x;
+            py = st.screenPos.y * mDisplayH + st.pixelOffset.y;
         }
 
-        std::string windowName = "##ScreenText_" + std::to_string(st.id);
-        ImGui::SetNextWindowPos(pos, ImGuiCond_Always, st.centered ? ImVec2(0.5f, 0.5f) : ImVec2(0,0));
-        ImGui::SetNextWindowBgAlpha(st.withBackground ? st.bgColor.a * alpha : 0.0f);
-        ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
-                                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
-                                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings;
-
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(st.bgColor.r, st.bgColor.g, st.bgColor.b, st.bgColor.a * alpha));
-        ImGui::PushStyleColor(ImGuiCol_Text, col);
-        ImGui::Begin(windowName.c_str(), nullptr, flags);
-        ImGui::Text("%s", st.text.c_str());
-        ImGui::End();
-        ImGui::PopStyleColor(2);
+        const std::string wid = "rui.stext." + std::to_string(st.id);
+        rui::Window* win = mgr.FindWindow(wid);
+        if (!win) {
+            auto nw = std::make_unique<rui::Window>();
+            nw->id = wid;
+            nw->z = 40;
+            nw->skinned = false;
+            nw->enabled = false;
+            win = &mgr.AddWindow(std::move(nw));
+        }
+        win->rect = rui::Rect{0.0f, 0.0f, mDisplayW, mDisplayH};
+        win->children.clear();
+        auto bn = std::make_unique<rui::Banner>();
+        bn->text = st.text;
+        bn->color = rui::Color4(st.color.r, st.color.g, st.color.b,
+                                st.color.a * alpha);
+        bn->scale = st.fontScale;
+        bn->pivotX = st.centered ? 0.5f : 0.0f;
+        bn->pivotY = st.centered ? 0.5f : 0.0f;
+        if (st.withBackground)
+            bn->back = rui::Color4(st.bgColor.r, st.bgColor.g, st.bgColor.b,
+                                   st.bgColor.a * alpha);
+        bn->rect = rui::Rect{px, py, 0.0f, 0.0f}; // Ankerpunkt
+        win->children.push_back(std::move(bn));
+        live.push_back(st.id);
     }
-#endif
+    // Stale Fenster (dauer-/entfernte Texte) aufraemen
+    for (int oldId : mRuiTextIds) {
+        if (std::find(live.begin(), live.end(), oldId) == live.end())
+            mgr.RemoveWindow("rui.stext." + std::to_string(oldId));
+    }
+    mRuiTextIds = std::move(live);
 }
 
 // === Picture / Screen Sprite System ===
@@ -2586,16 +2653,14 @@ void GameUI::DrawBattleStatus() {
     if (!win) {
         auto nw = std::make_unique<rui::Window>();
         nw->id = "rui.battlestatus";
+        nw->z = 25; // PAKET 37: Kampfstatus unter Bildern
         nw->openness = 255.0f; // sofort offen
         nw->enabled = false;   // kein Klick-Konsum
         win = &mgr.AddWindow(std::move(nw));
     }
 
-    float dispW = 1280.0f, dispH = 720.0f;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    dispW = ImGui::GetIO().DisplaySize.x;
-    dispH = ImGui::GetIO().DisplaySize.y;
-#endif
+    const float dispW = GameUI::Get().DisplayWidth();
+    const float dispH = GameUI::Get().DisplayHeight();
     const auto& th = rui::Theme::Get();
     const float w = dispW;
     float h = dispH * 0.20f;               // XP: Statuszeile ~1/5 unten
@@ -2702,83 +2767,70 @@ void GameUI::DrawBattleStatus() {
 }
 
 void GameUI::DrawPictures() {
-    if (mPictures.empty()) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-    ImDrawList* fg = ImGui::GetForegroundDrawList();
-
+    // PAKET 37: Screen-Pictures als RUI-Fenster (z = 30). Tint/Hellphase/
+    // Blinken/Rotation laufen wie bisher; das Bild-Quad geht jetzt ueber
+    // das Picture-Widget (Rotation inklusive). Fenster-Lebenszyklus wie bei
+    // den Screen-Texts (stale Fenster werden entfernt).
+    rui::Manager& mgr = rui::Manager::Get();
+    std::vector<int> live;
     for (const auto& pic : mPictures) {
         if (!pic.loaded || pic.textureId == 0) continue;
         float alpha = pic.opacity;
         if (pic.fading && pic.duration > 0.0f) {
-            float remaining = pic.duration - pic.elapsed;
+            const float remaining = pic.duration - pic.elapsed;
             if (remaining < 1.0f) alpha *= remaining;
         }
         if (alpha <= 0.01f) continue;
 
-        // PAKET 9: Ziel-Blinken (Flackern als Alpha-Puls) + Treffer-Flash
-        // (Tint wird kurzzeitig in Richtung flashColor verschoben)
         if (pic.blinking) {
             const float phase = std::fmod(pic.blinkTime * 5.0f, 1.0f);
             alpha *= (phase < 0.6f) ? 1.0f : 0.22f;
         }
-        ImVec4 tint(1.0f, 1.0f, 1.0f, alpha);
+        rui::Color4 tint(1.0f, 1.0f, 1.0f, alpha);
         if (pic.flashTimer > 0.0f && pic.flashDuration > 1.0e-4f) {
             float ft = pic.flashTimer / pic.flashDuration;
             if (ft > 1.0f) ft = 1.0f;
             const float mix = ft * pic.flashColor.a;
-            tint.x = 1.0f + (pic.flashColor.r - 1.0f) * mix;
-            tint.y = 1.0f + (pic.flashColor.g - 1.0f) * mix;
-            tint.z = 1.0f + (pic.flashColor.b - 1.0f) * mix;
+            tint.r = 1.0f + (pic.flashColor.r - 1.0f) * mix;
+            tint.g = 1.0f + (pic.flashColor.g - 1.0f) * mix;
+            tint.b = 1.0f + (pic.flashColor.b - 1.0f) * mix;
         }
 
-        ImVec2 center(pic.screenPos.x * io.DisplaySize.x, pic.screenPos.y * io.DisplaySize.y);
-        float baseSize = 128.0f * pic.scale;
-        ImVec2 size(baseSize, baseSize);
+        const float cx = pic.screenPos.x * mDisplayW;
+        const float cy = pic.screenPos.y * mDisplayH;
+        float sw = 128.0f * pic.scale, sh = sw;
         if (pic.size.x > 0.01f && pic.size.y > 0.01f) {
-            size.x = pic.size.x * io.DisplaySize.x * pic.scale;
-            size.y = pic.size.y * io.DisplaySize.y * pic.scale;
+            sw = pic.size.x * mDisplayW * pic.scale;
+            sh = pic.size.y * mDisplayH * pic.scale;
         }
 
-        if (std::abs(pic.rotation) < 0.01f) {
-            std::string windowName = "##Picture_" + std::to_string(pic.id);
-            ImGui::SetNextWindowPos(center, ImGuiCond_Always, pic.centered ? ImVec2(0.5f, 0.5f) : ImVec2(0,0));
-            ImGui::SetNextWindowBgAlpha(0.0f);
-            ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
-                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing |
-                                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings;
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0,0));
-            ImGui::Begin(windowName.c_str(), nullptr, flags);
-            ImGui::Image((ImTextureID)(intptr_t)pic.textureId, size, ImVec2(0,0), ImVec2(1,1), tint, ImVec4(0,0,0,0));
-            ImGui::End();
-            ImGui::PopStyleVar();
-        } else {
-            float rad = pic.rotation * 3.14159265f / 180.0f;
-            float c = std::cos(rad);
-            float s = std::sin(rad);
-            ImVec2 half(size.x * 0.5f, size.y * 0.5f);
-            ImVec2 corners[4];
-            ImVec2 local[4] = {
-                ImVec2(-half.x, -half.y),
-                ImVec2(half.x, -half.y),
-                ImVec2(half.x, half.y),
-                ImVec2(-half.x, half.y)
-            };
-            for (int i=0;i<4;++i) {
-                float x = local[i].x, y = local[i].y;
-                float rx = x * c - y * s;
-                float ry = x * s + y * c;
-                corners[i] = ImVec2(center.x + rx, center.y + ry);
-            }
-            ImVec2 uvs[4] = { ImVec2(0,0), ImVec2(1,0), ImVec2(1,1), ImVec2(0,1) };
-            fg->AddImageQuad((ImTextureID)(intptr_t)pic.textureId,
-                corners[0], corners[1], corners[2], corners[3],
-                uvs[0], uvs[1], uvs[2], uvs[3],
-                ImGui::GetColorU32(tint));
+        const std::string wid = "rui.pic." + std::to_string(pic.id);
+        rui::Window* win = mgr.FindWindow(wid);
+        if (!win) {
+            auto nw = std::make_unique<rui::Window>();
+            nw->id = wid;
+            nw->z = 30;
+            nw->skinned = false;
+            nw->enabled = false;
+            win = &mgr.AddWindow(std::move(nw));
         }
+        win->rect = rui::Rect{0.0f, 0.0f, mDisplayW, mDisplayH};
+        win->children.clear();
+        auto p = std::make_unique<rui::Picture>();
+        p->texture = (void*)(intptr_t)pic.textureId;
+        p->imgW = 0; p->imgH = 0; // Vollbild-UV (Adapter, PAKET 37)
+        p->tint = tint;
+        p->keepAspect = false;
+        p->rotation = pic.rotation;
+        p->rect = rui::Rect{pic.centered ? cx - sw * 0.5f : cx,
+                            pic.centered ? cy - sh * 0.5f : cy, sw, sh};
+        win->children.push_back(std::move(p));
+        live.push_back(pic.id);
     }
-#endif
+    for (int oldId : mRuiPictureIds) {
+        if (std::find(live.begin(), live.end(), oldId) == live.end())
+            mgr.RemoveWindow("rui.pic." + std::to_string(oldId));
+    }
+    mRuiPictureIds = std::move(live);
 }
-
 } // namespace rpg

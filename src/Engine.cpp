@@ -477,6 +477,9 @@ void Engine::SetPlaying(bool playing) {
     if (!playing && mScriptManager) mScriptManager->InvalidateExecutedScripts();
     // Spielstopp: alle Ruby-Fenster (RGSS-UI) entfernen.
     if (!playing) RgssUI::Get().ClearAll();
+    // PAKET 37: Spielstopp raeumt auch die RUI-Fenster (Menue/Message/HUD
+    // aus dem Playtest) — sie wuerden sonst im Editor weitergezeichnet.
+    if (!playing) rui::Manager::Get().Clear();
 
     // "Alles custom": Game.ini + Projekt-Skins bei jedem Spielstart neu ziehen
     if (playing) LoadCustomConfigForProject();
@@ -1637,22 +1640,31 @@ void Engine::Render() {
     if (mWindow && mWindow->GetWidth() > 0 && mWindow->GetHeight() > 0)
         glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
 
-    // PAKET 10: Die gesamte Spielanzeige (Messages, Menues, HUD, Pictures,
-    // ScreenTexts, Kampfstatus) laeuft im GameUI-ImGui-Overlay — ohne
-    // ImGui-Define ist Draw ein No-Op, die Logik (Modal-Input) laeuft weiter.
-    // PAKET 10 Fix: echter Frame-Lebenszyklus (BeginFrame/EndFrame) — das
-    // GL-Zeichnen der DrawData passiert VOR RgssUI, damit die dokumentierte
-    // Ordnung stimmt (Ruby-UI bleibt oberste Schicht).
+    // PAKET 37: Die gesamte Spielanzeige (Messages, Menues, HUD, Pictures,
+    // ScreenTexts, Kampfstatus, Farbton, Wetter) laeuft ueber das eigene
+    // RUI-Framework. ImGui (falls gebaut) ist nur noch ein optionaler
+    // Zeichen-Adapter fuer RUI; die Fensterlogik laeuft immer. DrawPlayHud
+    // wird bewusst IMMER aufgerufen (verwaltet RemoveWindow selbst).
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiBeginFrame();
-    if (mImGuiReady && (mPlayMode || !mEditorMode)) {
-        GameUI::Get().Draw();
-        if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
+#endif
+    {
+        const float uiW = mWindow ? (float)mWindow->GetWidth() : 1280.0f;
+        const float uiH = mWindow ? (float)mWindow->GetHeight() : 720.0f;
+        GameUI::Get().SetDisplaySize(uiW, uiH);
+        if (mPlayMode || !mEditorMode) {
+            GameUI::Get().Draw();
+            GameUI::Get().DrawPlayHud(mEditorMode);
+        }
+        // ImGui-Builds: RUI-Fenster zeichnen als DrawList im selben Frame.
+        // Ohne ImGui: braucht einen echten DrawTarget (PAKET 39: GL-Adapter).
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+        if (mImGuiReady) rui::Manager::Get().Draw();
+#else
+        rui::Manager::Get().Draw();
+#endif
     }
-    // PAKET 31: RUI-Fenster (eigene UI-Schicht). Rendert ueber den internen
-    // DrawTarget-Adapter in denselben ImGui-Frame (NUR DrawList, kein IO).
-    // Bei mImGuiReady==false kein no-op-Problem: Manager skippt dann.
-    if (mImGuiReady) rui::Manager::Get().Draw();
+#ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiEndFrame();
 #endif
 

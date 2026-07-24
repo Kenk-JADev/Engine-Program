@@ -20,6 +20,10 @@ bool GetMousePressed() { return gMousePressed; }
 static float gBlinkTime = 0.0f;
 float GetBlinkTime() { return gBlinkTime; }
 
+// PAKET 37: eigene Spieluhr (Partikel/Blinken unabhaengig von ImGui::GetTime)
+static float gTime = 0.0f;
+float GetTime() { return gTime; }
+
 const Theme& Theme::Get() {
     static Theme s;
     return s;
@@ -64,13 +68,43 @@ public:
     }
     float LineHeight(float scale) const override { return ImGui::GetFontSize() * scale; }
     void Image(void* texture, int imgW, int imgH,
-               const Rect& src, const Rect& dst, const Color4& tint) override {
-        if (!texture || imgW <= 0 || imgH <= 0) return;
-        const float u0 = src.x / (float)imgW, v0 = src.y / (float)imgH;
-        const float u1 = (src.x + src.w) / (float)imgW, v1 = (src.y + src.h) / (float)imgH;
-        mDl->AddImage((ImTextureID)(intptr_t)texture,
-                      ImVec2(dst.x, dst.y), ImVec2(dst.x + dst.w, dst.y + dst.h),
-                      ImVec2(u0, v0), ImVec2(u1, v1), ToIm(tint));
+               const Rect& src, const Rect& dst, const Color4& tint,
+               float rotationDeg) override {
+        if (!texture) return;
+        // PAKET 37: imgW/imgH <= 0 -> Vollbild (UV 0..1), src ignoriert
+        float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+        if (imgW > 0 && imgH > 0) {
+            u0 = src.x / (float)imgW, v0 = src.y / (float)imgH;
+            u1 = (src.x + src.w) / (float)imgW, v1 = (src.y + src.h) / (float)imgH;
+        }
+        if (std::fabs(rotationDeg) < 0.001f) {
+            mDl->AddImage((ImTextureID)(intptr_t)texture,
+                          ImVec2(dst.x, dst.y), ImVec2(dst.x + dst.w, dst.y + dst.h),
+                          ImVec2(u0, v0), ImVec2(u1, v1), ToIm(tint));
+            return;
+        }
+        // Gedrehtes Quad um die Ziel-Mitte (PAKET 37)
+        const float rad = rotationDeg * 3.14159265f / 180.0f;
+        const float cs = std::cos(rad), sn = std::sin(rad);
+        const float mx = dst.x + dst.w * 0.5f, my = dst.y + dst.h * 0.5f;
+        const float hx = dst.w * 0.5f, hy = dst.h * 0.5f;
+        const float lx[4] = {-hx, hx, hx, -hx};
+        const float ly[4] = {-hy, -hy, hy, hy};
+        ImVec2 corner[4];
+        for (int k = 0; k < 4; ++k)
+            corner[k] = ImVec2(mx + lx[k] * cs - ly[k] * sn,
+                               my + lx[k] * sn + ly[k] * cs);
+        mDl->AddImageQuad((ImTextureID)(intptr_t)texture,
+                          corner[0], corner[1], corner[2], corner[3],
+                          ImVec2(u0, v0), ImVec2(u1, v0),
+                          ImVec2(u1, v1), ImVec2(u0, v1), ToIm(tint));
+    }
+    void Line(float x0, float y0, float x1, float y1,
+              const Color4& c, float thickness) override {
+        mDl->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), ToIm(c), thickness);
+    }
+    void FillCircle(float cx, float cy, float radius, const Color4& c) override {
+        mDl->AddCircleFilled(ImVec2(cx, cy), radius, ToIm(c), 0);
     }
     void ClipPush(const Rect& r) override {
         mDl->PushClipRect(ImVec2(r.x, r.y), ImVec2(r.x + r.w, r.y + r.h), true);
@@ -128,20 +162,47 @@ void Gauge::Draw(DrawTarget& t) {
 }
 
 void Picture::Draw(DrawTarget& t) {
-    if (!visible || !texture || imgW <= 0 || imgH <= 0) return;
-    Rect s{std::clamp(src.x, 0.0f, (float)imgW), std::clamp(src.y, 0.0f, (float)imgH),
-           std::clamp(src.w, 0.0f, (float)imgW), std::clamp(src.h, 0.0f, (float)imgH)};
-    if (s.w <= 0.0f || s.h <= 0.0f) return;
+    if (!visible || !texture) return;
+    Rect s = src;
     Rect d = rect;
-    if (keepAspect) {
-        const float kx = rect.w / s.w, ky = rect.h / s.h;
-        const float k = std::min(kx, ky);
-        d.w = s.w * k;
-        d.h = s.h * k;
-        d.x = rect.x + (rect.w - d.w) * 0.5f;
-        d.y = rect.y + (rect.h - d.h) * 0.5f;
+    if (imgW > 0 && imgH > 0) {
+        // Teilbild auf das Quellbild klemmen
+        s = Rect{std::clamp(src.x, 0.0f, (float)imgW), std::clamp(src.y, 0.0f, (float)imgH),
+                 std::clamp(src.w, 0.0f, (float)imgW), std::clamp(src.h, 0.0f, (float)imgH)};
+        if (s.w <= 0.0f || s.h <= 0.0f) return;
+        if (keepAspect) {
+            const float kx = rect.w / s.w, ky = rect.h / s.h;
+            const float k = std::min(kx, ky);
+            d.w = s.w * k;
+            d.h = s.h * k;
+            d.x = rect.x + (rect.w - d.w) * 0.5f;
+            d.y = rect.y + (rect.h - d.h) * 0.5f;
+        }
     }
-    t.Image(texture, imgW, imgH, s, d, tint);
+    // imgW<=0: Adapter zeichnet Vollbild (UV 0..1) gestreckt in rect
+    // (PAKET 37: Screen-Pictures ohne Dimensionsabfrage).
+    t.Image(texture, imgW, imgH, s, d, tint, rotation); // PAKET 37: Rotation
+}
+
+// PAKET 37: Banner (Textzeile mit optionalem Hintergrundkasten, Anker+
+// Pivot wie die frueheren Overlay-Fenster; Breite wird gemessen) --------
+void Banner::Draw(DrawTarget& t) {
+    if (!visible) return;
+    const Color4 c = enabled ? color : Theme::Get().textDisabled;
+    const float w = t.MeasureText(text, scale);
+    const float h = t.LineHeight(scale);
+    const float tx = rect.x - w * pivotX;
+    const float ty = rect.y - h * pivotY;
+    if (back.a > 0.001f)
+        t.FillRect(Rect{tx - backPad, ty - backPad,
+                        w + 2 * backPad, h + 2 * backPad}, back, 3.0f);
+    t.Text(tx, ty, text, c, scale, 0);
+}
+
+// PAKET 37: Custom (Wetter/Schleier per Callback) -------------------------
+void Custom::Draw(DrawTarget& t) {
+    if (!visible || !onDraw) return;
+    onDraw(t, rect);
 }
 
 // PAKET 33: Nine-Patch-Strecke einer Windowskin-Quelle (xp-artige
@@ -461,6 +522,16 @@ Window* Manager::FindWindow(const std::string& id) {
 
 void Manager::Clear() { mWindows.clear(); mFocusKey.clear(); }
 
+// PAKET 37: stabile Z-Ordnung (gleicher z-Wert = Anlegereihenfolge)
+std::vector<Window*> Manager::SortedWindows() const {
+    std::vector<Window*> out;
+    out.reserve(mWindows.size());
+    for (auto& w : mWindows) out.push_back(w.get());
+    std::stable_sort(out.begin(), out.end(),
+        [](const Window* a, const Window* b) { return a->z < b->z; });
+    return out;
+}
+
 void Manager::SetFocusList(const std::string& key) {
     mFocusKey = key;
 }
@@ -480,12 +551,16 @@ ListView* Manager::ResolveFocusList() {
 void Manager::Update(float dt, float mouseX, float mouseY, bool mousePressed,
                      int navV, bool navOk, bool navCancel) {
     gBlinkTime += dt * GetTheme().blinkHz;   // blinkHz*2pi in Draw
+    gTime += dt;                             // PAKET 37: eigene Spieluhr
     gMouse = rpg::Vec2(mouseX, mouseY);
     gMousePressed = mousePressed;
     for (auto& w : mWindows) w->Update(dt);
-    // Maus: Hover von oben nach unten (z-Ordnung), Click konsumiert das
+    // PAKET 37: stabile Z-Sortierung — Wetter/Schleier (z klein) bleiben
+    // unter Menues/Dialogs (z gross), unabhaengig von der Anlegereihenfolge.
+    auto sorted = SortedWindows();
+    // Maus: Hover von oben nach unten (Z-Ordnung), Click konsumiert das
     // oberste belegte Widget.
-    for (auto it = mWindows.rbegin(); it != mWindows.rend(); ++it) {
+    for (auto it = sorted.rbegin(); it != sorted.rend(); ++it) {
         (*it)->OnMouseMove(mouseX, mouseY);
         if (mousePressed) {
             if ((*it)->OnMouseClick(mouseX, mouseY)) break;
@@ -523,6 +598,7 @@ void Manager::Update(float dt, float mouseX, float mouseY, bool mousePressed,
 
 void Manager::Draw() {
     EnsureSkinLoaded(); // PAKET 33: Lazy-Laden zum Draw-Zeitpunkt (GL ok)
+    const auto sorted = SortedWindows(); // PAKET 37: stabile Z-Ordnung
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     if (!mDrawTarget) {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -535,7 +611,7 @@ void Manager::Draw() {
             ImGuiWindowFlags_NoBackground |
             ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoInputs);
         ImDrawTarget dt(ImGui::GetWindowDrawList());
-        for (auto& w : mWindows) w->Draw(dt);
+        for (auto* w : sorted) w->Draw(dt);
         ImGui::End();
         ImGui::PopStyleVar();
         ImGui::PopStyleColor();
@@ -543,7 +619,7 @@ void Manager::Draw() {
     }
 #endif
     if (mDrawTarget)
-        for (auto& w : mWindows) w->Draw(*mDrawTarget);
+        for (auto* w : sorted) w->Draw(*mDrawTarget);
 }
 
 } // namespace rui
