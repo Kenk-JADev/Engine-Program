@@ -15,6 +15,12 @@ Map::Map() {
 Map::~Map() = default;
 
 void Map::Resize(int width, int height) {
+    // PAKET 41 (Fix): Groesse absichern — 0 oder negativ (defekte/
+    // handeditierte Karten- oder Szenendatei) fuehrte beim anschliessenden
+    // Laden zu Teilung durch 0 (idx % width) bzw. ueber size_t-Flucht zu
+    // einer Riesen-Allokation; das Limit entspricht Map::Load (1024).
+    width = std::clamp(width, 1, 1024);
+    height = std::clamp(height, 1, 1024);
     // Inhalt erhalten (links-oben verankert, wie RPG Maker XP):
     // groessere Karte = leere Felder rechts/unten, kleinere = abgeschnitten.
     for (auto& layer : mLayers) {
@@ -64,6 +70,10 @@ void Map::CreateFallback(int width, int height) {
 
     if (width < 6) width = 6;
     if (height < 6) height = 6;
+    // PAKET 41 (Fix): auch nach oben begrenzen — defekte Map-Infos in der
+    // Datenbank haetten sonst eine Speicherexplosion ausgeloest.
+    if (width > 1024) width = 1024;
+    if (height > 1024) height = 1024;
 
     mLayers.clear();
     mWidth = width;

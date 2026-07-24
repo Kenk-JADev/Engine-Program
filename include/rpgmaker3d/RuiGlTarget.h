@@ -90,6 +90,10 @@ private:
         bool scissor = false;
         int blendSrcRgb = 0, blendDstRgb = 0; // RGB- und Alpha-Faktoren
         int blendSrcA = 0, blendDstA = 0;     // getrennt (BlendFuncSeparate)
+        // PAKET 41: Scissor-Rechteck (Flag allein genuegt nicht, sonst
+        // erbt der Host unsere Clip-Box) + ARRAY_BUFFER-Bindung.
+        int arrayBuf = 0;
+        int scissorBox[4] = {0, 0, 0, 0};
     };
     SavedState mSaved;
     bool mFrameOpen = false;

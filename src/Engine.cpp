@@ -2380,6 +2380,11 @@ bool Engine::LoadScene(const std::string& path) {
     if (mapPos != std::string::npos) {
         int width = static_cast<int>(parseNumber(content, "width", mapPos, 20));
         int height = static_cast<int>(parseNumber(content, "height", mapPos, 20));
+        // PAKET 41 (Fix): defekte Szenen-JSON (width/height 0 oder negativ)
+        // zog bislang SIGFPE (idx % width) bzw. bad_alloc (size_t-Flucht)
+        // nach sich — auf den erlaubten Bereich klemmen (Map::Load-Limit).
+        width = std::clamp(width, 1, 1024);
+        height = std::clamp(height, 1, 1024);
         mMap->Resize(width, height);
         size_t layersPos = findKey(content, "layers", mapPos);
         if (layersPos != std::string::npos) {

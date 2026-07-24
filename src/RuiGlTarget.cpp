@@ -240,6 +240,9 @@ void RuiGlTarget::BeginFrame(float displayW, float displayH) {
     glGetIntegerv(GL_BLEND_DST_RGB, &mSaved.blendDstRgb);
     glGetIntegerv(GL_BLEND_SRC_ALPHA, &mSaved.blendSrcA);
     glGetIntegerv(GL_BLEND_DST_ALPHA, &mSaved.blendDstA);
+    // PAKET 41: Scissor-Box + Array-Buffer sichern (Hygiene, PAKET 39)
+    glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &mSaved.arrayBuf);
+    glGetIntegerv(GL_SCISSOR_BOX, mSaved.scissorBox);
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
@@ -261,8 +264,15 @@ void RuiGlTarget::EndFrame() {
     if (mSaved.depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     if (mSaved.cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
     if (mSaved.scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
+    // PAKET 41: Scissor-Box + Array-Buffer-Bindung restaurieren — sonst
+    // erbte der Host (z. B. ein spaeterer Pass mit eigenem Scissor)
+    // unsere letzte Clip-Box bzw. ein gebundenes Staging-VBO.
+    if (mSaved.scissor)
+        glScissor(mSaved.scissorBox[0], mSaved.scissorBox[1],
+                  (GLsizei)mSaved.scissorBox[2], (GLsizei)mSaved.scissorBox[3]);
     glBlendFuncSeparate((GLenum)mSaved.blendSrcRgb, (GLenum)mSaved.blendDstRgb,
                         (GLenum)mSaved.blendSrcA, (GLenum)mSaved.blendDstA);
+    glBindBuffer(GL_ARRAY_BUFFER, (GLuint)mSaved.arrayBuf);
     mFrameOpen = false;
 }
 

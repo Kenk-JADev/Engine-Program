@@ -141,9 +141,14 @@ klassischer MAKER-Werkzeuge:
 
 - Flutfuellung: durch Seen-Set begrenzt (kein Endloslauf).
 - Undo/Verlauf: `paintCell` erzeugt bei „keine echte Aenderung“
-  keinen Verlaufseintrag.
+  keinen Verlaufseintrag; Verlauf auf 100 Strokes begrenzt, Strokes
+  anderer Karten/Groessen werden beim Undo verworfen.
 - Alle `std::stoi`-Stellen im Editor try/catch-abgesichert.
 - `Map::Load` besitzt seit PAKET 27 Validierung.
+- `Map::Resize` klemmt seit PAKET 41 auf 1..1024 (Editor-Dialog ohnehin
+  1..999) — defekte Karten-/Szenendateien koennen weder SIGFPE
+  (idx % width == 0) noch Speicherexplosionen ausloesen; dasselbe gilt
+  fuer `Engine::LoadScene` (JSON) und `Map::CreateFallback`.
 
 Offen (spaeter):
 - [ ] Gizmo-Transform im Game View

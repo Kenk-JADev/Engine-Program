@@ -101,6 +101,23 @@ erreichten die Fenster nie. Ausserdem: Ruby-Zugriff `Rui.theme_color` /
 `Rui.set_theme_color` / `Rui.theme_metric` / `Rui.set_theme_metric`
 (Farben 0..255, Metriken in px; Details: `docs/SCRIPT-RUI.md`).
 
+PAKET 41 (Robustheits-Nachschub):
+- `GameUI::DrawModalWindows` ruft jetzt wirklich IMMER alle drei
+  Sync-Funktionen (Menue/Zahl/Name) ohne Frueh-Return — ein gleichzeitig
+  oder direkt anschliessend geoeffnetes Menue liess sonst z.B.
+  `rui.numberinput` als sichtbares Geisterfenster ueber dem Menue
+  schweben, bis der oeffnende Dialog wieder zuging.
+- `MenuWindow::Draw` klemmt die Zeilenzahl an den Bildschirm — lange
+  Listen (Inventar, Laden, Ausruestung, Fertigkeiten) wuchsen bis hinter
+  den Fensterrand, die unteren Eintraege waren sichtbar nicht mehr
+  erreichbar. Das ListView scrollt intern ueber `topIndex`, Tastatur-
+  und Maussteuerung bleiben unveraendert (so arbeitet auch XP).
+- `ShowNameInput` kuerzt den Initial-Namen jetzt UTF-8-sicher (ein
+  mitten im Codepoint abgeschnittener Umlaut ergab eine kaputte
+  Byte-Sequenz).
+- `RuiGlTarget` sichert/restauriert zusaetzlich Scissor-Rechteck und
+  ARRAY_BUFFER-Bindung (volle GL-State-Hygiene zwischen 3D-Pass und UI).
+
 ## 5. Eigener GL-Renderer (PAKET 39 — umgesetzt)
 
 `rpg::RuiGlTarget` (`include/rpgmaker3d/RuiGlTarget.h`, `src/RuiGlTarget.cpp`)

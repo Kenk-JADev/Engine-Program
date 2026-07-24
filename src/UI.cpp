@@ -308,10 +308,8 @@ void MenuWindow::Draw() {
     const auto& th = rui::Theme::Get();
     const bool titleMode = GameUI::Get().Title().IsVisible();
     const float w = dispW * (titleMode ? 0.40f : 0.46f);
-    const int rows = std::max(1, (int)mItems.size());
     const float titleH = mTitle.empty() ? 0.0f : th.rowHeight + 4.0f;
     const float hintH = th.rowHeight + 2.0f;
-    const float h = 2 * th.padding + titleH + hintH + rows * th.rowHeight;
     float x, y;
     if (titleMode) {
         x = (dispW - w) * 0.5f;
@@ -320,6 +318,17 @@ void MenuWindow::Draw() {
         x = dispW - w - dispW * 0.04f;        // im Spiel: rechts oben
         y = dispH * 0.12f;
     }
+    // PAKET 41 (Fix): Zeilenzahl an den Bildschirm klemmen — lange Listen
+    // (Inventar, Laden, Ausruestung, Fertigkeiten) liessen das Fenster
+    // hinter den Fensterrand wachsen; die unteren Eintraege waren sichtbar
+    // nicht mehr erreichbar (Cursor scrollte ins Leere). Das ListView
+    // scrollt intern ueber topIndex weiter, Tastatur UND Maus unveraendert;
+    // XP zeigt lange Listen ebenfalls als scrollendes Fenster.
+    const float availH = dispH - y - 24.0f;   // 24 px Rand unten
+    const int maxRows = std::max(3,
+        (int)((availH - 2 * th.padding - titleH - hintH) / th.rowHeight));
+    const int rows = std::min(std::max(1, (int)mItems.size()), maxRows);
+    const float h = 2 * th.padding + titleH + hintH + rows * th.rowHeight;
     win->rect = rui::Rect{x, y, w, h};
     win->focus = true;
 
@@ -341,7 +350,9 @@ void MenuWindow::Draw() {
     lv->id = "list";
     lv->rect = rui::Rect{cx, cy, cw, th.rowHeight * (float)rows};
     for (const auto& it : mItems) lv->items.push_back({it.text, it.enabled});
-    lv->selected = std::clamp(mCursor, 0, (int)lv->items.size() - 1);
+    // PAKET 41: leere Liste abfangen (clamp mit lo > hi ist undefiniert)
+    lv->selected = lv->items.empty() ? -1
+        : std::clamp(mCursor, 0, (int)lv->items.size() - 1);
     lv->cursorVisible = true;
     // Maus: Click = bestaetigen (Confirm erlaubt Neuaufbau des Menues).
     lv->onPick = [this](int idx) {
@@ -597,7 +608,14 @@ void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial
     mNameInitial = initial;
     mNameText = initial;
     mNameMaxChars = maxChars > 0 && maxChars <= 16 ? maxChars : 8;
-    if ((int)mNameText.size() > mNameMaxChars) mNameText.resize(mNameMaxChars);
+    if ((int)mNameText.size() > mNameMaxChars) {
+        mNameText.resize(mNameMaxChars);
+        // PAKET 41 (Fix): UTF-8-sicher kuerzen — mitten in einem Codepoint
+        // geschnittene Fortsetzungsbytes (Umlaute) gaben kaputte Sequenz.
+        while (!mNameText.empty() &&
+               ((unsigned char)mNameText.back() & 0xC0) == 0x80)
+            mNameText.pop_back();
+    }
     mNameDone = std::move(onDone);
     RPG_LOG_INFO("[UI] Namenseingabe aktiv (max " + std::to_string(mNameMaxChars) + " Zeichen)");
 }
@@ -1745,16 +1763,16 @@ void GameUI::UpdateModalInput(Input& input) {
 // PAKET 10: Modale Fenster im Overlay. Prioritaet wie in
 // UpdateModalInput: Menue zuerst, dann Zahleneingabe, dann Namenseingabe;
 // Choices zeichnet MessageWindow::Draw direkt im Nachrichtenfenster.
-// PAKET 36 (Fix): ALLE Draw-Funktionen werden IMMER aufgerufen — sie
+// PAKET 36/41 (Fix): ALLE Draw-Funktionen werden IMMER aufgerufen — sie
 // verwalten ihre retained RUI-Fenster selbst (Anlage bei Aktivitaet,
-// RemoveWindow bei Inaktivitaet). Der fruehere Frueh-Return stellte den
-// Aufruf nach dem Schliessen ein — dadurch blieb z.B. rui.menu als
-// sichtbares Geisterfenster im Manager stehen.
+// RemoveWindow bei Inaktivitaet). Ein Frueh-Return stellte den Aufruf
+// nach dem Schliessen ein — dadurch blieben z.B. rui.menu oder (seit
+// PAKET 36 neu erkannt: bei Menue-oeffnung waehrend/zeitgleich mit
+// aktiver Eingabe) rui.numberinput/rui.nameinput als sichtbare
+// Geisterfenster stehen, bis der oeffnende Dialog wieder zuging.
 void GameUI::DrawModalWindows() {
     mMenu.Draw();
-    if (mMenu.IsVisible()) return;
     DrawNumberInput();
-    if (mNumberActive) return;
     DrawNameInput();
 }
 
