@@ -133,8 +133,13 @@ struct GameActor {
     int MaxHp() const;
     int MaxMp() const;
     int Atk() const;  // Basis-Kurve + Waffen-Bonus
-    int Def() const;  // Basis-Kurve + Ruestungs-Bonus (alle Slots)
-    int Agi() const;
+    int Def() const;  // Basis-Kurve + Ruestungs-Bonus (alle Slots) + Waffen-defPlus
+    int Agi() const;  // Basis-Kurve + agiPlus von Waffe und Ruestungen
+    /// PAKET 23 (XP auto_state): Zustaende der angelegten Ruestungen
+    /// (ArmorData.guardStates) mit der Zustandsliste abgleichen — fehlende
+    /// hinzufuegen, nicht mehr angelegte Ruestungs-Zustaende entfernen.
+    /// Aufruf nach jedem Ausruestungs-Wechsel und in Setup().
+    void SyncArmorStates();
     /// Benoetigte Gesamt-EXP fuer (level+1) nach der Klassen-Kurve
     /// (ClassData: expBase/expExtra/expAccA/expAccB, Formel wie VX Ace).
     /// -1 wenn das Max-Level erreicht ist.

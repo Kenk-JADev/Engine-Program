@@ -1323,6 +1323,48 @@ Rang); Bat wirft Giftstich auf Gruppe; Skill „Auferstehung" im
 Fertigkeiten-Menue auf Gefallenen; Editor speichert scope 5/6 plus
 WeaponStates sauber nach Weapons.json.
 
+## PAKET 23 — Ausruestung komplett: Klassen-Sets, Waffen-Boni, Ruestungs-Passivzustaende ✅ ERLEDIGT 2026-07-24
+
+XP-Ausruestung bestand bisher nur aus „Waffe gibt ATK, Ruestung gibt
+DEF". Dieses Paket bringt die drei grossen fehlenden Bloecke:
+Klassen-Ausruestungs-Sets, Waffen-Boni ueber ATK hinaus und passive
+Ruestungs-Zustaende (XP auto_state — „verfluchte" Items).
+
+- [x] **Klassen-Ausruestungs-Sets (XP weapon_set/armor_set):**
+  `ClassData.weaponSet/armorSet` (leer = alles erlaubt, wie ein
+  unveraendertes XP-Projekt) mit Persistenz (Classes.json) und
+  Editor-Feldern; das Ausruestungs-Menue zeigt unerlaubte Stücke mit
+  „[falsche Klasse]" deaktiviert an. Demo: Magier darf nur Staebe.
+- [x] **Waffen-Boni:** `WeaponData.defPlus/agiPlus` (XP pdef_plus u. a.)
+  wirken auf `GameActor::Def()/Agi()`; Persistenz + Editor-Spins
+  (auch negativ). Ruestungen bekamen `agiPlus`.
+- [x] **Ruestungs-Passivzustaende (XP guard_state_set/auto_state):**
+  `ArmorData.guardStates` — `GameActor::SyncArmorStates()` gleicht
+  nach jedem An-/Ablegen ab (fehlende hinzugefuegt, abgelegte
+  entfernt, falls ruestungs-definiert); wirkt damit auf der Karte UND
+  im Kampf (Party-Zustaende fliessen seit PAKET 17 mit).
+  Mitfund gefixt: `armorType` wurde NIE persistiert — jede geladene
+  Ruestung galt als Schild (Slot/Menu-Filter falsch).
+- [x] **Demo:** „Fluchring" (Accessoire, vergiftet dauerhaft solange
+  angelegt), „Holzstab" (agiPlus 2, einzige Magier-Waffe), Mage-
+  Klassen-Set {3}.
+- [x] Editor: Klassen-Tab Set-Felder, Waffen-Tab Bonus-Spins,
+  Ruestungs-Tab agiPlus + guardStates.
+
+**Bewusst offen:** Herkunft von Zustaenden wird nicht getrackt (Ablegen
+einer Ruestung entfernt den ruestungs-definierten Zustand auch dann,
+wenn er zusaetzlich aus dem Kampf stammt — Approximation des XP-
+Verhaltens); Statusfenster listet Passiv-Zustaende nicht gesondert;
+Zwei-Waffen/Festsitz-Verhalten (XP two_swords_style/fix_equipment)
+fehlt; Elementar-Raten und -Sets folgen als eigener Block.
+
+**Akzeptanz:** `$game_party.gain_armor(2, 1)` -> Mage Ausruestung:
+Fluchring angelegt -> sofort „Gift" in der Zustandsliste (Status/
+Kampf-HUD), beim Ablegen verschwindet er; Mage kann im Waffen-Menue
+nur den Holzstab waehlen (Giftklinge grau „[falsche Klasse]"), Krieger
+weiterhin alles; Status-AGI steigt mit Holzstab um 2; Editor-Sets
+ueberleben Save/Load (Classes.json).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

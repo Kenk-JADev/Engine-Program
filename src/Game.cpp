@@ -93,6 +93,8 @@ void GameActor::Setup(int id) {
                 break;
             }
     }
+    // PAKET 23: Passivzustaende der Start-Ruestungen (XP auto_state)
+    SyncArmorStates();
 }
 void GameActor::RecoverAll() {
     // XP-Verhalten: HP/MP auf Maximalwert der Kurve + Status aufloesen
@@ -181,12 +183,59 @@ int GameActor::Def() const {
     for (int armorId : armors)
         for (const auto& a : Database::Get().Armors())
             if (a.id == armorId) { v += a.def; break; }
+    // PAKET 23: defPlus der Waffe (XP pdef_plus)
+    if (weaponId > 0)
+        for (const auto& w : Database::Get().Weapons())
+            if (w.id == weaponId) { v += w.defPlus; break; }
     return v;
 }
 int GameActor::Agi() const {
+    int v = 10;
     if (const auto* ad = Database::Get().GetActor(actorId))
-        return CurveFor(ad->initialStats.agi, ad->finalStats.agi, ad->curveAgi, level, ad->maxLevel, 0);
-    return 10;
+        v = CurveFor(ad->initialStats.agi, ad->finalStats.agi, ad->curveAgi, level, ad->maxLevel, 0);
+    // PAKET 23: agiPlus von Waffe und allen angelegten Ruestungen
+    if (weaponId > 0)
+        for (const auto& w : Database::Get().Weapons())
+            if (w.id == weaponId) { v += w.agiPlus; break; }
+    for (int armorId : armors)
+        for (const auto& a : Database::Get().Armors())
+            if (a.id == armorId) { v += a.agiPlus; break; }
+    return v;
+}
+
+// PAKET 23 (XP auto_state): Ruestungs-Passivzustaende synchronisieren.
+// Hinzufuegen: Zustaende aller aktuell angelegten Ruestungen. Entfernen:
+// Zustaende, die von keiner angelegten Ruestung mehr kommen, aber von
+// IRGENDEINER Ruestungs-Definition stammen (z. B. abgelegter Fluchring).
+// Bekannte Naeherung: ein identischer Zustand aus anderen Quellen (Kampf)
+// wird beim Ablegen mit entfernt — XP trackt die Herkunft nicht oeffentlich
+// und verhaelt sich fuer auto_state genau so (Ablegen hebt ihn auf).
+void GameActor::SyncArmorStates() {
+    std::vector<int> want;
+    for (int armorId : armors)
+        for (const auto& a : Database::Get().Armors())
+            if (a.id == armorId) {
+                for (int sid : a.guardStates)
+                    if (std::find(want.begin(), want.end(), sid) == want.end())
+                        want.push_back(sid);
+                break;
+            }
+    for (int sid : want)
+        if (std::find(states.begin(), states.end(), sid) == states.end())
+            states.push_back(sid);
+    if (!want.empty() || !states.empty()) {
+        states.erase(std::remove_if(states.begin(), states.end(),
+            [&](int sid) {
+                if (std::find(want.begin(), want.end(), sid) != want.end())
+                    return false; // weiterhin angelegt
+                // Nur entfernen, wenn der Zustand ueberhaupt ruestungs-
+                // defininiert ist (sonst kaeme er z. B. aus heilenden Items)
+                for (const auto& a : Database::Get().Armors())
+                    if (std::find(a.guardStates.begin(), a.guardStates.end(), sid) != a.guardStates.end())
+                        return true;
+                return false;
+            }), states.end());
+    }
 }
 
 // ---------------------------------------------------------------------------

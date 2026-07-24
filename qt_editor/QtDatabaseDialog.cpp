@@ -598,12 +598,21 @@ void QtDatabaseDialog::buildClassesTab() {
     auto* learn = makeLine(formHost);
     learn->setToolTip(QL("Fertigkeiten, die die Klasse automatisch ab einem Level lernt.\n"
                          "Format: Level:Fertigkeits-ID, kommagetrennt, z. B. 2:2, 4:3"));
+    // PAKET 23: XP-Ausruestungs-Sets (leer = alles erlaubt)
+    auto* wset = makeLine(formHost);
+    wset->setToolTip(QL("Waffen, die diese Klasse anlegen darf (XP weapon_set).\n"
+                        "IDs kommagetrennt; LEER = alle Waffen erlaubt."));
+    auto* aset = makeLine(formHost);
+    aset->setToolTip(QL("Rüstungen, die diese Klasse anlegen darf (XP armor_set).\n"
+                        "IDs kommagetrennt; LEER = alle Rüstungen erlaubt."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("EXP-Basis"), base);
     form->addRow(QL("EXP-Zuschlag"), extra);
     form->addRow(QL("EXP-Beschleunigung A"), accA);
     form->addRow(QL("EXP-Beschleunigung B"), accB);
     form->addRow(QL("Fertigkeiten ab Level"), learn);
+    form->addRow(QL("Erlaubte Waffen (IDs)"), wset);
+    form->addRow(QL("Erlaubte Rüstungen (IDs)"), aset);
 
     tp->count = [this]() { return (int)mClasses.size(); };
     tp->nameAt = [this](int i) {
@@ -613,7 +622,7 @@ void QtDatabaseDialog::buildClassesTab() {
         mClasses.resize((size_t)n);
         for (size_t i = 0; i < mClasses.size(); ++i) mClasses[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, base, extra, accA, accB, learn](int i) {
+    tp->loadForm = [this, name, base, extra, accA, accB, learn, wset, aset](int i) {
         auto& c = mClasses[(size_t)i];
         name->setText(QString::fromStdString(c.name));
         base->setValue(c.expBase);
@@ -625,8 +634,10 @@ void QtDatabaseDialog::buildClassesTab() {
             toks << QString::number(lrn.level) + QLatin1Char(':') +
                         QString::number(lrn.skillId);
         learn->setText(toks.join(QLatin1String(", ")));
+        wset->setText(JoinIds(c.weaponSet)); // PAKET 23
+        aset->setText(JoinIds(c.armorSet));  // PAKET 23
     };
-    tp->storeForm = [this, tp, name, base, extra, accA, accB, learn](int i) {
+    tp->storeForm = [this, tp, name, base, extra, accA, accB, learn, wset, aset](int i) {
         if ((size_t)i >= mClasses.size()) return;
         auto& c = mClasses[(size_t)i];
         c.name = name->text().toStdString();
@@ -650,6 +661,8 @@ void QtDatabaseDialog::buildClassesTab() {
                   [](const rpg::ClassData::Learning& a, const rpg::ClassData::Learning& b) {
                       return a.level < b.level;
                   });
+        c.weaponSet = ParseIdsCsv(wset->text()); // PAKET 23
+        c.armorSet = ParseIdsCsv(aset->text());  // PAKET 23
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);
@@ -830,6 +843,8 @@ void QtDatabaseDialog::buildWeaponsTab() {
     auto* desc = makeLine(formHost);
     auto* price = makeSpin(0, 999999, 100, formHost);
     auto* atk = makeSpin(0, 999, 10, formHost);
+    auto* defPlus = makeSpin(-999, 999, 0, formHost); // PAKET 23 (XP pdef_plus)
+    auto* agiPlus = makeSpin(-999, 999, 0, formHost); // PAKET 23
     auto* animId = makeSpin(0, 999, 0, formHost);
     // PAKET 22: XP plus_state_set / minus_state_set der Waffe
     auto* plusEdit = makeLine(formHost);
@@ -842,6 +857,8 @@ void QtDatabaseDialog::buildWeaponsTab() {
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
     form->addRow(QL("Angriff"), atk);
+    form->addRow(QL("Abwehr-Bonus (XP pdef_plus)"), defPlus);
+    form->addRow(QL("Geschwindigkeit-Bonus"), agiPlus);
     form->addRow(QL("Animations-ID"), animId);
     form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
     form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
@@ -854,23 +871,29 @@ void QtDatabaseDialog::buildWeaponsTab() {
         mWeapons.resize((size_t)n);
         for (size_t i = 0; i < mWeapons.size(); ++i) mWeapons[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, price, atk, animId, plusEdit, minusEdit](int i) {
+    tp->loadForm = [this, name, desc, price, atk, defPlus, agiPlus, animId,
+                    plusEdit, minusEdit](int i) {
         auto& w = mWeapons[(size_t)i];
         name->setText(QString::fromStdString(w.name));
         desc->setText(QString::fromStdString(w.description));
         price->setValue(w.price);
         atk->setValue(w.atk);
+        defPlus->setValue(w.defPlus); // PAKET 23
+        agiPlus->setValue(w.agiPlus); // PAKET 23
         animId->setValue(w.animationId);
         plusEdit->setText(JoinIds(w.plusStates));   // PAKET 22
         minusEdit->setText(JoinIds(w.minusStates)); // PAKET 22
     };
-    tp->storeForm = [this, tp, name, desc, price, atk, animId, plusEdit, minusEdit](int i) {
+    tp->storeForm = [this, tp, name, desc, price, atk, defPlus, agiPlus, animId,
+                     plusEdit, minusEdit](int i) {
         if ((size_t)i >= mWeapons.size()) return;
         auto& w = mWeapons[(size_t)i];
         w.name = name->text().toStdString();
         w.description = desc->text().toStdString();
         w.price = price->value();
         w.atk = atk->value();
+        w.defPlus = defPlus->value(); // PAKET 23
+        w.agiPlus = agiPlus->value(); // PAKET 23
         w.animationId = animId->value();
         w.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 22
         w.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 22
@@ -893,12 +916,20 @@ void QtDatabaseDialog::buildArmorsTab() {
     auto* mdf = makeSpin(0, 999, 5, formHost);
     auto* type = makeCombo(formHost, {QL("Schild"), QL("Helm"), QL("Körper"),
                                       QL("Accessoire")}, 0);
+    auto* agiPlus = makeSpin(-999, 999, 0, formHost); // PAKET 23
+    // PAKET 23: XP guard_state_set (passive Zustaende, „verfluchte" Items)
+    auto* guardEdit = makeLine(formHost);
+    guardEdit->setToolTip(QL("Zustände, die der Träger dauerhaft hat, solange die Rüstung\n"
+                             "angelegt ist (XP guard_state_set / auto_state, z. B. Fluch).\n"
+                             "IDs kommagetrennt, z. B. 1 (Gift)."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
     form->addRow(QL("Abwehr"), def);
     form->addRow(QL("Magieabwehr"), mdf);
+    form->addRow(QL("Geschwindigkeit-Bonus"), agiPlus);
     form->addRow(QL("Rüstungsart"), type);
+    form->addRow(QL("Passive Zustände (IDs)"), guardEdit);
 
     tp->count = [this]() { return (int)mArmors.size(); };
     tp->nameAt = [this](int i) {
@@ -908,16 +939,18 @@ void QtDatabaseDialog::buildArmorsTab() {
         mArmors.resize((size_t)n);
         for (size_t i = 0; i < mArmors.size(); ++i) mArmors[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, price, def, mdf, type](int i) {
+    tp->loadForm = [this, name, desc, price, def, mdf, type, agiPlus, guardEdit](int i) {
         auto& a = mArmors[(size_t)i];
         name->setText(QString::fromStdString(a.name));
         desc->setText(QString::fromStdString(a.description));
         price->setValue(a.price);
         def->setValue(a.def);
         mdf->setValue(a.mdf);
+        agiPlus->setValue(a.agiPlus); // PAKET 23
         type->setCurrentIndex((int)a.armorType);
+        guardEdit->setText(JoinIds(a.guardStates)); // PAKET 23
     };
-    tp->storeForm = [this, tp, name, desc, price, def, mdf, type](int i) {
+    tp->storeForm = [this, tp, name, desc, price, def, mdf, type, agiPlus, guardEdit](int i) {
         if ((size_t)i >= mArmors.size()) return;
         auto& a = mArmors[(size_t)i];
         a.name = name->text().toStdString();
@@ -925,7 +958,9 @@ void QtDatabaseDialog::buildArmorsTab() {
         a.price = price->value();
         a.def = def->value();
         a.mdf = mdf->value();
+        a.agiPlus = agiPlus->value(); // PAKET 23
         a.armorType = (rpg::ArmorData::Type)type->currentIndex();
+        a.guardStates = ParseIdsCsv(guardEdit->text()); // PAKET 23
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);

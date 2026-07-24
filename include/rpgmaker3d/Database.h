@@ -57,6 +57,11 @@ struct ClassData {
     // Fertigkeiten, die ab einem Level automatisch gelernt werden (XP-Stil)
     struct Learning { int level = 1; int skillId = 1; };
     std::vector<Learning> learnings;
+    // PAKET 23: XP-Ausruestungs-Sets (weapon_setN_id / armor_setN_id,
+    // hier zusammengefasst): erlaubte Waffen-/Ruestungs-IDs dieser Klasse.
+    // LEER = alles erlaubt (wie ein unveraendertes XP-Projekt).
+    std::vector<int> weaponSet;
+    std::vector<int> armorSet;
 };
 
 struct ItemData {
@@ -94,6 +99,10 @@ struct WeaponData {
     // (Resistenz-Rang) bzw. sicher geheilt.
     std::vector<int> plusStates;
     std::vector<int> minusStates;
+    // PAKET 23: XP pdef_plus / weitere Parameter-Boni der Waffe —
+    // wirken auf GameActor::Def()/Agi() solange die Waffe angelegt ist.
+    int defPlus = 0;
+    int agiPlus = 0;
 };
 
 struct ArmorData {
@@ -105,6 +114,12 @@ struct ArmorData {
     int def = 10;
     int mdf = 5;
     enum class Type { Shield, Helmet, Body, Accessory } armorType = Type::Shield;
+    // PAKET 23: Geschwindigkeits-Bonus/Malus solange angelegt (Agi).
+    int agiPlus = 0;
+    // PAKET 23: XP guard_state_set / auto_state — Zustands-IDs, die der
+    // Traeger PASSIV hat, solange die Ruestung angelegt ist (klassisch:
+    // „verfluchte" Items, die z. B. dauerhaft vergiften).
+    std::vector<int> guardStates;
 };
 
 struct SkillData {

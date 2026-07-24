@@ -58,6 +58,8 @@ void Database::CreateDefaults() {
         ClassData mage; mage.id=2; mage.name="Mage";
         // Fire ab 1, Heal ab 4, Auferstehung ab 5 (PAKET 22)
         mage.learnings = {{1, 1}, {4, 2}, {5, 5}};
+        // PAKET 23: XP-Ausruestungs-Set — Magier duerfen nur Staebe (id 3)
+        mage.weaponSet = {3};
         mClasses.push_back(mage);
     }
 
@@ -86,12 +88,22 @@ void Database::CreateDefaults() {
         WeaponData fang; fang.id=2; fang.name="Giftklinge"; fang.atk=6; fang.price=800;
         fang.plusStates={1};
         mWeapons.push_back(fang);
+        // PAKET 23: Magier-Waffe (Demo fuer Klassen-Ausruestungs-Sets:
+        // die Mage-Klasse darf NUR Staebe anlegen)
+        WeaponData staff; staff.id=3; staff.name="Holzstab"; staff.atk=3; staff.price=80;
+        staff.agiPlus=2;
+        mWeapons.push_back(staff);
     }
 
     // Armors
     if (mArmors.empty()) {
         ArmorData shield; shield.id=1; shield.name="Wooden Shield"; shield.def=5; shield.price=100;
         mArmors.push_back(shield);
+        // PAKET 23: Demo fuer XP guard_state_set — „verfluchter" Ring,
+        // der den Traeger dauerhaft vergiftet (solange angelegt).
+        ArmorData ring; ring.id=2; ring.name="Fluchring"; ring.def=1; ring.price=1;
+        ring.armorType=rpg::ArmorData::Type::Accessory; ring.guardStates={1};
+        mArmors.push_back(ring);
     }
 
     // Skills
@@ -367,6 +379,9 @@ rpg::ClassData ParseClassObject(const std::string& obj) {
     if (TryParseFloat(obj, "expAccB", 0, f)) c.expAccB = f;
     if (TryParseString(obj, "learnings", 0, name))
         c.learnings = ParseLearningsCsv(name);
+    // PAKET 23: XP-Ausruestungs-Sets (leer = alles erlaubt)
+    ParseIntArrayInto(obj, "weaponSet", c.weaponSet);
+    ParseIntArrayInto(obj, "armorSet", c.armorSet);
     return c;
 }
 
@@ -463,6 +478,9 @@ rpg::WeaponData ParseWeaponObject(const std::string& obj) {
     if (TryParseInt(obj, "atk", 0, v)) w.atk = v;
     if (TryParseInt(obj, "animationId", 0, v)) w.animationId = v;
     if (TryParseInt(obj, "iconIndex", 0, v)) w.iconIndex = v;
+    // PAKET 23: XP pdef_plus u. a. Parameter-Boni der Waffe
+    if (TryParseInt(obj, "defPlus", 0, v)) w.defPlus = v;
+    if (TryParseInt(obj, "agiPlus", 0, v)) w.agiPlus = v;
     // PAKET 22: XP plus_state_set / minus_state_set (Zustands-IDs)
     ParseIntArrayInto(obj, "plusStates", w.plusStates);
     ParseIntArrayInto(obj, "minusStates", w.minusStates);
@@ -482,6 +500,13 @@ rpg::ArmorData ParseArmorObject(const std::string& obj) {
     if (TryParseInt(obj, "def", 0, v)) a.def = v;
     if (TryParseInt(obj, "mdf", 0, v)) a.mdf = v;
     if (TryParseInt(obj, "iconIndex", 0, v)) a.iconIndex = v;
+    if (TryParseInt(obj, "agiPlus", 0, v)) a.agiPlus = v; // PAKET 23
+    // PAKET 23 (Mitfund): armorType wurde bisher weder gelesen noch
+    // geschrieben — jede geladene Ruestung galt als Schild (Slotfehler).
+    if (TryParseInt(obj, "armorType", 0, v))
+        a.armorType = (rpg::ArmorData::Type)std::clamp(v, 0, 3);
+    // PAKET 23: XP guard_state_set (passive Zustaende am Traeger)
+    ParseIntArrayInto(obj, "guardStates", a.guardStates);
     return a;
 }
 
@@ -1068,8 +1093,10 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"expExtra\":" << c.expExtra
                   << ",\"expAccA\":" << c.expAccA
                   << ",\"expAccB\":" << c.expAccB
-                  << ",\"learnings\":\"" << ls << "\""
-                  << "}";
+                  << ",\"learnings\":\"" << ls << "\"";
+                WriteIntArray(f, "weaponSet", c.weaponSet); // PAKET 23
+                WriteIntArray(f, "armorSet", c.armorSet);   // PAKET 23
+                f << "}";
                 if (i+1<mClasses.size()) f << ",";
                 f << "\n";
             }
@@ -1222,6 +1249,8 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"description\":\"" << Escape(w.description) << "\""
                   << ",\"price\":" << w.price
                   << ",\"atk\":" << w.atk
+                  << ",\"defPlus\":" << w.defPlus // PAKET 23
+                  << ",\"agiPlus\":" << w.agiPlus // PAKET 23
                   << ",\"iconIndex\":" << w.iconIndex
                   << ",\"animationId\":" << w.animationId;
                 WriteIntArray(f, "plusStates", w.plusStates);   // PAKET 22
@@ -1244,8 +1273,11 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"price\":" << a.price
                   << ",\"def\":" << a.def
                   << ",\"mdf\":" << a.mdf
-                  << ",\"iconIndex\":" << a.iconIndex
-                  << "}";
+                  << ",\"agiPlus\":" << a.agiPlus        // PAKET 23
+                  << ",\"armorType\":" << (int)a.armorType // PAKET 23 (war ungespeichert)
+                  << ",\"iconIndex\":" << a.iconIndex;
+                WriteIntArray(f, "guardStates", a.guardStates); // PAKET 23
+                f << "}";
                 if (i+1<mArmors.size()) f << ",";
                 f << "\n";
             }

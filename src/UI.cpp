@@ -951,6 +951,12 @@ void GameUI::OpenEquipSlotMenu(int memberIndex, int slotKind) {
     std::vector<int> cand; // Index -> Gegenstands-ID (0 = abnehmen)
     if (curId > 0) { items.push_back({"(abnehmen)", true}); cand.push_back(0); }
 
+    // PAKET 23: XP-Ausruestungs-Set der Klasse (leer = alles erlaubt) —
+    // unerlaubte Kandidaten bleiben sichtbar, aber deaktiviert.
+    const ClassData* cls = nullptr;
+    if (const auto* ad0 = Database::Get().GetActor(actor.actorId))
+        cls = Database::Get().GetClass(ad0->className);
+
     if (isWeapon) {
         std::vector<std::pair<int,int>> bag(
             party.Weapons().begin(), party.Weapons().end());
@@ -958,9 +964,13 @@ void GameUI::OpenEquipSlotMenu(int memberIndex, int slotKind) {
         for (const auto& kv : bag) {
             const auto* wd = FindWeaponDef(kv.first);
             if (!wd) continue;
+            const bool clsOk = !cls || cls->weaponSet.empty() ||
+                std::find(cls->weaponSet.begin(), cls->weaponSet.end(),
+                          kv.first) != cls->weaponSet.end();
             std::string label = wd->name + "   ATK " + std::to_string(wd->atk);
             if (kv.first == curId) { label += "   [angelegt]"; }
-            items.push_back({label, kv.first != curId});
+            if (!clsOk) label += "   [falsche Klasse]";
+            items.push_back({label, clsOk && kv.first != curId});
             cand.push_back(kv.first);
         }
         if (items.empty()) items.push_back({"(keine Waffen im Inventar)", false});
@@ -971,10 +981,14 @@ void GameUI::OpenEquipSlotMenu(int memberIndex, int slotKind) {
         for (const auto& kv : bag) {
             const auto* ad = FindArmorDef(kv.first);
             if (!ad || (int)ad->armorType != slotKind) continue;
+            const bool clsOk = !cls || cls->armorSet.empty() ||
+                std::find(cls->armorSet.begin(), cls->armorSet.end(),
+                          kv.first) != cls->armorSet.end();
             std::string label = ad->name + "   ABW " + std::to_string(ad->def) +
                                 " / GABW " + std::to_string(ad->mdf);
             if (kv.first == curId) { label += "   [angelegt]"; }
-            items.push_back({label, kv.first != curId});
+            if (!clsOk) label += "   [falsche Klasse]";
+            items.push_back({label, clsOk && kv.first != curId});
             cand.push_back(kv.first);
         }
         if (items.empty())
@@ -1011,6 +1025,8 @@ void GameUI::OpenEquipSlotMenu(int memberIndex, int slotKind) {
                     a.armors.push_back(newId);
                 }
             }
+            // PAKET 23: Ruestungs-Passivzustaende (XP auto_state) nachziehen
+            a.SyncArmorStates();
             EventSystem_PlayAudio(Database::Get().System().equipSe, 3, false);
             OpenEquipSlotMenu(memberIndex, -1);
         });
