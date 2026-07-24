@@ -1404,7 +1404,74 @@ Feuerumhang erhaelt halbierten Feuerschaden; Waffe mit mehreren
 Elementen waehlt pro Gegner das wirksamste; Editor-Raenge ueberleben
 Save/Load (elementRanks in Actors/Enemies.json).
 
+## PAKET 25 — Spielbare Demo & Gameplay-Fundament (komplett) ✅
+
+**Anlass (Nutzer, 2026-07-24):** Gameplay-Test — alles, was dem Spielen im
+Weg stand, wurde sofort eingebaut und verdrahtet.
+
+**Der Blocker:** Das SampleProject hatte **keine Kartendaten** (kein
+`maps/`-Ordner). `Map::Load` scheiterte lautlos → die Default-Map hat
+**0 Layer** → komplett leere Welt: kein Boden sichtbar, keine
+Tile-Kollision, nichts zum Bearbeiten.
+
+### Engine
+- **`Map::CreateFallback(w,h)`** (Map.h/.cpp): prozedurale Standardkarte
+  (2 Layer „Ground“+„Objects“: Gras, Wegekreuz, Teich mit Sandufer,
+  hohes Gras, Mauer-Rand, Felsen-Deko; Objects-Elevation 0.02 gegen
+  Z-Fighting). Palette = Demo-Tileset-Raster, dokumentiert in Map.h.
+- **`Engine::LoadRuntimeMap(mapId)`** (Engine.h/.cpp): lädt
+  `maps/mapN.map`, bei fehlender Datei die Standardkarte (Größe aus den
+  Datenbank-MapInfos, sonst 20×15) + Warn-Log. Angeschlossen an:
+  Player-Start (player_main), Transfer-/Savegame-Kartenwechsel
+  (EventSystem_SetMapChangeHandler — vorher blieb bei fehlender Datei
+  still die alte Karte stehen!), Editor-Szenen-Fallback (LoadScene ohne
+  „map“-Abschnitt) und Editor::LoadMap/LoadSelectedMap.
+- **Event-Kollision:** `EventSystem::IsBlockingAt(pos,radius)` — XP-Regel:
+  aktive Events mit Seite sind solide, außer „Durchlässig“ (through).
+  `GamePlayer::Update` prüft neben Tiles jetzt auch Events (auch beim
+  Diagonal-Slide). Block-Radius 0.38 bleibt unter der Touch-Schwelle
+  (1.1) und Interaktions-Reichweite (1.35) → NPCs blockieren, aber
+  PlayerTouch-/ActionButton-Events feuern weiter korrekt.
+- **Zufallsbegegnung wählt Trupp zufällig** aus der Map-Begegnungsliste
+  (bisher stur der erste Eintrag — Abweichung vom XP-Verhalten).
+- **Tileset-Standard-Passagen** (Database::CreateDefaults): Stein
+  (Spalte 2) + Wasser (Spalte 3) blockieren; hohes Gras (IDs 24/32/40)
+  = Durchwiese (bush → Encounter-Malus greift).
+- **MapInfos-Round-Trip repariert:** `encounterList` wurde nie aus
+  MapInfos.json eingelesen und nie gespeichert (Karte-spezifische
+  Encounter gingen bei jedem Speichern verloren); jetzt Parse + Save,
+  außerdem `encounterStep` im Save ergänzt.
+
+### SampleProject (jetzt sofort spielbar)
+- **`maps/map1.map`** „Dorfrand“ (25×20) + **`maps/map2.map`**
+  „Waldweg“ (19×15), generiert von **`scripts/make_sample_maps.py`**
+  (eingecheckt, jederzeit reproduzierbar).
+- **`maps/Map001_events.json`** (v2-Format): Dorfältester (Dialog +
+  50-Gold-Auswahl, Patrouille), Wegweiser, Truhe (2× Gegengift +
+  1× Potion, SelfSwitch-Leerseite), Heilkristall (RecoverAll, 314),
+  Transfer nach Waldweg (201, PlayerTouch, durchlässig — Ankunftspunkte
+  versetzt, **kein Ping-Pong**), Arena-Trainer (Kampf Trupp 1, 301,
+  Flucht+Niederlage erlaubt).
+- **`maps/Map002_events.json`**: Rücktransfer, Wanderer (Tipps),
+  versteckte Truhe (Phönixfeder id 4 — Wiederbelebung aus PAKET 22
+  direkt testbar).
+- **`database/Tilesets.json`** (Passagen/Bush editierbar),
+  **`database/MapInfos.json`** (Namen „Dorfrand“/„Waldweg“, Encounter
+  1/2 bzw. 2/3), **`assets/textures/tileset_demo.png`** (Projekt jetzt
+  autark lt. eigener README-Struktur).
+
+### Testparcours (manuell, Windows-Build)
+Titel → Neues Spiel → laufen (WASD) → Dorfältester ansprechen (E) →
+Truhen/Kristall → Zufallskämpfe (v. a. im dunkelgrünen Gras) →
+Arena-Trainer (Flucht möglich) → Süden: Transfer → Waldweg → Kämpfe
+(Trupp 2/3 zufällig gemischt) → Truhe (Phönixfeder) → Rückweg →
+Menü: Speichern/Laden (Esc).
+
+`fb39a19`-Basis: PAKETe 1–24 enthalten; HEAD-Wächter geprüft.
+
 ## Arbeitsregeln (für Agenten-Sessions)
+
+
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und
 wurde mit **PAKET 10 vollständig entfernt** — die gesamte Spielanzeige

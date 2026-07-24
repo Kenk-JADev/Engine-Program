@@ -2580,12 +2580,12 @@ void Editor::LoadMap() {
         RPG_LOG_INFO("Map+Scene loaded: " + scenePath);
         return;
     }
-    // Fallback binary map only
+    // Fallback: Kartendatei, bei Bedarf PAKET-25-Standardkarte
     std::string path = mEngine.GetProject().GetMapPath(1);
-    if (mEngine.GetMap().Load(path)) {
+    if (mEngine.LoadRuntimeMap(1)) {
         RPG_LOG_INFO("Map loaded from: " + path);
     } else {
-        RPG_LOG_ERROR("Failed to load map: " + path);
+        RPG_LOG_WARN("Keine Kartendatei - Standardkarte generiert (speicherbar): " + path);
     }
 }
 
@@ -2642,8 +2642,8 @@ void Editor::LoadSelectedMap() {
         }
         mSelectedEntity = -1;
     } else {
-        // Binary map fallback
-        mEngine.GetMap().Load(mEngine.GetProject().GetMapPath(mapInfo.id));
+        // Binary map fallback, bei Bedarf PAKET-25-Standardkarte
+        mEngine.LoadRuntimeMap(mapInfo.id);
     }
 
     RPG_LOG_INFO("Karte geladen: " + mapInfo.name + " (" + std::to_string(mapInfo.width) + "x" + std::to_string(mapInfo.height) + ")");

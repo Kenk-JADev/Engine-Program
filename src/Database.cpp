@@ -182,6 +182,19 @@ void Database::CreateDefaults() {
     // Tilesets
     if (mTilesets.empty()) {
         TilesetData td; td.id=1; td.name="World"; td.tilesetName="tileset_demo.png";
+        // PAKET 25: Standard-Passagen fuer das Demo-Raster (8 Spalten x
+        // 6 Zeilen, ID = zeile*8 + spalte): Stein (Spalte 2) und Wasser
+        // (Spalte 3) blockieren; die unteren drei Gras-Zeilen (Spalte 0)
+        // sind Durchwiese (bush -> "im Gras", hoehere Begegnungsrate).
+        td.flags.assign(48, 0);
+        td.bushFlags.assign(48, 0);
+        for (int row = 0; row < 6; ++row) {
+            td.flags[row * 8 + 2] = 1; // Stein: blockiert
+            td.flags[row * 8 + 3] = 1; // Wasser: blockiert
+        }
+        td.bushFlags[3 * 8 + 0] = 1;   // hohes Gras (Zeilen 3..5)
+        td.bushFlags[4 * 8 + 0] = 1;
+        td.bushFlags[5 * 8 + 0] = 1;
         mTilesets.push_back(td);
     }
 
@@ -230,7 +243,9 @@ void Database::CreateDefaults() {
         map2.bgmAutoPlay = true;
         map2.bgsAutoPlay = true;
         map2.scrollType = 0;
-        map2.encounterStep = 30;
+        map2.encounterStep = 25;
+        map2.encounterList[0] = 2; // troop 2 (Slime + Bat)
+        map2.encounterList[1] = 3; // troop 3 (Bat x2)
         map2.backgroundColor = Color(0, 0, 0, 1);
         map2.fogColor = Color(0.5f, 0.5f, 0.5f, 1.0f);
         mMapInfos.push_back(map2);
@@ -756,6 +771,13 @@ rpg::MapInfo ParseMapInfoObject(const std::string& obj) {
     if (TryParseInt(obj, "tilesetId", 0, v)) m.tilesetId = v;
     if (TryParseInt(obj, "scrollType", 0, v)) m.scrollType = v;
     if (TryParseInt(obj, "encounterStep", 0, v)) m.encounterStep = v;
+    // PAKET 25: Trupp-Liste der Zufallsbegegnungen mit einlesen
+    // (fehlte bisher komplett - MapInfos.json verlor die Encounter-Liste)
+    {
+        std::vector<int> enc;
+        ParseIntArrayInto(obj, "encounterList", enc);
+        for (size_t i = 0; i < enc.size() && i < 8; ++i) m.encounterList[i] = enc[i];
+    }
     bool b = false;
     if (TryParseBool(obj, "bgmAutoPlay", 0, b)) m.bgmAutoPlay = b;
     if (TryParseBool(obj, "bgsAutoPlay", 0, b)) m.bgsAutoPlay = b;
@@ -1415,7 +1437,13 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"width\":" << m.width
                   << ",\"height\":" << m.height
                   << ",\"tilesetId\":" << m.tilesetId
-                  << ",\"bgmName\":\"" << Escape(m.bgmName) << "\""
+                  << ",\"encounterStep\":" << m.encounterStep;
+                // PAKET 25: Encounter-Trupp-Liste persistieren (Round-Trip)
+                {
+                    std::vector<int> enc(std::begin(m.encounterList), std::end(m.encounterList));
+                    WriteIntArray(f, "encounterList", enc);
+                }
+                f << ",\"bgmName\":\"" << Escape(m.bgmName) << "\""
                   << "}";
                 if (i+1<mMapInfos.size()) f << ",";
                 f << "\n";

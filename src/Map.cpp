@@ -46,6 +46,110 @@ void Map::AddLayer(const std::string& name) {
     mDirty = true;
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 25: Prozedurale Standardkarte (spielbarer Fallback)
+// Palette des Demo-Tilesets (assets/textures/tileset_demo.png, 8 Spalten x
+// 6 Zeilen, ID = zeile*8 + spalte):
+//   Spalte 0 = Gruentoene (Zeile 3/4/5 = hohes Gras, bush-Flag)
+//   Spalte 1 = Erde (Weg), 2 = Stein (blockiert), 3 = Wasser (blockiert),
+//   Spalte 4 = Sand (Ufer)
+// ---------------------------------------------------------------------------
+void Map::CreateFallback(int width, int height) {
+    constexpr int kGrass     = 8;   // Spalte 0, Zeile 1
+    constexpr int kTallGrass = 24;  // Spalte 0, Zeile 3 (Durchwiese)
+    constexpr int kDirt      = 9;   // Spalte 1, Zeile 1
+    constexpr int kSand      = 12;  // Spalte 4, Zeile 1
+    constexpr int kStone     = 2;   // Spalte 2 (blockiert)
+    constexpr int kWater     = 11;  // Spalte 3, Zeile 1 (blockiert)
+
+    if (width < 6) width = 6;
+    if (height < 6) height = 6;
+
+    mLayers.clear();
+    mWidth = width;
+    mHeight = height;
+
+    // --- Layer 0: Boden --------------------------------------------------
+    AddLayer("Ground"); // benutzt die gesetzten mWidth/mHeight
+    MapLayer& ground = mLayers.back();
+    std::fill(ground.tiles.begin(), ground.tiles.end(), kGrass);
+
+    auto gset = [&](int x, int z, int id) {
+        if (x >= 0 && x < mWidth && z >= 0 && z < mHeight)
+            ground.tiles[(size_t)z * (size_t)mWidth + (size_t)x] = id;
+    };
+    auto gget = [&](int x, int z) -> int {
+        if (x < 0 || x >= mWidth || z < 0 || z >= mHeight) return -1;
+        return ground.tiles[(size_t)z * (size_t)mWidth + (size_t)x];
+    };
+
+    // Feldweg-Kreuz (horizontal quer durch, vertikal nach Sueden)
+    const int midX = mWidth / 2;
+    const int midZ = mHeight / 2;
+    for (int x = 1; x < mWidth - 1; ++x) gset(x, midZ, kDirt);
+    for (int z = midZ; z < mHeight - 1; ++z) gset(midX, z, kDirt);
+
+    // Teich (links oben) mit Sand-Ufer - Ellipse, Wasser blockiert
+    {
+        const int cx = std::max(3, mWidth / 5);
+        const int cz = std::max(3, mHeight / 4);
+        const int rx = std::max(2, mWidth / 9);
+        const int rz = std::max(2, mHeight / 9);
+        for (int z = cz - rz - 1; z <= cz + rz + 1; ++z) {
+            for (int x = cx - rx - 1; x <= cx + rx + 1; ++x) {
+                const float dx = static_cast<float>(x - cx) / static_cast<float>(rx);
+                const float dz = static_cast<float>(z - cz) / static_cast<float>(rz);
+                const float d = dx * dx + dz * dz;
+                if (d <= 1.0f) gset(x, z, kWater);
+                else if (d <= 1.45f) gset(x, z, kSand);
+            }
+        }
+    }
+
+    // Hohes Gras (Durchwiese-Patches; Begegnungsrate verdoppelt sich dort)
+    for (int z = 0; z < mHeight; ++z) {
+        for (int x = 0; x < mWidth; ++x) {
+            const bool patch1 = (x >= mWidth * 7 / 10 && x < mWidth * 7 / 10 + 4 &&
+                                 z >= 2 && z < 6);
+            const bool patch2 = (x >= 2 && x < 6 &&
+                                 z >= mHeight * 7 / 10 && z < mHeight * 7 / 10 + 3);
+            if ((patch1 || patch2) && gget(x, z) == kGrass)
+                gset(x, z, kTallGrass);
+        }
+    }
+
+    // --- Layer 1: Hindernisse (knapp ueber dem Boden, kein Z-Fighting) ---
+    AddLayer("Objects");
+    MapLayer& objects = mLayers.back();
+    objects.elevation = 0.02f;
+
+    auto oset = [&](int x, int z, int id) {
+        if (x >= 0 && x < mWidth && z >= 0 && z < mHeight)
+            objects.tiles[(size_t)z * (size_t)mWidth + (size_t)x] = id;
+    };
+
+    // Mauer-Rand (blockiert - zusaetzlich zur Karten-Kanten-Klemme)
+    for (int x = 0; x < mWidth; ++x) { oset(x, 0, kStone); oset(x, mHeight - 1, kStone); }
+    for (int z = 1; z < mHeight - 1; ++z) { oset(0, z, kStone); oset(mWidth - 1, z, kStone); }
+
+    // Felsen-Deko (deterministisch, nur auf freien Gras-Stellen)
+    const int rockPos[5][2] = {
+        { mWidth / 3,     mHeight * 2 / 3     },
+        { mWidth / 3 + 1, mHeight * 2 / 3 + 1 },
+        { mWidth * 3 / 5, 3                   },
+        { mWidth - 5,     mHeight - 4         },
+        { 3,              mHeight / 2         }
+    };
+    for (const auto& rp : rockPos) {
+        const int x = rp[0], z = rp[1];
+        if (x <= 0 || x >= mWidth - 1 || z <= 0 || z >= mHeight - 1) continue;
+        if (gget(x, z) != kGrass) continue; // Weg/Teich/hohes Gras freilassen
+        oset(x, z, kStone);
+    }
+
+    mDirty = true;
+}
+
 void Map::SetTile(int layer, int x, int z, int tileId) {
     if (layer < 0 || layer >= static_cast<int>(mLayers.size())) return;
     if (x < 0 || x >= mWidth || z < 0 || z >= mHeight) return;

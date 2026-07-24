@@ -513,6 +513,12 @@ public:
     /// Player pressed interact (E / Enter) near an event
     void TryInteract(const Vec3& playerPos, float radius = 1.35f);
 
+    /// PAKET 25: Steht an dieser Weltposition ein solides Event?
+    /// XP-Regel: Jedes aktive Event mit aktueller Seite blockiert die
+    /// Bewegung, ausser die Seite ist "Durchlaessig" (through).
+    /// Geloeschte/deaktivierte Events blockieren nicht.
+    bool IsBlockingAt(const Vec3& worldPos, float radius = 0.35f);
+
     void StartEvent(int eventId);
     bool IsEventRunning(int eventId) const;
     /// Startet die Befehlsliste eines Gemeinsamen Ereignisses (per ID) als

@@ -142,8 +142,9 @@ int main(int argc, char* argv[]) {
             if (!engine.LoadScene(projectPath + "/scene.json")) {
                 RPG_LOG_WARN("Keine scene.json im Projekt - leere Szene");
             }
-            engine.GetMap().Load(
-                engine.GetProject().GetMapPath(rpg::Database::Get().System().startMapId));
+            // PAKET 25: Startkarte laden, fehlende Datei -> spielbare
+            // Standardkarte (statt leerer Welt ohne Boden/Kollision)
+            engine.LoadRuntimeMap(rpg::Database::Get().System().startMapId);
         } else {
             std::cerr << "Projekt konnte nicht geladen werden: " << projectPath << std::endl;
             rpg::Platform::ShowMessageBox("Projektfehler",

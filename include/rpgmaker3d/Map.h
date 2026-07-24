@@ -26,6 +26,15 @@ public:
     ~Map();
 
     void Resize(int width, int height);
+
+    // PAKET 25: Prozedurale Standardkarte (spielbarer Fallback).
+    // Fehlt die .map-Datei einer Karte, erzeugt die Engine damit eine
+    // fertige Gras-Karte (2 Layer: "Ground" + "Objects", Mauer-Rand,
+    // Feldweg, Teich, Deko) statt einer leeren 0-Layer-Welt.
+    // Tile-IDs folgen dem Demo-Tileset-Raster (8 Spalten, 6 Zeilen,
+    // ID = zeile*8 + spalte): Spalte 0 = Gruentoene, 1 = Erde,
+    // 2 = Stein (blockiert), 3 = Wasser (blockiert), 4 = Sand.
+    void CreateFallback(int width, int height);
     void AddLayer(const std::string& name);
     void SetTile(int layer, int x, int z, int tileId);
     int GetTile(int layer, int x, int z) const;

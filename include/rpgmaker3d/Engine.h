@@ -118,6 +118,12 @@ public:
     void SaveScene(const std::string& path) const;
     bool LoadScene(const std::string& path);
 
+    // PAKET 25: Runtime-Karte laden mit spielbarem Fallback.
+    // Versucht maps/mapN.map zu laden; fehlt die Datei, wird statt einer
+    // leeren 0-Layer-Welt eine prozedurale Standardkarte (Map::CreateFallback,
+    // Groesse aus den Datenbank-MapInfos) erzeugt. Rueckgabe: true = Datei.
+    bool LoadRuntimeMap(int mapId);
+
     void SetActiveCamera(EntityID cameraEntity) {
         mActiveCameraEntity = cameraEntity;
     }

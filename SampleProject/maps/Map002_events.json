@@ -1,0 +1,66 @@
+{
+  "formatVersion": 2,
+  "events": [
+    {
+      "id": 1,
+      "name": "Weg zum Dorf",
+      "x": 9, "z": 13,
+      "worldPos": [0, 0, 6],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 2,
+          "through": true,
+          "list": [
+            {"code": 201, "param1": 0, "param2": 7, "param3": 1}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Wanderer",
+      "x": 11, "z": 6,
+      "worldPos": [2, 0, -1],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "list": [
+            {"code": 101, "text": "Dieser Waldweg ist unsicher. Im hohen Gras (dunkelgruen) warten doppelt so viele Gegner auf dich!"},
+            {"code": 101, "text": "Gift? Gegengift hilft. Und falls jemand faellt: Eine Phoenixeder holt ihn zurueck. Da lag wohl mal eine herum ..."}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Versteckte Truhe",
+      "x": 15, "z": 5,
+      "worldPos": [6, 0, -2.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "list": [
+            {"code": 101, "text": "Zwischen den Wurzeln glaenzt etwas ..."},
+            {"code": 126, "param1": 4, "param2": 1},
+            {"code": 101, "text": "Gefunden: 1x Phoenixeder! (Belebt ein gefallenes Gruppenmitglied wieder.)"},
+            {"code": 123, "text": "A", "param3": 1}
+          ]
+        },
+        {
+          "id": 1,
+          "trigger": 1,
+          "condition": {"selfSwitchValid": true, "selfSwitchCh": "A"},
+          "list": [
+            {"code": 101, "text": "Hier ist nichts mehr."}
+          ]
+        }
+      ]
+    }
+  ]
+}

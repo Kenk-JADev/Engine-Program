@@ -1633,6 +1633,28 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
     if (bestId >= 0) StartEvent(bestId);
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 25: Event-Kollision (Spieler laeuft nicht mehr durch NPCs u. a.)
+// XP-Regel: aktive Events mit aktueller Seite sind solide, ausser die Seite
+// ist "Durchlaessig" (through). Der Block-Radius (0.38) bleibt bewusst
+// unter der Touch-Schwelle (1.1) und Interaktions-Reichweite (1.35), damit
+// PlayerTouch-/ActionButton-Events unveraendert erreichbar bleiben.
+// ---------------------------------------------------------------------------
+bool EventSystem::IsBlockingAt(const Vec3& worldPos, float radius) {
+    constexpr float kEventBody = 0.38f; // halbe Event-Hitbox (Welt-Einheiten)
+    for (auto& ev : mEvents) {
+        if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
+        RefreshEventPage(ev);
+        const EventPage* page = ev.GetCurrentPage();
+        if (!page || page->through) continue;
+        Vec3 ep = ev.worldPos;
+        if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+        const float dist = glm::length(Vec3(worldPos.x - ep.x, 0.0f, worldPos.z - ep.z));
+        if (dist < radius + kEventBody) return true;
+    }
+    return false;
+}
+
 bool EventSystem::StartCommonEventById(int commonEventId, int runtimeEventId, bool blocking) {
     const CommonEvent* ce = nullptr;
     for (const auto& e : mCommonEvents)

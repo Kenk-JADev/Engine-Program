@@ -180,10 +180,9 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     // alte Karte sichtbar und nur die interne ID wechselte.
     EventSystem_SetMapChangeHandler([this](int mapId) {
         if (mapId <= 0) return;
-        if (mMap && mProject) {
-            const std::string p = mProject->GetMapPath(mapId);
-            if (std::filesystem::exists(p)) mMap->Load(p);
-        }
+        // PAKET 25: fehlende Kartendatei -> Standardkarte (statt alte
+        // Karte stehen zu lassen, waehrend ID + Events schon wechseln)
+        LoadRuntimeMap(mapId);
         // Setup (ID + Karten-BGM/-BGS) nur wenn die ID wirklich neu ist;
         // Game::Load hat sie bereits gesetzt (vermeidet doppelten BGM-Start).
         if (Game::Get().Map().GetMapId() != mapId)
@@ -2232,6 +2231,28 @@ void Engine::SaveScene(const std::string& path) const {
     RPG_LOG_INFO("Scene saved to: " + path);
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 25: Runtime-Karte laden, fehlende Datei -> spielbare Standardkarte
+// (statt leerer 0-Layer-Welt, in der weder Boden noch Kollision existiert)
+// ---------------------------------------------------------------------------
+bool Engine::LoadRuntimeMap(int mapId) {
+    if (!mMap) return false;
+    if (mProject) {
+        const std::string p = mProject->GetMapPath(mapId);
+        if (std::filesystem::exists(p) && mMap->Load(p)) return true;
+    }
+    // Groesse aus den Datenbank-MapInfos (Karteneigenschaften), sonst 20x15
+    int w = 20, h = 15;
+    for (const auto& mi : Database::Get().MapInfos()) {
+        if (mi.id == mapId) { w = mi.width; h = mi.height; break; }
+    }
+    mMap->CreateFallback(w, h);
+    RPG_LOG_WARN("Karte " + std::to_string(mapId) +
+                 " hat keine maps/map-Datei - Standardkarte generiert (" +
+                 std::to_string(w) + "x" + std::to_string(h) + ")");
+    return false;
+}
+
 bool Engine::LoadScene(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -2352,7 +2373,9 @@ bool Engine::LoadScene(const std::string& path) {
             if (mMap->GetLayers().empty()) mMap->AddLayer("Ground");
         }
     } else if (mProject) {
-        mMap->Load(mProject->GetMapPath(1));
+        // Kein "map"-Abschnitt in der scene.json: Kartendatei laden,
+        // bei Bedarf PAKET-25-Standardkarte (nie wieder leere Welt).
+        LoadRuntimeMap(Database::Get().System().startMapId);
     }
 
     // Lighting

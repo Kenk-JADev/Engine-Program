@@ -370,8 +370,15 @@ void GamePlayer::Update(float dt, Input& input) {
     Vec3 current = mPosition;
     Vec3 desired = current + move;
 
+    // PAKET 25: Zusaetzlich zur Tile-Kollision blockieren solide Events
+    // (NPCs, Truhen - XP-Regel; "Durchlaessig"-Seiten ausgenommen).
+    auto walkable = [&](const Vec3& p, float r, int dir) {
+        return gameMap.IsPassableWithRadius(p, r, dir) &&
+               !EventSystem::Get().IsBlockingAt(p, r);
+    };
+
     // Try full move first
-    if (gameMap.IsPassableWithRadius(desired, 0.35f, dirBit)) {
+    if (walkable(desired, 0.35f, dirBit)) {
         Move(move);
         return;
     }
@@ -379,11 +386,11 @@ void GamePlayer::Update(float dt, Input& input) {
     // Slide: try X only
     Vec3 testX = Vec3(current.x + move.x, current.y, current.z);
     int dirX = (move.x > 0.0f) ? 4 : 2;
-    bool xPassable = gameMap.IsPassableWithRadius(testX, 0.35f, dirX);
+    bool xPassable = walkable(testX, 0.35f, dirX);
     // Try Z only
     Vec3 testZ = Vec3(current.x, current.y, current.z + move.z);
     int dirZ = (move.z > 0.0f) ? 1 : 8;
-    bool zPassable = gameMap.IsPassableWithRadius(testZ, 0.35f, dirZ);
+    bool zPassable = walkable(testZ, 0.35f, dirZ);
 
     if (xPassable && !zPassable) {
         Move(Vec3(move.x, 0, 0));
@@ -1171,9 +1178,15 @@ void Game::Update(float dt) {
                     int mapId = mMap.GetMapId();
                     for (const auto& mi : Database::Get().MapInfos()) {
                         if (mi.id == mapId) {
+                            // PAKET 25: Zufaellige Trupp-Wahl aus der Liste
+                            // (XP-Verhalten; bisher stur der erste Eintrag)
+                            int candidates[8];
+                            int n = 0;
                             for (int k = 0; k < 8; ++k) {
-                                if (mi.encounterList[k] > 0) { troopId = mi.encounterList[k]; break; }
+                                if (mi.encounterList[k] > 0)
+                                    candidates[n++] = mi.encounterList[k];
                             }
+                            if (n > 0) troopId = candidates[rand() % n];
                             break;
                         }
                     }
