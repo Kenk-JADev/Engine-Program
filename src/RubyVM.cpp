@@ -2948,6 +2948,93 @@ mrb_value rb_rui_windowskin_get(mrb_state* mrb, mrb_value) {
     return mrb_str_new(mrb, s.data(), (mrb_int)s.size());
 }
 
+// PAKET 38: Theme aus Skripten lesen/schreiben. Farben laufen — skript-
+// freundlich — in 0..255 (wird intern auf 0..1 normiert). Unbekannte
+// Namen geben nil zurueck (kein Raise, wie die anderen Rui-Bindings).
+static rui::Color4* RuiThemeColorByName(rui::Theme& th, const char* name) {
+    if (!name) return nullptr;
+    const std::string n = name;
+    if (n == "face")          return &th.faceColor;
+    if (n == "face_shadow")   return &th.faceShadow;
+    if (n == "border")        return &th.border;
+    if (n == "text")          return &th.text;
+    if (n == "text_disabled") return &th.textDisabled;
+    if (n == "accent")        return &th.accent;
+    if (n == "cursor_bg")     return &th.cursorBg;
+    if (n == "gauge_hp")      return &th.gaugeHp;
+    if (n == "gauge_mp")      return &th.gaugeMp;
+    return nullptr;
+}
+static float* RuiThemeMetricByName(rui::Theme& th, const char* name) {
+    if (!name) return nullptr;
+    const std::string n = name;
+    if (n == "padding")      return &th.padding;
+    if (n == "border_width") return &th.borderWidth;
+    if (n == "rounding")     return &th.rounding;
+    if (n == "shadow")       return &th.shadow;
+    if (n == "row_height")   return &th.rowHeight;
+    if (n == "blink_hz")     return &th.blinkHz;
+    return nullptr;
+}
+
+// Rui.theme_color("accent") -> [r,g,b,a] (0..255, Floats)
+mrb_value rb_rui_theme_color_get(mrb_state* mrb, mrb_value) {
+    char* name = nullptr;
+    mrb_get_args(mrb, "z", &name);
+    rui::Theme th = rui::Manager::Get().GetTheme();
+    rui::Color4* c = RuiThemeColorByName(th, name);
+    if (!c) return mrb_nil_value();
+    auto to255 = [](float v) {
+        return (mrb_float)(std::clamp(v, 0.0f, 1.0f) * 255.0f);
+    };
+    mrb_value arr = mrb_ary_new_capa(mrb, 4);
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, to255(c->r)));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, to255(c->g)));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, to255(c->b)));
+    mrb_ary_push(mrb, arr, mrb_float_value(mrb, to255(c->a)));
+    return arr;
+}
+
+// Rui.set_theme_color("cursor_bg", r, g, b[, a]) — 0..255; greift sofort,
+// weil Widgets das Theme pro Frame lesen.
+mrb_value rb_rui_theme_color_set(mrb_state* mrb, mrb_value) {
+    char* name = nullptr;
+    mrb_float r = 0, g = 0, b = 0, a = 255;
+    mrb_get_args(mrb, "zfff|f", &name, &r, &g, &b, &a);
+    rui::Theme th = rui::Manager::Get().GetTheme();
+    rui::Color4* c = RuiThemeColorByName(th, name);
+    if (!c) return mrb_nil_value();
+    auto to01 = [](mrb_float v) {
+        return std::clamp((float)v, 0.0f, 255.0f) / 255.0f;
+    };
+    *c = rui::Color4(to01(r), to01(g), to01(b), to01(a));
+    rui::Manager::Get().SetTheme(th);
+    return mrb_nil_value();
+}
+
+// Rui.theme_metric("row_height") -> Float
+mrb_value rb_rui_theme_metric_get(mrb_state* mrb, mrb_value) {
+    char* name = nullptr;
+    mrb_get_args(mrb, "z", &name);
+    rui::Theme th = rui::Manager::Get().GetTheme();
+    float* m = RuiThemeMetricByName(th, name);
+    if (!m) return mrb_nil_value();
+    return mrb_float_value(mrb, (mrb_float)*m);
+}
+
+// Rui.set_theme_metric("row_height", 24.0)
+mrb_value rb_rui_theme_metric_set(mrb_state* mrb, mrb_value) {
+    char* name = nullptr;
+    mrb_float v = 0;
+    mrb_get_args(mrb, "zf", &name, &v);
+    rui::Theme th = rui::Manager::Get().GetTheme();
+    float* m = RuiThemeMetricByName(th, name);
+    if (!m) return mrb_nil_value();
+    *m = (float)v;
+    rui::Manager::Get().SetTheme(th);
+    return mrb_nil_value();
+}
+
 // ---------- Rui::Window-Methoden ----------
 mrb_value rb_rui_win_id(mrb_state* mrb, mrb_value self) {
     const std::string s = RuiIvarStr(mrb, self, "@__wid");
@@ -3272,6 +3359,11 @@ void RubyVM::BindRui() {
     mrb_define_module_function(mMrb, mod, "has_focus?", rb_rui_has_focus, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, mod, "windowskin=", rb_rui_windowskin_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, mod, "windowskin", rb_rui_windowskin_get, MRB_ARGS_NONE());
+    // PAKET 38: Theme aus Skripten (Farben 0..255, Metriken Float px)
+    mrb_define_module_function(mMrb, mod, "theme_color", rb_rui_theme_color_get, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, mod, "set_theme_color", rb_rui_theme_color_set, MRB_ARGS_REQ(4) | MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, mod, "theme_metric", rb_rui_theme_metric_get, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, mod, "set_theme_metric", rb_rui_theme_metric_set, MRB_ARGS_REQ(2));
 
     // Rui::Window (Instanz-Methoden; Fenster-Handles, XP-Ergonomie)
     auto W = g_rui.win;

@@ -94,6 +94,13 @@ PAKET 33: Windowskin-PNG (Nine-Patch, XP-96x96-Rahmenflaeche) im Skin-Slot
 von `Theme`; Auto-Suche `Graphics/System/windowskin.*`, Script-Override
 via `Rui.windowskin = "name"`. Flaechen-/Flat-Skin bleibt Fallback.
 
+PAKET 38 (Theme-Quellen-Fix): `Theme::Get()` delegiert jetzt auf den
+Manager (einzige Instanz). Vorher lasen die Widgets eine eigene Statik,
+waehrend Skin-Lader/SetTheme `Manager::mTheme` schrieben — geladene Skins
+erreichten die Fenster nie. Ausserdem: Ruby-Zugriff `Rui.theme_color` /
+`Rui.set_theme_color` / `Rui.theme_metric` / `Rui.set_theme_metric`
+(Farben 0..255, Metriken in px; Details: `docs/SCRIPT-RUI.md`).
+
 Widget-Sync-Konvention: Der Spielzustand bleibt in den GameUI-Klassen;
 die Draw-Funktion baut den Widget-Baum pro Frame neu auf (Container wie
 `rui.msgbox` bleiben retained, inkl. Openness/Z-Ordnung).

@@ -18,6 +18,21 @@ in `terminate` auf, siehe `SampleProject/scripts/17_Rui_Demo.rb`).
 | `Rui.set_focus_list(win_id, list_id)` | Liste bekommt Tastatur-Fokus (Pfeil hoch/runter waehlen, Enter/E bestatigen) |
 | `Rui.clear_focus` | Fokus aufloesen |
 | `Rui.has_focus?` | true solange fokussiert (die Engine sperrt dann Interagieren/Menues) |
+| `Rui.windowskin = "name"` | Windowskin aus `Graphics/System/` (oder Flat mit `""`/`nil`) (PAKET 33) |
+| `Rui.windowskin` | aktueller Skin-Quellpfad |
+| `Rui.theme_color("accent")` | Farbe lesen → `[r, g, b, a]` (0..255) (PAKET 38) |
+| `Rui.set_theme_color("text", r, g, b[, a])` | Farbe setzen (0..255) — wirkt ab dem naechsten Frame (PAKET 38) |
+| `Rui.theme_metric("row_height")` | Metrik lesen (Float, px) (PAKET 38) |
+| `Rui.set_theme_metric("padding", 12.0)` | Metrik setzen — wirkt ab dem naechsten Frame (PAKET 38) |
+
+### Theme-Namen (PAKET 38)
+
+Farben: `face`, `face_shadow`, `border`, `text`, `text_disabled`,
+`accent`, `cursor_bg`, `gauge_hp`, `gauge_mp`.
+Metriken: `padding`, `border_width`, `rounding`, `shadow`, `row_height`,
+`blink_hz`. Unbekannte Namen geben `nil` zurueck (kein Raise).
+Ein Skript kann so eigene Themes bauen, z. B. ein helleres Arena-Theme
+fuer Boss-kaempfe und blasse Nacht-Farben bei Aussenkarten.
 
 ## `Rui::Window`
 

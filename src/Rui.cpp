@@ -25,8 +25,11 @@ static float gTime = 0.0f;
 float GetTime() { return gTime; }
 
 const Theme& Theme::Get() {
-    static Theme s;
-    return s;
+    // PAKET 38 (Fix): EINZIGE Theme-Quelle ist der Manager. Vorher las
+    // Theme::Get() eine eigene statische Instanz, waehrend Skin-Lader und
+    // SetTheme Manager::mTheme schrieben — die geladene Windowskin erreichte
+    // die Widgets dadurch NIE (Panel::Draw las die skinlose Statik).
+    return Manager::Get().GetTheme();
 }
 
 // ---------------------------------------------------------------------------
