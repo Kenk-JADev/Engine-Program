@@ -44,6 +44,47 @@ namespace qt_editor {
 
 namespace {
 
+// ---- PAKET 17: Listen-Helfer fuer Zustands-IDs / Resistenz-Raenge --------
+QString JoinIds(const std::vector<int>& v) {
+    QStringList l;
+    for (int x : v) l << QString::number(x);
+    return l.join(QL(", "));
+}
+std::vector<int> ParseIdsCsv(const QString& s) {
+    std::vector<int> out;
+    const QStringList parts = s.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& t : parts) {
+        bool ok = false;
+        const int n = t.trimmed().toInt(&ok);
+        if (ok && n > 0) out.push_back(n);
+    }
+    return out;
+}
+// stateRanks (0..5 = A..F, Index = Zustands-ID-1) <-> "1=A,3=F"
+QString RanksToText(const std::vector<int>& ranks) {
+    QStringList l;
+    for (size_t i = 0; i < ranks.size(); ++i)
+        l << QL("%1=%2").arg(i + 1).arg(QLatin1Char((char)('A' + std::clamp(ranks[i], 0, 5))));
+    return l.join(QL(", "));
+}
+std::vector<int> ParseRanksText(const QString& s) {
+    std::vector<int> out;
+    const QStringList parts = s.split(QLatin1Char(','), Qt::SkipEmptyParts);
+    for (const QString& t : parts) {
+        const auto eq = t.indexOf(QLatin1Char('='));
+        if (eq <= 0) continue;
+        bool ok = false;
+        const int id = t.left(eq).trimmed().toInt(&ok);
+        if (!ok || id <= 0) continue;
+        const QChar c = t.mid(eq + 1).trimmed().toUpper().isEmpty()
+                        ? QLatin1Char('C') : t.mid(eq + 1).trimmed().toUpper().at(0);
+        if (c < QLatin1Char('A') || c > QLatin1Char('F')) continue;
+        if ((int)out.size() < id) out.resize((size_t)id, 2); // fehlende = C
+        out[(size_t)(id - 1)] = c.unicode() - QL("A").at(0).unicode();
+    }
+    return out;
+}
+
 // XP-Animations-Canvas (Paket 5): halbe Aufloesung von 640x480,
 // zeigt die Zellen des aktiven Frames, Klick legt Zelle, Rechtsklick loescht.
 class QtAnimFrameCanvas : public QWidget {
@@ -397,6 +438,11 @@ void QtDatabaseDialog::buildActorsTab() {
     auto* cvAtk = makeCombo(formHost, kCurves, 2);
     auto* cvDef = makeCombo(formHost, kCurves, 2);
     auto* cvAgi = makeCombo(formHost, kCurves, 2);
+    // PAKET 17: XP state_ranks — Zustands-Resistenz "ID=Rang(A..F)"
+    auto* rankEdit = makeLine(formHost);
+    rankEdit->setToolTip(QL("Zustands-Resistenz als ID=Rang, kommagetrennt (A..F).\n"
+                            "A = 100 % Treffer, F = 0 % (immun). Fehlende Zustände = C (60 %).\n"
+                            "Beispiel: 1=C, 2=A, 4=F"));
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Klasse"), klass);
@@ -424,6 +470,7 @@ void QtDatabaseDialog::buildActorsTab() {
     form->addRow(QL("Kurve Angriff"), cvAtk);
     form->addRow(QL("Kurve Abwehr"), cvDef);
     form->addRow(QL("Kurve Agilität"), cvAgi);
+    form->addRow(QL("Zustands-Ränge (ID=Grad)"), rankEdit); // PAKET 17
 
     tp->count = [this]() { return (int)mActors.size(); };
     tp->nameAt = [this](int i) {
@@ -434,7 +481,7 @@ void QtDatabaseDialog::buildActorsTab() {
         for (size_t i = 0; i < mActors.size(); ++i) mActors[i].id = (int)i + 1;
     };
     tp->loadForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                    battlerName, equipsEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                    battlerName, equipsEdit, rankEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
                     fmhp, fmmp, fatk, fdef, fagi,
                     cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         auto& a = mActors[(size_t)i];
@@ -452,6 +499,7 @@ void QtDatabaseDialog::buildActorsTab() {
         QStringList eqs;
         for (int e : a.equips) eqs << QString::number(e);
         equipsEdit->setText(eqs.join(QLatin1String(", ")));
+        rankEdit->setText(RanksToText(a.stateRanks)); // PAKET 17
         mhp->setValue(a.initialStats.mhp);
         mmp->setValue(a.initialStats.mmp);
         atk->setValue(a.initialStats.atk);
@@ -473,11 +521,12 @@ void QtDatabaseDialog::buildActorsTab() {
         cvAgi->setCurrentIndex(curveIdx(a.curveAgi));
     };
     tp->storeForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                     battlerName, equipsEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                     battlerName, equipsEdit, rankEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
                      fmhp, fmmp, fatk, fdef, fagi,
                      cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         if ((size_t)i >= mActors.size()) return;
         auto& a = mActors[(size_t)i];
+        a.stateRanks = ParseRanksText(rankEdit->text()); // PAKET 17
         a.name = name->text().toStdString();
         a.className = klass->currentText().toStdString();
         a.initialLevel = initLv->value();
@@ -607,6 +656,13 @@ void QtDatabaseDialog::buildSkillsTab() {
     auto* power = makeSpin(0, 9999, 100, formHost);
     auto* anim = makeLine(formHost);
     auto* animId = makeSpin(0, 999, 0, formHost); // PAKET 12: XP animation_id
+    // PAKET 17: XP plus_state_set / minus_state_set (Zustands-IDs, kommagetrennt)
+    auto* plusEdit = makeLine(formHost);
+    plusEdit->setToolTip(QL("Zustände, die der Skill beim Treffer verhängt (XP plus_state_set).\n"
+                            "IDs kommagetrennt, z. B. 1, 3. Trefferchance nach Resistenz-Rang des Ziels."));
+    auto* minusEdit = makeLine(formHost);
+    minusEdit->setToolTip(QL("Zustände, die der Skill beim Treffer sicher heilt (XP minus_state_set).\n"
+                             "IDs kommagetrennt, z. B. 1, 2."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("MP-Kosten"), cost);
@@ -614,6 +670,8 @@ void QtDatabaseDialog::buildSkillsTab() {
     form->addRow(QL("Stärke"), power);
     form->addRow(QL("Animations-ID"), animId);
     form->addRow(QL("Legacy-Animationsname"), anim);
+    form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
+    form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
 
     tp->count = [this]() { return (int)mSkills.size(); };
     tp->nameAt = [this](int i) {
@@ -623,7 +681,8 @@ void QtDatabaseDialog::buildSkillsTab() {
         mSkills.resize((size_t)n);
         for (size_t i = 0; i < mSkills.size(); ++i) mSkills[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, cost, scope, power, anim, animId](int i) {
+    tp->loadForm = [this, name, desc, cost, scope, power, anim, animId,
+                    plusEdit, minusEdit](int i) {
         auto& s = mSkills[(size_t)i];
         name->setText(QString::fromStdString(s.name));
         desc->setText(QString::fromStdString(s.description));
@@ -632,8 +691,11 @@ void QtDatabaseDialog::buildSkillsTab() {
         power->setValue(s.power);
         anim->setText(QString::fromStdString(s.animation));
         animId->setValue(s.animationId);
+        plusEdit->setText(JoinIds(s.plusStates));   // PAKET 17
+        minusEdit->setText(JoinIds(s.minusStates)); // PAKET 17
     };
-    tp->storeForm = [this, tp, name, desc, cost, scope, power, anim, animId](int i) {
+    tp->storeForm = [this, tp, name, desc, cost, scope, power, anim, animId,
+                     plusEdit, minusEdit](int i) {
         if ((size_t)i >= mSkills.size()) return;
         auto& s = mSkills[(size_t)i];
         s.name = name->text().toStdString();
@@ -643,6 +705,8 @@ void QtDatabaseDialog::buildSkillsTab() {
         s.power = power->value();
         s.animation = anim->text().toStdString();
         s.animationId = animId->value();
+        s.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 17
+        s.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 17
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);
@@ -838,6 +902,11 @@ void QtDatabaseDialog::buildEnemiesTab() {
     auto* gold = makeSpin(0, 999999, 5, formHost);
     auto* drops = makeLine(formHost);
     drops->setPlaceholderText(QL("Gegenstands-IDs, Komma-getrennt (z.B. 1,2)"));
+    // PAKET 17: XP state_ranks — Zustands-Resistenz "ID=Rang(A..F)"
+    auto* rankEdit = makeLine(formHost);
+    rankEdit->setToolTip(QL("Zustands-Resistenz als ID=Rang, kommagetrennt (A..F).\n"
+                            "A = 100 % Treffer, F = 0 % (immun). Fehlende Zustände = C (60 %).\n"
+                            "Beispiel: 1=C, 2=A, 4=F"));
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Battler-Grafik"), battler);
@@ -853,6 +922,7 @@ void QtDatabaseDialog::buildEnemiesTab() {
     form->addRow(QL("EXP"), exp);
     form->addRow(QL("Gold"), gold);
     form->addRow(QL("Beute"), drops);
+    form->addRow(QL("Zustands-Ränge (ID=Grad)"), rankEdit); // PAKET 17
 
     tp->count = [this]() { return (int)mEnemies.size(); };
     tp->nameAt = [this](int i) {
@@ -863,10 +933,11 @@ void QtDatabaseDialog::buildEnemiesTab() {
         for (size_t i = 0; i < mEnemies.size(); ++i) mEnemies[i].id = (int)i + 1;
     };
     tp->loadForm = [this, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi, luk,
-                    exp, gold, drops](int i) {
+                    exp, gold, drops, rankEdit](int i) {
         auto& e = mEnemies[(size_t)i];
         name->setText(QString::fromStdString(e.name));
         battler->setText(QString::fromStdString(e.battlerName));
+        rankEdit->setText(RanksToText(e.stateRanks)); // PAKET 17
         hue->setValue(e.battlerHue);
         mhp->setValue(e.maxHp);
         mmp->setValue(e.maxMp);
@@ -883,9 +954,10 @@ void QtDatabaseDialog::buildEnemiesTab() {
         drops->setText(ids.join(QLatin1Char(',')));
     };
     tp->storeForm = [this, tp, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi,
-                     luk, exp, gold, drops](int i) {
+                     luk, exp, gold, drops, rankEdit](int i) {
         if ((size_t)i >= mEnemies.size()) return;
         auto& e = mEnemies[(size_t)i];
+        e.stateRanks = ParseRanksText(rankEdit->text()); // PAKET 17
         e.name = name->text().toStdString();
         e.battlerName = battler->text().toStdString();
         e.battlerHue = hue->value();

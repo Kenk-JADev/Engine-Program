@@ -43,6 +43,25 @@ int ActorWeaponAnimationId(int actorId) {
     }
     return 0;
 }
+
+/// PAKET 17: XP-Resistenz-Rang A..F -> Trefferchance fuer Zustaende (%).
+/// Rang liegt an ActorData/EnemyData.stateRanks[stateId-1]; fehlt der
+/// Eintrag, gilt C (60 %) — wie ein unveraendertes XP-Projekt.
+int StateResistPercent(const Battler& target, int stateId) {
+    static const int kPct[6] = {100, 80, 60, 40, 20, 0}; // A B C D E F
+    int rank = 2; // C
+    if (stateId > 0) {
+        const std::vector<int>* ranks = nullptr;
+        if (target.isActor) {
+            if (const auto* a = Database::Get().GetActor(target.id)) ranks = &a->stateRanks;
+        } else {
+            if (const auto* e = Database::Get().GetEnemy(target.id)) ranks = &e->stateRanks;
+        }
+        if (ranks && (size_t)(stateId - 1) < ranks->size())
+            rank = std::clamp((*ranks)[(size_t)(stateId - 1)], 0, 5);
+    }
+    return kPct[rank];
+}
 } // namespace
 
 BattleSystem& BattleSystem::Get() {
@@ -56,7 +75,13 @@ void Battler::ApplyDamage(int dmg) {
 void Battler::ApplyDamage(int dmg, BattleHitKind kind) {
     const int before = hp;
     hp -= dmg;
-    if (hp <= 0) { hp = 0; isDead = true; }
+    if (hp <= 0) {
+        hp = 0;
+        isDead = true;
+        // PAKET 17 (XP): Tod loescht alle Zustaende
+        states.clear();
+        stateTurns.clear();
+    }
     // PAKET 9: XP-Kampf-Feedback — effektive HP-Aenderung melden (>0 Schaden)
     if (auto& hook = BattleSystem::Get().onBattlerHit) {
         const int eff = before - hp;
@@ -78,6 +103,57 @@ void Battler::Recover(int h, int m) {
 void Battler::NotifyMiss() {
     // PAKET 9: „Ausgewichen!" (0 Aenderung — Popup-/Flash-Text entscheidet)
     if (auto& hook = BattleSystem::Get().onBattlerHit) hook(*this, BattleHitKind::Miss, 0);
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 17: XP-Zustaende (States) — Battler-Laufzeitmodell
+// ---------------------------------------------------------------------------
+bool Battler::HasState(int stateId) const {
+    return std::find(states.begin(), states.end(), stateId) != states.end();
+}
+bool Battler::AddState(int stateId) {
+    if (stateId <= 0 || HasState(stateId)) return false;
+    if (!Database::Get().GetState(stateId)) return false; // unbekannte ID
+    states.push_back(stateId);
+    stateTurns[stateId] = 0;
+    return true;
+}
+bool Battler::RemoveState(int stateId) {
+    auto it = std::find(states.begin(), states.end(), stateId);
+    if (it == states.end()) return false;
+    states.erase(it);
+    stateTurns.erase(stateId);
+    return true;
+}
+int Battler::CurrentRestriction() const {
+    // XP: die Einschraenkung des am hoechsten priorisierten Zustands gilt
+    int bestPrio = -1;
+    int restr = 0;
+    for (int sid : states) {
+        const StateData* sd = Database::Get().GetState(sid);
+        if (sd && sd->restriction > 0 && sd->priority > bestPrio) {
+            bestPrio = sd->priority;
+            restr = sd->restriction;
+        }
+    }
+    return restr;
+}
+float Battler::TotalHpDrainRate() const {
+    float r = 0.0f;
+    for (int sid : states) {
+        const StateData* sd = Database::Get().GetState(sid);
+        if (sd) r += sd->hpDrainRate;
+    }
+    return r;
+}
+std::string Battler::MostSevereStateName() const {
+    int bestPrio = -1;
+    std::string nm;
+    for (int sid : states) {
+        const StateData* sd = Database::Get().GetState(sid);
+        if (sd && sd->priority > bestPrio) { bestPrio = sd->priority; nm = sd->name; }
+    }
+    return nm;
 }
 
 void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool canLose,
@@ -107,6 +183,9 @@ void BattleSystem::Setup(const std::vector<int>& enemyIds, bool canEscape, bool 
         b.atk = party[i].Atk();
         b.def = party[i].Def();
         b.agi = party[i].Agi();
+        // PAKET 17: bestehende Zustaende aus der Party in den Kampf mitnehmen
+        // (XP: States ueberleben Szenenwechsel, sofern nicht battle_only)
+        b.states = party[i].states;
         mActors.push_back(b);
     }
     if (mActors.empty()) {
@@ -206,6 +285,7 @@ void BattleSystem::Update(float dt) {
                 if (mTurn >= (int)(mActors.size()+mEnemies.size())) {
                     mTurn = 0;
                     ++mRound; // neue Kampfrunde (Seiten-Bedingung "Runde")
+                    RoundEndStateRemovals(); // PAKET 17 (Timing "Rundenende")
                     CheckVictory();
                 }
             }
@@ -299,6 +379,91 @@ void BattleSystem::CheckTroopPages() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 17: XP-Zustaende — Schlupfschaden, Ticks, Aufloesung, Skill-Effekte
+// ---------------------------------------------------------------------------
+void BattleSystem::ApplySlipDamage(Battler& b) {
+    if (b.isDead) return;
+    const float rate = b.TotalHpDrainRate();
+    if (rate <= 0.0f) return;
+    const std::string sev = b.MostSevereStateName(); // vor dem Tod merken!
+    const int dmg = std::max(1, (int)(b.maxHp * rate));
+    b.ApplyDamage(dmg);
+    std::string msg = b.name + " nimmt " + std::to_string(dmg) + " Schaden durch " +
+                      (sev.empty() ? "einen Zustand" : sev) + "!";
+    if (b.isDead) msg += " " + b.name + " wurde besiegt!";
+    if (onMessage) onMessage(msg);
+    if (b.isDead && onEnemyDefeated && !b.isActor) onEnemyDefeated(b.id);
+}
+
+void BattleSystem::TickSubjectStates(Battler& b) {
+    if (b.isDead) return;
+    std::vector<int> toRemove;
+    std::string names;
+    for (int sid : b.states) {
+        const StateData* sd = Database::Get().GetState(sid);
+        if (!sd) continue;
+        b.stateTurns[sid] += 1;
+        // Timing 1 („Nach Aktion") + Haltezeit erreicht -> aufloesen (VX/XP)
+        if (sd->autoRemovalTiming == 1 && sd->holdTurn > 0 &&
+            b.stateTurns[sid] >= sd->holdTurn) {
+            toRemove.push_back(sid);
+            names += (names.empty() ? "" : ", ") + sd->name;
+        }
+    }
+    for (int sid : toRemove) b.RemoveState(sid);
+    if (!toRemove.empty() && onMessage)
+        onMessage(b.name + " ist nicht mehr \"" + names + "\".");
+}
+
+void BattleSystem::RoundEndStateRemovals() {
+    auto side = [&](std::vector<Battler>& v) {
+        for (auto& b : v) {
+            if (b.isDead) continue;
+            std::vector<int> toRemove;
+            std::string names;
+            for (int sid : b.states) {
+                const StateData* sd = Database::Get().GetState(sid);
+                if (!sd || sd->autoRemovalTiming != 2 || sd->holdTurn <= 0) continue;
+                if (b.stateTurns[sid] >= sd->holdTurn) {
+                    toRemove.push_back(sid);
+                    names += (names.empty() ? "" : ", ") + sd->name;
+                }
+            }
+            for (int sid : toRemove) b.RemoveState(sid);
+            if (!toRemove.empty() && onMessage)
+                onMessage(b.name + " ist nicht mehr \"" + names + "\".");
+        }
+    };
+    side(mActors);
+    side(mEnemies);
+}
+
+void BattleSystem::ApplySkillStates(Battler& target, const SkillData& sk) {
+    if (target.isDead || (sk.plusStates.empty() && sk.minusStates.empty())) return;
+    std::uniform_real_distribution<float> uni(0.0f, 100.0f);
+    std::string msg;
+    // plus_state_set: Trefferchance ueber den Resistenz-Rang des Ziels
+    for (int sid : sk.plusStates) {
+        if (target.HasState(sid)) continue;
+        if (uni(BattleRng()) >= (float)StateResistPercent(target, sid)) continue;
+        if (target.AddState(sid)) {
+            const StateData* sd = Database::Get().GetState(sid);
+            msg += (msg.empty() ? "" : "\n") + target.name + " erleidet \"" +
+                   (sd ? sd->name : std::to_string(sid)) + "\"!";
+        }
+    }
+    // minus_state_set: Zustand heilen (z. B. Esuna-Art) — immer sicher
+    for (int sid : sk.minusStates) {
+        if (target.RemoveState(sid)) {
+            const StateData* sd = Database::Get().GetState(sid);
+            msg += (msg.empty() ? "" : "\n") + target.name + " ist nicht mehr \"" +
+                   (sd ? sd->name : std::to_string(sid)) + "\".";
+        }
+    }
+    if (!msg.empty() && onMessage) onMessage(msg);
+}
+
 void BattleSystem::ProcessTurn() {
     // Simple: if all actors acted, enemies act automatically
     CheckVictory();
@@ -319,15 +484,62 @@ void BattleSystem::ProcessTurn() {
         return;
     }
 
+    // ---- PAKET 17: Zustands-Phase am eigenen Zug (XP phase 4) ----
+    // Schlupfschaden (Gift), Rundenzaehler + „Nach Aktion"-Aufloesung.
+    ApplySlipDamage(*subject);
+    TickSubjectStates(*subject);
+    if (subject->isDead) {
+        // Am Schlupfschaden gestorben — Zug endet ohne Handlung (XP)
+        subject->isGuarding = false;
+        mNextAction.type = BattleActionType::None;
+        mState = BattleState::Action;
+        mTimer = 0.0f;
+        return;
+    }
+    const int restriction = subject->CurrentRestriction();
+    if (restriction == 4) {
+        // „Kann sich nicht bewegen": Zug entfaellt komplett (XP)
+        subject->isGuarding = false;
+        mNextAction.type = BattleActionType::None;
+        const std::string sev = subject->MostSevereStateName();
+        if (onMessage)
+            onMessage(subject->name + " kann nicht handeln!" +
+                      (sev.empty() ? std::string() : " (" + sev + ")"));
+        mState = BattleState::Action;
+        mTimer = 0.0f;
+        return;
+    }
+
     // If actor and no action set -> wait for input
-    if (isActorTurn && mNextAction.type==BattleActionType::None) {
+    // (Zwangsangriff-Zustaende 1..3 brauchen keine Wahl)
+    if (isActorTurn && restriction == 0 && mNextAction.type==BattleActionType::None) {
         mState = BattleState::Input;
         return;
     }
 
     // Execute action
     BattleAction action = mNextAction;
-    if (!isActorTurn) {
+    if (restriction >= 1 && restriction <= 3) {
+        // PAKET 17: Zwangs-Angriff durch Zustand (ueberschreibt die Wahl):
+        // 1 = Feindseite, 2 = beliebige Seite, 3 = eigene Seite (nicht sich)
+        action = BattleAction{};
+        action.type = BattleActionType::Attack;
+        bool toActors;
+        std::uniform_real_distribution<float> coin(0.0f, 1.0f);
+        if (restriction == 1)      toActors = !subject->isActor;
+        else if (restriction == 3) toActors = subject->isActor;
+        else                       toActors = coin(BattleRng()) < 0.5f;
+        action.targetIsActor = toActors;
+        auto& side = toActors ? mActors : mEnemies;
+        std::vector<int> alive;
+        for (size_t i = 0; i < side.size(); ++i)
+            if (!side[i].isDead && &side[i] != subject) alive.push_back((int)i);
+        action.targetIndex = alive.empty() ? -1
+            : alive[(size_t)std::uniform_int_distribution<>(0, (int)alive.size() - 1)(BattleRng())];
+        if (onMessage)
+            onMessage(subject->name + " ist ausser Kontrolle (" +
+                      subject->MostSevereStateName() + ")!");
+    } else if (!isActorTurn) {
         // Enemy AI: einen zufaelligen LEBENDEN Akteur angreifen
         action.type = BattleActionType::Attack;
         action.targetIsActor = true;
@@ -419,6 +631,8 @@ void BattleSystem::ProcessTurn() {
                     if (target->isDead) msg += " " + target->name + " wurde besiegt!";
                     if (onMessage) onMessage(msg);
                     if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                    // PAKET 17: Zustaende des Skills nur bei Treffer (XP)
+                    if (sk) ApplySkillStates(*target, *sk);
                 }
             }
         } else {
@@ -433,6 +647,8 @@ void BattleSystem::ProcessTurn() {
             target->Recover(power, 0);
             if (onMessage) onMessage(subject->name + " setzt " + sname + " ein: " +
                                      target->name + " +" + std::to_string(power) + " HP");
+            // PAKET 17: Status-Heilung (minus_state_set, z. B. Esuna)
+            if (sk) ApplySkillStates(*target, *sk);
         }
     } else if (action.type==BattleActionType::Item) {
         if (const auto* it = Database::Get().GetItem(action.itemId)) {
@@ -544,6 +760,16 @@ void BattleSystem::SyncBackToParty() {
             if (m.actorId == mActors[i].id) {
                 m.hp = mActors[i].hp;
                 m.mp = mActors[i].mp;
+                // PAKET 17: Zustaende zurueckschreiben — XP battle_only
+                // (removeAtBattleEnd) loest sich am Kampfende auf, persistente
+                // Zustaende (z. B. Gift) begleiten den Akteur auf die Karte.
+                std::vector<int> keep;
+                keep.reserve(mActors[i].states.size());
+                for (int sid : mActors[i].states) {
+                    const StateData* sd = Database::Get().GetState(sid);
+                    if (sd && !sd->removeAtBattleEnd) keep.push_back(sid);
+                }
+                m.states = std::move(keep);
                 break;
             }
         }
@@ -583,12 +809,30 @@ void BattleSystem::ApplyEventCommand(const EventCommand& cmd) {
             });
             break;
         case CC::ChangeEnemyState:
-            RPG_LOG_INFO("[Battle] ChangeEnemyState index=" + std::to_string(cmd.param1) +
-                         " (Battler-Status ist einfach gehalten)");
+            // PAKET 17: Zustand 333 — param1 Trupp-Index (0=alle),
+            // param2 Zustands-ID, param3 0=hinzufuegen / 1=entfernen (XP)
+            forEnemies(cmd.param1, [&](Battler& b) {
+                std::string msg;
+                if (cmd.param3 == 0) {
+                    if (b.AddState(cmd.param2)) {
+                        const StateData* sd = Database::Get().GetState(cmd.param2);
+                        msg = b.name + " erleidet \"" +
+                              (sd ? sd->name : std::to_string(cmd.param2)) + "\"!";
+                    }
+                } else {
+                    if (b.RemoveState(cmd.param2)) {
+                        const StateData* sd = Database::Get().GetState(cmd.param2);
+                        msg = b.name + " ist nicht mehr \"" +
+                              (sd ? sd->name : std::to_string(cmd.param2)) + "\".";
+                    }
+                }
+                if (!msg.empty() && onMessage) onMessage(msg);
+            });
             break;
         case CC::EnemyRecoverAll:
             forEnemies(cmd.param1, [&](Battler& b) {
                 b.hp = b.maxHp; b.mp = b.maxMp; b.isDead = false;
+                b.states.clear(); b.stateTurns.clear(); // PAKET 17 (XP recover_all)
             });
             break;
         case CC::EnemyAppearance:

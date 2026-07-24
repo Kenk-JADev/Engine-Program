@@ -4,6 +4,7 @@
 #include <vector>
 #include <functional>
 #include <string>
+#include <map>
 #include "Types.h"
 #include "Database.h"
 #include "Game.h"
@@ -61,6 +62,27 @@ struct Battler {
     bool isGuarding = false; // Verteidigen: halbiert Schaden bis zur naechsten eigenen Aktion
     Vec3 position{0,0,0};
     std::string name;
+
+    // ---- PAKET 17: XP-Zustaende (States) im Kampf ----------------------
+    // Wird beim Setup aus der Party uebernommen und bei Kampfende via
+    // SyncBackToParty zurueckgeschrieben (removeAtBattleEnd-Zustaende
+    // loesen sich dabei XP-konform auf). Tod loescht alle Zustaende (XP).
+    std::vector<int> states;        // aktive Zustands-IDs (Database::States)
+    std::map<int,int> stateTurns;   // Runden seit Verhaengung (fuer holdTurn)
+
+    bool HasState(int stateId) const;
+    /// true = neu verhaengt (false = schon aktiv oder unbekannte ID)
+    bool AddState(int stateId);
+    /// true = war aktiv und wurde entfernt
+    bool RemoveState(int stateId);
+    /// Einschraenkung des hoechstpriorisierten Zustands (0 = keine)
+    int  CurrentRestriction() const;
+    /// „Kann sich nicht bewegen" (restriction 4)?
+    bool CannotAct() const { return CurrentRestriction() == 4; }
+    /// Summe aller hpDrainRate aktiver Zustaende (XP slip_damage), i. d. R. 0..1
+    float TotalHpDrainRate() const;
+    /// Name des hoechstpriorisierten Zustands (Meldungen/HUD), "" wenn keiner
+    std::string MostSevereStateName() const;
 
     void ApplyDamage(int dmg);
     /// PAKET 9: Variante mit Treffer-Art (Crit-Anzeige im Popup)
@@ -151,6 +173,17 @@ private:
     /// XP-Kampfereignis-Seiten auswerten (max. eine Seite pro Aufruf, wie XP)
     void CheckTroopPages();
     bool TroopPageConditionMet(const TroopPage& p) const;
+    // ---- PAKET 17: XP-Zustaende ----
+    /// Schlupfschaden (XP slip_damage) am eigenen Zug des Kaempfers
+    void ApplySlipDamage(Battler& b);
+    /// Rundenzaehler hochzaehlen + Zustaende mit Timing „Nach Aktion" (1)
+    /// nach Ablauf der Haltezeit aufloesen (mit Meldung)
+    void TickSubjectStates(Battler& b);
+    /// Zustaende mit Timing „Rundenende" (2) aller Kaempfer aufloesen
+    void RoundEndStateRemovals();
+    /// Fertigkeits-Zustaende am Ziel anwenden (plus/minus, XP-Trefferquote
+    /// ueber die Resistenz-Raenge A..F des Ziels)
+    void ApplySkillStates(Battler& target, const SkillData& sk);
 
     BattleState mState = BattleState::None;
     std::vector<Battler> mActors;

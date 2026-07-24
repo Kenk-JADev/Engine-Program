@@ -52,7 +52,7 @@ void Database::CreateDefaults() {
     // Classes
     if (mClasses.empty()) {
         ClassData warrior; warrior.id=1; warrior.name="Warrior";
-        warrior.learnings = {{2, 2}}; // Heal ab Level 2
+        warrior.learnings = {{2, 2}, {3, 3}}; // Heal ab 2, Giftstich ab 3 (PAKET 17)
         mClasses.push_back(warrior);
         ClassData mage; mage.id=2; mage.name="Mage";
         mage.learnings = {{1, 1}, {4, 2}}; // Fire ab 1, Heal ab 4
@@ -85,6 +85,10 @@ void Database::CreateDefaults() {
         mSkills.push_back(fire);
         SkillData heal; heal.id=2; heal.name="Heal"; heal.mpCost=8; heal.power=-30;
         mSkills.push_back(heal);
+        // PAKET 17: Demo-Skill mit XP-Zustands-Effekt (verhaengt „Poison", id 1)
+        SkillData toxin; toxin.id=3; toxin.name="Giftstich"; toxin.mpCost=4;
+        toxin.power=20; toxin.plusStates={1};
+        mSkills.push_back(toxin);
     }
 
     // Enemies
@@ -218,6 +222,13 @@ std::vector<int> ParseIntCsv(const std::string& s) {
     return out;
 }
 
+// PAKET 17: Vorwaertsdeklarationen — die Helfer sind weiter unten definiert
+// (ParseIntArrayInto liest "key":[1,2,...], WriteIntArray schreibt es).
+static bool ParseIntArrayInto(const std::string& obj, const char* key,
+                              std::vector<int>& out);
+static void WriteIntArray(std::ofstream& f, const char* key,
+                          const std::vector<int>& v);
+
 rpg::ActorData ParseActorObject(const std::string& obj) {
     using namespace rpg::JsonUtils;
     rpg::ActorData a;
@@ -277,6 +288,9 @@ rpg::ActorData ParseActorObject(const std::string& obj) {
     // Start-Ausruestung als CSV-String "1,2" (Waffen-/Ruestungs-IDs)
     if (TryParseString(obj, "equips", 0, name))
         a.equips = ParseIntCsv(name);
+
+    // PAKET 17: XP state_ranks [0..5] (Index = Zustands-ID-1, fehlt = C)
+    ParseIntArrayInto(obj, "stateRanks", a.stateRanks);
 
     return a;
 }
@@ -366,6 +380,8 @@ rpg::EnemyData ParseEnemyObject(const std::string& obj) {
     if (TryParseInt(obj, "exp", 0, v)) e.exp = v;
     if (TryParseInt(obj, "gold", 0, v)) e.gold = v;
     if (TryParseInt(obj, "battlerHue", 0, v)) e.battlerHue = v;
+    // PAKET 17: XP state_ranks [0..5] (Index = Zustands-ID-1, fehlt = C)
+    ParseIntArrayInto(obj, "stateRanks", e.stateRanks);
     return e;
 }
 
@@ -416,6 +432,9 @@ rpg::SkillData ParseSkillObject(const std::string& obj) {
     if (TryParseInt(obj, "power", 0, v)) s.power = v;
     if (TryParseInt(obj, "iconIndex", 0, v)) s.iconIndex = v;
     if (TryParseInt(obj, "scope", 0, v)) s.scope = v;
+    // PAKET 17: XP plus_state_set / minus_state_set (Zustands-IDs)
+    ParseIntArrayInto(obj, "plusStates", s.plusStates);
+    ParseIntArrayInto(obj, "minusStates", s.minusStates);
     return s;
 }
 
@@ -954,8 +973,9 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"faceName\":\"" << Escape(a.faceName) << "\""
                   << ",\"faceIndex\":" << a.faceIndex
                   << ",\"battlerName\":\"" << Escape(a.battlerName) << "\""
-                  << ",\"equips\":\"" << eq << "\""
-                  << "}";
+                  << ",\"equips\":\"" << eq << "\"";
+                WriteIntArray(f, "stateRanks", a.stateRanks); // PAKET 17
+                f << "}";
                 if (i+1<mActors.size()) f << ",";
                 f << "\n";
             }
@@ -1031,8 +1051,9 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"agi\":" << e.agi
                   << ",\"luk\":" << e.luk
                   << ",\"exp\":" << e.exp
-                  << ",\"gold\":" << e.gold
-                  << "}";
+                  << ",\"gold\":" << e.gold;
+                WriteIntArray(f, "stateRanks", e.stateRanks); // PAKET 17
+                f << "}";
                 if (i+1<mEnemies.size()) f << ",";
                 f << "\n";
             }
@@ -1154,8 +1175,10 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"iconIndex\":" << s.iconIndex
                   << ",\"scope\":" << s.scope
                   << ",\"animation\":\"" << Escape(s.animation) << "\""
-                  << ",\"animationId\":" << s.animationId
-                  << "}";
+                  << ",\"animationId\":" << s.animationId;
+                WriteIntArray(f, "plusStates", s.plusStates);   // PAKET 17
+                WriteIntArray(f, "minusStates", s.minusStates); // PAKET 17
+                f << "}";
                 if (i+1<mSkills.size()) f << ",";
                 f << "\n";
             }

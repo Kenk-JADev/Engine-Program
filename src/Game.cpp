@@ -803,7 +803,14 @@ bool Game::Save(int slot) {
             const auto& a = members[i];
             f << "    {\"id\":" << a.actorId << ",\"name\":\"" << a.name
               << "\",\"level\":" << a.level << ",\"hp\":" << a.hp
-              << ",\"mp\":" << a.mp << ",\"exp\":" << a.exp << "}";
+              << ",\"mp\":" << a.mp << ",\"exp\":" << a.exp;
+            // PAKET 17: aktive Zustands-IDs mitspeichern (XP-Spielstand)
+            f << ",\"states\":[";
+            for (size_t s = 0; s < a.states.size(); ++s) {
+                if (s) f << ",";
+                f << a.states[s];
+            }
+            f << "]}";
             if (i + 1 < members.size()) f << ",";
             f << "\n";
         }
@@ -932,7 +939,9 @@ bool Game::Load(int slot) {
         }
 
         // --- Party komplett neu aufbauen (wie XP: Spielstand ersetzt Stand) ---
-        struct ActorData { int id; std::string name; int level, hp, mp, exp; };
+        struct ActorData { int id; std::string name; int level, hp, mp, exp;
+                           std::vector<int> states; // PAKET 17
+                         };
         std::vector<ActorData> savedActors;
         {
             const std::string body = section("actors", '[', ']');
@@ -955,6 +964,24 @@ bool Game::Load(int slot) {
                     auto q2 = q1 == std::string::npos ? std::string::npos : blk.find('"', q1 + 1);
                     if (q2 != std::string::npos) a.name = blk.substr(q1 + 1, q2 - q1 - 1);
                 }
+                // PAKET 17: optionale Zustands-IDs ("states":[id,...]);
+                // fehlender Schluessel = keine Zustaende (alte Spielstaende)
+                {
+                    const auto sk2 = blk.find("\"states\"");
+                    if (sk2 != std::string::npos) {
+                        const auto ob = blk.find('[', sk2);
+                        const auto cb = ob == std::string::npos
+                                        ? std::string::npos : blk.find(']', ob);
+                        if (cb != std::string::npos) {
+                            std::stringstream ss(blk.substr(ob + 1, cb - ob - 1));
+                            std::string tok;
+                            while (std::getline(ss, tok, ',')) {
+                                try { if (!tok.empty()) a.states.push_back(std::stoi(tok)); }
+                                catch (...) {}
+                            }
+                        }
+                    }
+                }
                 if (a.id > 0) savedActors.push_back(a);
                 i = e + 1;
             }
@@ -968,6 +995,7 @@ bool Game::Load(int slot) {
                 ga->hp = sa.hp;
                 ga->mp = sa.mp;
                 ga->exp = sa.exp;
+                ga->states = sa.states; // PAKET 17
                 if (!sa.name.empty()) ga->name = sa.name;
             }
         }

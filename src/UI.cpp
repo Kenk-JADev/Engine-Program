@@ -2146,6 +2146,10 @@ void GameUI::DrawBattleStatus() {
             const ImU32 nameCol = e.dead ? IM_COL32(255, 90, 80, 255)
                                          : IM_COL32(235, 240, 255, 255);
             dl->AddText(ImVec2(textX, y0), nameCol, e.name.c_str());
+            // PAKET 17: aktiver Zustand unter dem Namen (XP-Statusfenster)
+            if (!e.dead && !e.stateName.empty())
+                dl->AddText(ImVec2(textX, y0 + 13.0f), IM_COL32(255, 205, 90, 255),
+                            e.stateName.c_str());
             if (e.dead)
                 dl->AddText(ImVec2(x0 + slotW - pad - 30.0f, y0),
                             IM_COL32(255, 90, 80, 255), "K.O.");

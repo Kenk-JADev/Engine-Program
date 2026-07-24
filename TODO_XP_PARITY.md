@@ -1061,6 +1061,60 @@ H0 P1 P0 G 001-Fighter01,2 E 057-Right02 SC <code>" wird aus Befehl 209
 UND aus der Seiten-Autonomieroute identisch geparst und ausgeführt;
 Editor zeigt jeden Schritt lesbar und schreibt ihn unveraendert zurueck.
 
+## PAKET 17 — Kampf-Zustaende (States): XP-Verhalten im Kampf ✅ ERLEDIGT 2026-07-24
+
+Die Infrastruktur existierte komplett (States-Tab im Editor, States.json
+Load/Save, `GameActor.states` inkl. Ruby-Bindings, Event-Befehl 313) —
+aber **nichts davon wurde im Kampf ausgewertet**: Battler kannten keine
+Zustaende, Restriktionen kamen nie zum Tragen, Gift machte keinen
+Schaden, Skills konnten keine Zustaende verhaengen.
+
+- [x] **Battler-Laufzeitmodell:** `states` + `stateTurns` (Setup kopiert
+  aus der Party, SyncBack am Kampfende; Tod loescht alle Zustaende wie
+  XP; EnemyRecoverAll ebenfalls). Helfer: `HasState/AddState/RemoveState`,
+  `CurrentRestriction()` (hoechste Prioritaet gewinnt, XP),
+  `TotalHpDrainRate()`, `MostSevereStateName()`.
+- [x] **Restriktionen (VX-Ace-Numerierung des Editors):** 4 „kann sich
+  nicht bewegen" -> Zug entfaellt mit Meldung (kein Befehlsfenster);
+  1/2/3 = Zwangsangriff auf Feindseite/beliebige/eigene Seite
+  (ueberschreibt die Wahl, XP auto-battle).
+- [x] **Schlupfschaden (XP slip_damage):** `hpDrainRate` x MaxHP am
+  eigenen Zug des Vergifteten, inkl. Tod durch Gift (Cleanup wie XP).
+- [x] **Auto-Entfernung:** Timing „Nach Aktion" (1) am eigenen Zug,
+  „Rundenende" (2) aller Kaempfer beim Rundenwechsel, jeweils nach
+  Ablauf von `holdTurn` Runden, mit Meldung.
+- [x] **Skill-Zustaende:** `SkillData.plusStates/minusStates` (XP
+  plus/minus_state_set) — Verhaengung nur bei Treffer mit Wurf gegen
+  die Resistenz-Raenge A..F (100/80/60/40/20/0 %) aus dem neuen
+  `stateRanks`-Feld an ActorData/EnemyData (fehlt = C, XP-Default);
+  Heilung (Esuna-Art) immer sicher. Persistenz + Editor-Felder
+  (Skills: zwei ID-Listen; Akteure/Gegner: „ID=Grad"-Textfeld).
+- [x] **Kampfende:** `removeAtBattleEnd`-Zustaende loesen sich auf
+  (XP battle_only), persistente (Gift) begleiten den Akteur — werden
+  jetzt auch im **Spielstand** gespeichert/geladen (`"states":[ids]`,
+  Rueckwaertskompatibel optional).
+- [x] **Event-Befehl 333** (Gegner-Zustand aendern) war Log-Stub —
+  arbeitet jetzt auf dem Battler-Modell (Meldungen inklusive).
+- [x] **HUD:** hoechstpriorisierter Zustandsname im XP-Statusfenster
+  (Akteure) und in der Gegner-Zeile.
+- [x] **Demo:** Fallback-Skill „Giftstich" (verhaengt Poison),
+  Krieger lernt ihn ab Level 3.
+
+**Bewusst offen (XP-Rest):** Items mit Zustands-Effekten (Daten+Editor),
+Gegner-Skill-Auswahl (XP actions-Tabelle — Gegner haben nur
+Standardangriff), Stat-Raten der Zustaende (maxhp/str/... rate —
+unser StateData-Modell hat diese Felder nicht), Waffen-Zustaende,
+313 zur Kampf-Laufzeit syncen (wirkt erst ueber Setup beim
+naechsten Kampfbeginn), Gift-Schaden beim Map-Laufen (XP schadet
+pro Schritt auf der Karte).
+
+**Akzeptanz:** Giftstich trifft -> Ziel „erleidet Poison" (Chance nach
+Rang) -> verliert jede eigene Runde 5 % MaxHP mit Meldung; Schlaf
+(restriction 4) -> Zug entfaellt „kann nicht handeln (Sleep)";
+Verwirrung (1..3) -> automatischer Angriff; Haltezeit abgelaufen oder
+Kampfende -> Zustand loest sich mit Meldung; Statusname steht im
+Statusfenster.
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

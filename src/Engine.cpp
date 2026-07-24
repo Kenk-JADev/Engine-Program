@@ -1405,9 +1405,14 @@ void Engine::Update(float dt) {
                 std::string enemies;
                 for (const auto& e : bs.Enemies()) {
                     if (!enemies.empty()) enemies += "     ";
-                    enemies += e.isDead
-                        ? ("[" + e.name + " besiegt]")
-                        : (e.name + "  " + std::to_string(e.hp) + "/" + std::to_string(e.maxHp));
+                    if (e.isDead) {
+                        enemies += "[" + e.name + " besiegt]";
+                    } else {
+                        const std::string sev = e.MostSevereStateName(); // PAKET 17
+                        enemies += e.name +
+                                   (sev.empty() ? "" : " [" + sev + "]") + "  " +
+                                   std::to_string(e.hp) + "/" + std::to_string(e.maxHp);
+                    }
                 }
                 GameUI::Get().SetScreenText(mBattleStatusEnemiesId, enemies);
 
@@ -1421,6 +1426,7 @@ void Engine::Update(float dt) {
                     se.hp = a.hp; se.maxHp = a.maxHp;
                     se.mp = a.mp; se.maxMp = a.maxMp;
                     se.dead = a.isDead;
+                    se.stateName = a.isDead ? std::string() : a.MostSevereStateName(); // PAKET 17
                     if (const auto* ad = Database::Get().GetActor(a.id)) {
                         se.faceName = ad->faceName;
                         se.faceIndex = ad->faceIndex;

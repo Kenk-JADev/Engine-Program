@@ -368,6 +368,9 @@ public:
         bool dead = false;
         std::string faceName; // Graphics/Faces/<faceName> (leer = kein Gesicht)
         int faceIndex = 0;    // Index im 4x2-Face-Sheet (VX-Stil), 0 = erstes
+        // PAKET 17: hoechstpriorisierter aktiver Zustand („" = keiner) —
+        // XP zeigt den Statusnamen im Aktionsstatus-Fenster.
+        std::string stateName;
     };
     void SetBattleStatusEntries(std::vector<BattleStatusEntry> entries);
     void ClearBattleStatus();

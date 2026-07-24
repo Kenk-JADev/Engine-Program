@@ -41,6 +41,9 @@ struct ActorData {
     char curveDef = 'C';
     char curveAgi = 'C';
     std::vector<int> equips; // item ids
+    // PAKET 17: XP state_ranks — index = Zustands-ID - 1, Wert 0..5 =
+    // Rang A..F (Trefferchance 100/80/60/40/20/0 %). Fehlender Eintrag = C.
+    std::vector<int> stateRanks;
 };
 
 struct ClassData {
@@ -106,6 +109,11 @@ struct SkillData {
     // PAKET 12: XP animation_id (Animations-Tab) fuer die Kampf-Animation.
     // 0 = Fallback: obiger Namens-String per Datenbank-Abgleich aufloesen.
     int animationId = 0;
+    // PAKET 17: XP plus_state_set / minus_state_set — Zustands-IDs, die der
+    // Skill beim Treffer verhaengt (Wurf gegen den Resistenz-Rang des Ziels)
+    // bzw. sicher heilt (z. B. Esuna).
+    std::vector<int> plusStates;
+    std::vector<int> minusStates;
 };
 
 struct EnemyData {
@@ -124,6 +132,9 @@ struct EnemyData {
     int exp = 10;
     int gold = 5;
     std::vector<int> dropItems; // item ids
+    // PAKET 17: XP state_ranks — index = Zustands-ID - 1, Wert 0..5 =
+    // Rang A..F (Trefferchance 100/80/60/40/20/0 %). Fehlender Eintrag = C.
+    std::vector<int> stateRanks;
 };
 
 // Truppe (Gegner-Gruppe fuer Random Encounters / Battle Processing)
