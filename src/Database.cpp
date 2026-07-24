@@ -65,6 +65,10 @@ void Database::CreateDefaults() {
         mItems.push_back(potion);
         ItemData ether; ether.id=2; ether.name="Ether"; ether.price=100; ether.mpRecovery=50; ether.hpRecovery=0;
         mItems.push_back(ether);
+        // PAKET 20: Demo-Item mit Zustands-Heilung (XP minus_state_set)
+        ItemData anti; anti.id=3; anti.name="Gegengift"; anti.price=30;
+        anti.hpRecovery=0; anti.minusStates={1}; // heilt „Poison"
+        mItems.push_back(anti);
     }
 
     // Weapons
@@ -368,6 +372,12 @@ rpg::ItemData ParseItemObject(const std::string& obj) {
         else if (typeStr == "HiddenB") it.itemType = rpg::ItemData::Type::HiddenB;
         else it.itemType = rpg::ItemData::Type::Regular;
     }
+    // PAKET 20: scope wurde bisher weder gelesen noch geschrieben (Luecke)
+    if (TryParseInt(obj, "scope", 0, rec))
+        it.scope = (rpg::ItemData::Scope)std::clamp(rec, 0, 7);
+    // PAKET 20: XP plus_state_set / minus_state_set (Zustands-IDs)
+    ParseIntArrayInto(obj, "plusStates", it.plusStates);
+    ParseIntArrayInto(obj, "minusStates", it.minusStates);
     return it;
 }
 
@@ -1052,12 +1062,15 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"type\":\"" << typeStr << "\""
                   << ",\"price\":" << it.price
                   << ",\"consumable\":" << (it.consumable?"true":"false")
+                  << ",\"scope\":" << (int)it.scope // PAKET 20 (war ungespeichert)
                   << ",\"hpRecovery\":" << it.hpRecovery
                   << ",\"mpRecovery\":" << it.mpRecovery
                   << ",\"iconName\":\"" << Escape(it.iconName) << "\""
                   << ",\"iconIndex\":" << it.iconIndex
-                  << ",\"animationId\":" << it.animationId
-                  << "}";
+                  << ",\"animationId\":" << it.animationId;
+                WriteIntArray(f, "plusStates", it.plusStates);   // PAKET 20
+                WriteIntArray(f, "minusStates", it.minusStates); // PAKET 20
+                f << "}";
                 if (i+1<mItems.size()) f << ",";
                 f << "\n";
             }

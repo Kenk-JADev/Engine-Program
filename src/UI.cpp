@@ -573,9 +573,10 @@ void GameUI::OpenItemsMenu() {
             if (idx < 0 || idx >= (int)itemIds.size()) return;
             const auto* it = Database::Get().GetItem(itemIds[idx]);
             if (!it) return;
-            // XP: Verbrauchsgueter mit Heilwirkung werden BENUTZT (Ziel waehlen),
-            // alle anderen zeigen ihren Beschreibungstext.
-            if (it->consumable && (it->hpRecovery > 0 || it->mpRecovery > 0)) {
+            // XP: Verbrauchsgueter mit Heil-/Zustandswirkung werden BENUTZT
+            // (Ziel waehlen), alle anderen zeigen ihren Beschreibungstext.
+            const bool hasStateEffect = !it->minusStates.empty() || !it->plusStates.empty(); // PAKET 20
+            if (it->consumable && (it->hpRecovery > 0 || it->mpRecovery > 0 || hasStateEffect)) {
                 OpenItemTargetMenu(it->id);
             } else if (!it->description.empty()) {
                 ShowMessage(it->description);
@@ -605,10 +606,33 @@ void GameUI::OpenItemTargetMenu(int itemId) {
             // Heil-Obergrenzen aus den Datenbank-Werten (initialStats + Kurve)
             a.hp = std::min(a.hp + it2->hpRecovery, a.MaxHp());
             a.mp = std::min(a.mp + it2->mpRecovery, a.MaxMp());
+            // PAKET 20: XP-Zustands-Effekte auch im Menue (Antidot-Art) —
+            // verhaengen direkt (kein Resistenz-Wurf im Menue, wie XP-Items
+            // aus dem Inventar), heilen (minus_state_set) ebenfalls direkt.
+            std::string stateMsg;
+            for (int sid : it2->plusStates) {
+                if (std::find(a.states.begin(), a.states.end(), sid) != a.states.end())
+                    continue;
+                a.states.push_back(sid);
+                if (const StateData* sd = Database::Get().GetState(sid))
+                    stateMsg += (stateMsg.empty() ? "\n" : "\n") + a.name +
+                                " erleidet \"" + sd->name + "\"!";
+            }
+            for (int sid : it2->minusStates) {
+                const auto pos = std::find(a.states.begin(), a.states.end(), sid);
+                if (pos == a.states.end()) continue;
+                a.states.erase(pos);
+                if (const StateData* sd = Database::Get().GetState(sid))
+                    stateMsg += (stateMsg.empty() ? "\n" : "\n") + a.name +
+                                " ist nicht mehr \"" + sd->name + "\".";
+            }
             party.GainItem(itemId, -1);
             EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
-            ShowMessage(a.name + " erholt sich:  +" + std::to_string(it2->hpRecovery) +
-                        " HP, +" + std::to_string(it2->mpRecovery) + " MP");
+            std::string msg = a.name + " erholt sich: +" + std::to_string(it2->hpRecovery) +
+                              " HP, +" + std::to_string(it2->mpRecovery) + " MP";
+            if (it2->hpRecovery <= 0 && it2->mpRecovery <= 0)
+                msg = a.name + " benutzt " + it2->name + ".";
+            ShowMessage(msg + stateMsg);
         }
         OpenItemsMenu(); // zurueck zur Liste (Anzahl wird aktualisiert)
     });

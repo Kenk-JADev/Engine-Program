@@ -1195,6 +1195,39 @@ Script versetzt das Demo-Event sichtbar; `$game_map.events[1].through =
 true` wirkt identisch zum Routen-Token H1; nach Kartenwechsel liefert
 `$game_map.events` den Hash der neuen Karte.
 
+## PAKET 20 — Item-Zustaende + Menue-Heilung (XP plus/minus_state_set) ✅ ERLEDIGT 2026-07-24
+
+Nach PAKET 17 (Kampf-Zustaende) fehlten die XP-Item-Effekte: Items
+konnten weder Zustaende verhaengen noch heilen — ein Antidot war
+unmoeglich; und die Menue-Nutzung kannte nur HP/MP.
+
+- [x] `ItemData.plusStates/minusStates` + Persistenz (Load/Save) +
+  Editor Felder im Items-Tab (wie im Skills-Tab).
+- [x] **Fund:** `ItemData.scope` wurde vom Editor gesetzt, aber NIE
+  gelesen/geschrieben — die Reichweite ging bei jedem Save verloren.
+  Mitfix: scope jetzt in Items.json (Parse + Save, clamp 0..7).
+- [x] **Kampf:** `ApplySkillStates` zum generischen `ApplyStateSets`
+  refaktoriert (Skill ruft es weiterhin); beide Item-Pfade (Schadens-
+  wie Heil-Item) wenden die Sets am Ziel an (verhaengen mit
+  Resistenz-Wurf, heilen sicher — XP).
+- [x] **Menue:** Benutzbar-Gate um Zustands-Effekte erweitert
+  (Item OHNE Heilwerte aber MIT minusStates = benutzbar, z. B.
+  Gegengift); Anwendung auf `GameActor.states` mit Meldung
+  (verhaengen im Menue direkt wie XP-Inventar-Items; Heilung ebenso).
+  Meldetext faellt ohne Heilwerte sauber auf „benutzt <Item>." zurueck.
+- [x] **Demo:** „Gegengift" (heilt Poison, id 3) in Fallback-DB und
+  SampleProject.
+
+**Bewusst offen:** Wiederbelebungs-Scopes (OneAllyDead/AllAlliesDead —
+Zielwahl lebender Mitglieder bleibt vorgegeben), Parameter-Boni von
+Items; Menu-Skills (Skills aus dem Fertigkeits-Menue auf der Karte)
+sind ein eigener Block.
+
+**Akzeptanz:** Bat vergiftet einen Akteur (PAKET 18) -> Menue oeffnen,
+„Gegengift" auf den Vergifteten -> „ist nicht mehr Poison" mit
+Entscheiden-SE; Anzahl sinkt; Zustand bleibt weg (Spielstand-haeltig
+seit PAKET 17).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

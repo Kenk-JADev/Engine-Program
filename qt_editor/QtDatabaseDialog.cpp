@@ -748,6 +748,13 @@ void QtDatabaseDialog::buildItemsTab() {
     auto* hpRec = makeSpin(0, 99999, 100, formHost);
     auto* mpRec = makeSpin(0, 99999, 0, formHost);
     auto* animId = makeSpin(0, 999, 0, formHost); // PAKET 12: XP-Animation im Kampf
+    // PAKET 20: XP plus_state_set / minus_state_set (Zustands-IDs, kommagetrennt)
+    auto* plusEdit = makeLine(formHost);
+    plusEdit->setToolTip(QL("Zustände, die das Item bei Benutzung verhängt (XP plus_state_set).\n"
+                            "IDs kommagetrennt, z. B. 1, 3."));
+    auto* minusEdit = makeLine(formHost);
+    minusEdit->setToolTip(QL("Zustände, die das Item bei Benutzung heilt (XP minus_state_set).\n"
+                             "IDs kommagetrennt, z. B. 1 (Antidot). Wirkt im Kampf UND im Menü."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
@@ -757,6 +764,8 @@ void QtDatabaseDialog::buildItemsTab() {
     form->addRow(QL("HP-Genesung"), hpRec);
     form->addRow(QL("MP-Genesung"), mpRec);
     form->addRow(QL("Animations-ID"), animId);
+    form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
+    form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
 
     tp->count = [this]() { return (int)mItems.size(); };
     tp->nameAt = [this](int i) {
@@ -766,7 +775,8 @@ void QtDatabaseDialog::buildItemsTab() {
         mItems.resize((size_t)n);
         for (size_t i = 0; i < mItems.size(); ++i) mItems[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, price, type, consumable, scope, hpRec, mpRec, animId](int i) {
+    tp->loadForm = [this, name, desc, price, type, consumable, scope, hpRec, mpRec, animId,
+                    plusEdit, minusEdit](int i) {
         auto& it = mItems[(size_t)i];
         name->setText(QString::fromStdString(it.name));
         desc->setText(QString::fromStdString(it.description));
@@ -777,9 +787,11 @@ void QtDatabaseDialog::buildItemsTab() {
         hpRec->setValue(it.hpRecovery);
         mpRec->setValue(it.mpRecovery);
         animId->setValue(it.animationId);
+        plusEdit->setText(JoinIds(it.plusStates));   // PAKET 20
+        minusEdit->setText(JoinIds(it.minusStates)); // PAKET 20
     };
     tp->storeForm = [this, tp, name, desc, price, type, consumable, scope,
-                     hpRec, mpRec, animId](int i) {
+                     hpRec, mpRec, animId, plusEdit, minusEdit](int i) {
         if ((size_t)i >= mItems.size()) return;
         auto& it = mItems[(size_t)i];
         it.name = name->text().toStdString();
@@ -791,6 +803,8 @@ void QtDatabaseDialog::buildItemsTab() {
         it.hpRecovery = hpRec->value();
         it.mpRecovery = mpRec->value();
         it.animationId = animId->value();
+        it.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 20
+        it.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 20
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);

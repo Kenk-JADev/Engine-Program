@@ -440,11 +440,16 @@ void BattleSystem::RoundEndStateRemovals() {
 }
 
 void BattleSystem::ApplySkillStates(Battler& target, const SkillData& sk) {
-    if (target.isDead || (sk.plusStates.empty() && sk.minusStates.empty())) return;
+    ApplyStateSets(target, sk.plusStates, sk.minusStates);
+}
+
+void BattleSystem::ApplyStateSets(Battler& target, const std::vector<int>& plus,
+                                  const std::vector<int>& minus) {
+    if (target.isDead || (plus.empty() && minus.empty())) return;
     std::uniform_real_distribution<float> uni(0.0f, 100.0f);
     std::string msg;
     // plus_state_set: Trefferchance ueber den Resistenz-Rang des Ziels
-    for (int sid : sk.plusStates) {
+    for (int sid : plus) {
         if (target.HasState(sid)) continue;
         if (uni(BattleRng()) >= (float)StateResistPercent(target, sid)) continue;
         if (target.AddState(sid)) {
@@ -454,7 +459,7 @@ void BattleSystem::ApplySkillStates(Battler& target, const SkillData& sk) {
         }
     }
     // minus_state_set: Zustand heilen (z. B. Esuna-Art) — immer sicher
-    for (int sid : sk.minusStates) {
+    for (int sid : minus) {
         if (target.RemoveState(sid)) {
             const StateData* sd = Database::Get().GetState(sid);
             msg += (msg.empty() ? "" : "\n") + target.name + " ist nicht mehr \"" +
@@ -764,6 +769,8 @@ void BattleSystem::ProcessTurn() {
                     if (target->isDead) msg += " " + target->name + " wurde besiegt!";
                     if (onMessage) onMessage(msg);
                     if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                    // PAKET 20: XP-Zustands-Effekte auch von Items (Kampf)
+                    ApplyStateSets(*target, it->plusStates, it->minusStates);
                 }
             } else {
                 // Heil-Item auf Verbuendeten (Standard: Anwender selbst)
@@ -778,6 +785,8 @@ void BattleSystem::ProcessTurn() {
                 if (onMessage) onMessage(subject->name + " benutzt " + it->name +
                                          " auf " + target->name + " (+" +
                                          std::to_string(it->hpRecovery) + " HP)");
+                // PAKET 20: XP minus/plus_state_set (Antidot-Art im Kampf)
+                ApplyStateSets(*target, it->plusStates, it->minusStates);
             }
             Game::Get().Party().GainItem(it->id, -1);
         }

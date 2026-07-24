@@ -187,6 +187,9 @@ private:
     /// Fertigkeits-Zustaende am Ziel anwenden (plus/minus, XP-Trefferquote
     /// ueber die Resistenz-Raenge A..F des Ziels)
     void ApplySkillStates(Battler& target, const SkillData& sk);
+    /// PAKET 20: generische Zustands-Anwendung (Skill UND Item aufrufbar)
+    void ApplyStateSets(Battler& target, const std::vector<int>& plus,
+                        const std::vector<int>& minus);
     // ---- PAKET 18: XP-Gegner-Verhaltenstabelle (RPG::Enemy.actions) ----
     /// Waehlt die Aktion eines Gegner-Kaempfers (Bedinungen, Rating-Lostopf
     /// max-3, Skill-MP-Check; Flucht/Nichtstun wird intern abgewickelt und

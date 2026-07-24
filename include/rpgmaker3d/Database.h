@@ -74,6 +74,11 @@ struct ItemData {
     int hpRecovery = 100;
     int mpRecovery = 0;
     int animationId = 0;
+    // PAKET 20: XP plus_state_set / minus_state_set — Zustands-IDs, die
+    // das Item bei Benutzung verhaengt (Kampf: Wurf gegen Resistenz-Rang)
+    // bzw. heilt (Kampf UND Menue, z. B. Gegengift).
+    std::vector<int> plusStates;
+    std::vector<int> minusStates;
 };
 
 struct WeaponData {
