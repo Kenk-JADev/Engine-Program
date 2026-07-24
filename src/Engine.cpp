@@ -26,6 +26,7 @@
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Rui.h" // PAKET 31: eigenes UI-Framework (Window-Schicht)
+#include "rpgmaker3d/RuiGlTarget.h" // PAKET 39: eigener GL-Renderer fuer RUI
 #include "rpgmaker3d/Custom.h" // Game.ini / "alles custom"-Schalter
 #include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (reine Ruby-UI)
 
@@ -1640,14 +1641,15 @@ void Engine::Render() {
     if (mWindow && mWindow->GetWidth() > 0 && mWindow->GetHeight() > 0)
         glViewport(0, 0, mWindow->GetWidth(), mWindow->GetHeight());
 
-    // PAKET 37: Die gesamte Spielanzeige (Messages, Menues, HUD, Pictures,
-    // ScreenTexts, Kampfstatus, Farbton, Wetter) laeuft ueber das eigene
-    // RUI-Framework. ImGui (falls gebaut) ist nur noch ein optionaler
-    // Zeichen-Adapter fuer RUI; die Fensterlogik laeuft immer. DrawPlayHud
-    // wird bewusst IMMER aufgerufen (verwaltet RemoveWindow selbst).
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiBeginFrame();
-#endif
+    // PAKET 39: Die gesamte Spielanzeige (Messages, Menues, HUD, Pictures,
+    // ScreenTexts, Kampfstatus, Farbton, Wetter) zeichnet der EIGENE
+    // GL-DrawTarget (RuiGlTarget) — Dear ImGui wird zur Laufzeit nicht mehr
+    // benoetigt (Init/Backend bleibt vorerst nur kompiliert; der ImGui-
+    // DrawList-Adapter in Rui.cpp greift nie, solange das Target gesetzt
+    // ist). DrawPlayHud wird bewusst IMMER aufgerufen (RemoveWindow selbst).
+    static RuiGlTarget s_ruiGl;
+    if (!s_ruiGl.IsReady() && s_ruiGl.Init())
+        rui::Manager::Get().SetDrawTarget(&s_ruiGl);
     {
         const float uiW = mWindow ? (float)mWindow->GetWidth() : 1280.0f;
         const float uiH = mWindow ? (float)mWindow->GetHeight() : 720.0f;
@@ -1656,17 +1658,20 @@ void Engine::Render() {
             GameUI::Get().Draw();
             GameUI::Get().DrawPlayHud(mEditorMode);
         }
-        // ImGui-Builds: RUI-Fenster zeichnen als DrawList im selben Frame.
-        // Ohne ImGui: braucht einen echten DrawTarget (PAKET 39: GL-Adapter).
+        if (s_ruiGl.IsReady()) {
+            s_ruiGl.BeginFrame(uiW, uiH);
+            rui::Manager::Get().Draw();
+            s_ruiGl.EndFrame();
+        }
 #ifdef RPGMAKER3D_ENABLE_IMGUI
-        if (mImGuiReady) rui::Manager::Get().Draw();
-#else
-        rui::Manager::Get().Draw();
+        // Historischer Fallback-Pfad ohne GL-Target (z. B. Headless-Build)
+        else if (mImGuiReady) {
+            ImGuiBeginFrame();
+            rui::Manager::Get().Draw();
+            ImGuiEndFrame();
+        }
 #endif
     }
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiEndFrame();
-#endif
 
     // RGSS-Fenster (reine Ruby-UI) liegen auf der obersten Schicht -
     // nach den GameUI-Overlays zeichnen, damit Ruby-UIs alles ueberdecken.

@@ -69,6 +69,7 @@ set(CORE_LIB_SOURCES
     src/CommandHistory.cpp
     src/CharacterMotion.cpp
     src/Rui.cpp
+    src/RuiGlTarget.cpp
     src/Prefab.cpp
     src/Raycast.cpp
     src/Lighting.cpp

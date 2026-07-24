@@ -101,6 +101,30 @@ erreichten die Fenster nie. Ausserdem: Ruby-Zugriff `Rui.theme_color` /
 `Rui.set_theme_color` / `Rui.theme_metric` / `Rui.set_theme_metric`
 (Farben 0..255, Metriken in px; Details: `docs/SCRIPT-RUI.md`).
 
+## 5. Eigener GL-Renderer (PAKET 39 — umgesetzt)
+
+`rpg::RuiGlTarget` (`include/rpgmaker3d/RuiGlTarget.h`, `src/RuiGlTarget.cpp`)
+implementiert `rui::DrawTarget` direkt auf OpenGL 3.3 — **Dear ImGui wird
+zur Laufzeit nicht mehr benoetigt**:
+
+- Dreiecks-Batch (pos px / uv / color), ein GLSL-330-Programm, px→NDC
+  per `uDisplay`-Uniform; Texturen-Wechsel und Clip-Wechsel flushen.
+- Text ueber eingebauten **8x8-Font-Atlas** (16x16 Glyphen aus
+  `Font8x8.h`, Public Domain): ASCII direkt, deutsche Umlaute/sz werden
+  beim Atlas-Bau als Basis-Buchstabe + Diaerese synthetisiert
+  (Atlas-Plaetze 128..134); UTF-8-Dekodierung im Target.
+- Primitive: FillRect (rund per Fan-Polygon), StrokeRect (4 Linien),
+  Line (Dicke als Quad), FillCircle (Fan), Image (Teilbild/Vollbild-UV,
+  Rotation um die Mitte).
+- Clipping: `glScissor`-Stack (verschachtelte Rechtecke geschnitten,
+  GL-Y geflippt).
+- Render-State (Programm/VAO/Texturen/Blend RGB+Alpha getrennt/Depth/
+  Cull/Scissor) wird in `BeginFrame` gesichert und in `EndFrame`
+  restauriert — der 3D-Pass bleibt unberuehrt.
+- Engine (`Engine::Render`): Target wird einmalig initialisiert und per
+  `SetDrawTarget` gesetzt; der ImGui-DrawList-Adapter (Rui.cpp) bleibt
+  nur als historischer Fallback kompiliert und greift nicht mehr.
+
 Widget-Sync-Konvention: Der Spielzustand bleibt in den GameUI-Klassen;
 die Draw-Funktion baut den Widget-Baum pro Frame neu auf (Container wie
 `rui.msgbox` bleiben retained, inkl. Openness/Z-Ordnung).
