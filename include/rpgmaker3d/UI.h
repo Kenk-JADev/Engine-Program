@@ -444,6 +444,11 @@ private:
     void DrawNumberInput();
     void DrawNameInput();
     bool mHudVisible = true; // HUD-Sichtbarkeit (F9)
+
+    // PAKET 11: Bildschirm-Effekte (Befehle 223/224) und Wetter (236) als
+    // Vollbild-Overlays; Shake (225) zittert die Kamera (Engine-Seite).
+    void DrawScreenEffects();
+    void DrawWeather();
 };
 
 } // namespace rpg

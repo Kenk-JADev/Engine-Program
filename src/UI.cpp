@@ -286,9 +286,147 @@ void GameUI::Draw() {
     // Screen texts and pictures always on top (HUD)
     DrawPictures();
     DrawScreenTexts();
+    // PAKET 11: Bildschirm-Effekte (Farbton/Blitz) + Wetter — ueber der
+    // 3D-Welt, aber unter Menues/Nachrichten (XP faerbt Fenster nicht mit).
+    DrawScreenEffects();
+    DrawWeather();
     // PAKET 10: modale Fenster (Menue/Zahl/Name) obenauf (ImGui-Overlay,
     // ersetzt das RmlUi-#menu_box; ohne ImGui No-Op)
     DrawModalWindows();
+}
+
+// PAKET 11: Kurzes, deterministisches Hash in 0..1 (Wettertröpfchen ohne
+// rand() pro Frame — keine globalen Zustandswechsel, reproduzierbar).
+namespace {
+    float WeatherHash01(unsigned int n) {
+        n = n * 1664525u + 1013904223u;
+        n ^= n >> 16;
+        return (float)(n & 0xFFFFu) / 65535.0f;
+    }
+}
+
+// Bildschirm-Farbton (223) + Blitz (224) als Vollbild-Veils. XP rechnet den
+// Farbton pro Kanal (-255..255) plus Grauanteil — mit einfacher
+// Alpha-Mischung ist das eine bewusste Naeherung (dokumentiert): positives
+// Signal legt einen Farbveil, negatives dunkelt ab, Grau legt Sepia.
+void GameUI::DrawScreenEffects() {
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    const auto& fx = GetScreenEffects();
+    const float tr = fx.toneCurrent.r, tg = fx.toneCurrent.g,
+                tb = fx.toneCurrent.b, tgr = fx.toneCurrent.a;
+    const bool hasTone = (tr != 0.0f || tg != 0.0f || tb != 0.0f || tgr > 0.0f);
+    const bool hasFlash = (fx.flashTimer > 0.0f && fx.flashDuration > 0.0f);
+    if (!hasTone && !hasFlash) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    // Unsichtbares Vollbild-Fenster GANZ UNTEN in der ImGui-Ordnung (wird vor
+    // den anderen Overlays gerufen): liegt ueber der 3D-Welt, aber unter
+    // Menues/Nachrichten — wie in XP, wo Fenster nicht gefaerbt werden.
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("##ScreenFx", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    if (hasTone) {
+        const float posR = std::max(0.0f, tr), posG = std::max(0.0f, tg),
+                    posB = std::max(0.0f, tb);
+        const float negL = (std::max(0.0f, -tr) + std::max(0.0f, -tg) +
+                            std::max(0.0f, -tb)) / 3.0f;
+        const float posL = (posR + posG + posB) / 3.0f;
+        // gewichteter Veil: Farbe aus positiven Kanaelen, Abdunklung aus
+        // negativen, Sepia aus Grauanteil.
+        const float wPos = posL * 0.65f, wNeg = negL * 0.75f,
+                    wGray = tgr * 0.55f;
+        const float wSum = wPos + wNeg + wGray;
+        if (wSum > 0.004f) {
+            float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+            if (posL > 0.0f) { // Farbe des positiven Tons (normiert)
+                cr = posR / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+                cg = posG / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+                cb = posB / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+            }
+            const float sep = 0.20f; // Sepia-Grau
+            const float mr = (cr * wPos + 0.0f * wNeg + sep * wGray);
+            const float mg = (cg * wPos + 0.0f * wNeg + (sep * 0.85f) * wGray);
+            const float mb = (cb * wPos + 0.0f * wNeg + (sep * 0.65f) * wGray);
+            const float inv = 1.0f / wSum;
+            dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
+                IM_COL32((int)(std::clamp(mr * inv, 0.0f, 1.0f) * 255.0f),
+                         (int)(std::clamp(mg * inv, 0.0f, 1.0f) * 255.0f),
+                         (int)(std::clamp(mb * inv, 0.0f, 1.0f) * 255.0f),
+                         (int)(std::clamp(wSum, 0.0f, 0.92f) * 255.0f)));
+        }
+    }
+    if (hasFlash) {
+        const float k = fx.flashTimer / fx.flashDuration; // 1 -> 0
+        const Color& c = fx.flashColor;
+        dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
+            IM_COL32((int)(std::clamp(c.r, 0.0f, 1.0f) * 255.0f),
+                     (int)(std::clamp(c.g, 0.0f, 1.0f) * 255.0f),
+                     (int)(std::clamp(c.b, 0.0f, 1.0f) * 255.0f),
+                     (int)(std::clamp(c.a * k, 0.0f, 1.0f) * 255.0f)));
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
+}
+
+// XP-Wetter (Befehl 236): Regen/Sturm = schraege Streifen, Schnee =
+// treibende Flocken; Partikel deterministisch aus Index+Zeit (kein rand()).
+// Laeuft als globales Overlay — auf der Karte UND im Kampf.
+void GameUI::DrawWeather() {
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    const auto& fx = GetScreenEffects();
+    const int type = fx.weatherType;
+    const float power = fx.weatherPower; // gelerpt, 0..9
+    if (type <= 0 || power < 0.05f) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("##WeatherFx", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float t = (float)ImGui::GetTime();
+
+    if (type == 1 || type == 2) { // Regen / Sturm
+        const bool storm = (type == 2);
+        const int drops = (int)(power * (storm ? 26.0f : 14.0f));
+        const float slant = storm ? 0.45f : 0.18f;
+        const float speed = storm ? 1450.0f : 950.0f;
+        const ImU32 col = IM_COL32(170, 190, 255, (int)std::clamp(90.0f + power * 14.0f, 0.0f, 255.0f));
+        for (int i = 0; i < drops; ++i) {
+            const float hx = WeatherHash01((unsigned)(i * 37 + 1));
+            const float hy = WeatherHash01((unsigned)(i * 57 + 7));
+            const float len = 14.0f + WeatherHash01((unsigned)(i * 11)) * 16.0f;
+            const float vmul = 0.75f + 0.5f * WeatherHash01((unsigned)(i * 17));
+            const float y = fmodf(hy * H + t * speed * vmul, H + 40.0f) - 20.0f;
+            const float x = fmodf(hx * W - t * speed * slant * 0.35f + W * 8.0f, W + 80.0f) - 40.0f;
+            dl->AddLine(ImVec2(x, y), ImVec2(x + len * slant, y + len), col, storm ? 1.6f : 1.1f);
+        }
+    } else if (type == 3) { // Schnee
+        const int flakes = (int)(power * 10.0f);
+        const ImU32 col = IM_COL32(255, 255, 255, (int)std::clamp(120.0f + power * 13.0f, 0.0f, 255.0f));
+        for (int i = 0; i < flakes; ++i) {
+            const float hx = WeatherHash01((unsigned)(i * 41 + 3));
+            const float hy = WeatherHash01((unsigned)(i * 67 + 13));
+            const float y = fmodf(hy * H + t * (45.0f + 55.0f * WeatherHash01((unsigned)(i * 19))), H + 20.0f) - 10.0f;
+            const float x = hx * W + sinf(t * (1.5f + WeatherHash01((unsigned)(i * 23))) + (float)i) * 22.0f;
+            const float r = 1.2f + 2.2f * WeatherHash01((unsigned)(i * 29));
+            dl->AddCircleFilled(ImVec2(x, y), r, col);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
 }
 void GameUI::ShowMessage(const std::string& text) {
     mMessage.Show(text);

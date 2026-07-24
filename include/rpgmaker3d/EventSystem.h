@@ -301,7 +301,7 @@ struct CommonEvent {
     std::vector<EventCommand> list;
 };
 
-// Zustand fuer Bildschirm-Effekte (Screen Flash / Shake / Color Tone)
+// Zustand fuer Bildschirm-Effekte (Screen Flash / Shake / Color Tone / Wetter)
 struct ScreenEffects {
     float flashTimer = 0.0f;
     float flashDuration = 0.0f;
@@ -314,6 +314,12 @@ struct ScreenEffects {
     Color toneCurrent{0, 0, 0, 0};
     float toneDuration = 0.0f;
     float toneElapsed = 0.0f;
+    // PAKET 11: Wetter (Befehl 236) — type 0=keins, 1=Regen, 2=Sturm,
+    // 3=Schnee; power 0..9 wird sanft hoch-/runtergefahren (Update).
+    int weatherType = 0;
+    int weatherPowerTarget = 0;
+    float weatherPower = 0.0f;  // aktuell gelerpte Staerke (0..9)
+    float weatherRamp = 1.5f;   // Sekunden fuer vollen Auf-/Abbau
     void Update(float dt);
 };
 ScreenEffects& GetScreenEffects();

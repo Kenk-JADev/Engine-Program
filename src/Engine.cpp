@@ -34,6 +34,7 @@
 #include <iostream>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <filesystem>
@@ -933,6 +934,17 @@ void Engine::Update(float dt) {
         Vec3 playerPos = Game::Get().Player().GetPosition();
         // Simple Follow-Cam: leicht versetzt hinter/über dem Spieler
         Vec3 targetPos = playerPos + Vec3(0, 3.0f, 5.0f);
+        // PAKET 11: Bildschirm-Erschuetterung (Befehl 225) als Kamera-Jitter —
+        // Amplitude klingt mit dem Shake-Timer ab, Achsen x/y (Bildebene).
+        {
+            const auto& fx = GetScreenEffects();
+            if (fx.shakeTimer > 0.0f && fx.shakeDuration > 0.0f) {
+                const float k = fx.shakeTimer / fx.shakeDuration; // 1 -> 0
+                const float amp = (float)fx.shakePower * 0.10f * k;
+                targetPos.x += (((float)std::rand() / (float)RAND_MAX) * 2.0f - 1.0f) * amp;
+                targetPos.y += (((float)std::rand() / (float)RAND_MAX) * 2.0f - 1.0f) * amp;
+            }
+        }
         cam.SetPosition(targetPos);
         cam.SetRotation(Vec3(-20.0f, 0.0f, 0.0f));
         allowCamera = false; // keine Free-Fly im PlayMode wenn Follow aktiv

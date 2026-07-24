@@ -77,6 +77,16 @@ void ScreenEffects::Update(float dt) {
         toneCurrent.b = toneCurrent.b + (toneTarget.b - toneCurrent.b) * t;
         toneCurrent.a = toneCurrent.a + (toneTarget.a - toneCurrent.a) * t;
     }
+    // PAKET 11: Wetter-Staerke sanft auf das Ziel rampen (XP aendert die
+    // Staerke ueber eine Dauer — bei uns fest weatherRamp Sekunden).
+    {
+        const float target = (weatherType > 0) ? (float)weatherPowerTarget : 0.0f;
+        const float rate = (weatherRamp > 0.01f) ? (9.0f / weatherRamp) : 1000.0f;
+        if (weatherPower < target)
+            weatherPower = std::min(target, weatherPower + rate * dt);
+        else if (weatherPower > target)
+            weatherPower = std::max(target, weatherPower - rate * dt);
+    }
 }
 ScreenEffects& GetScreenEffects() {
     static ScreenEffects fx;
@@ -773,9 +783,21 @@ bool EventInterpreter::ExecuteCommand() {
         GameUI::Get().RemovePicture(cmd.param1 > 0 ? cmd.param1 : 1);
         return true;
     case CC::SetWeatherEffects:
-    case CC::SetWeather:
+    case CC::SetWeather: {
+        // PAKET 11: XP-Wetter (Typ 0 Keins / 1 Regen / 2 Sturm / 3 Schnee,
+        // Staerke 1-9). Zustand hier; die Anzeige liegt bei
+        // GameUI::DrawWeather (ImGui-Overlay, Karte UND Kampf).
+        auto& fx = GetScreenEffects();
+        fx.weatherType = cmd.param1;
+        fx.weatherPowerTarget = std::clamp(cmd.param2, 0, 9);
+        if (fx.weatherType <= 0 || fx.weatherType > 3) {
+            fx.weatherType = 0;
+            fx.weatherPowerTarget = 0; // „Keins" faehrt sanft herunter
+        }
+        return true;
+    }
     case CC::SetTimeOfDay:
-        return true; // Wetter/Tageszeit: Renderer-Hook (bereits als 3D-Befehl reserviert)
+        return true; // Tageszeit: Renderer-Hook (bleibt reserviert)
     case CC::PlayBGM:
         if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 0, true); return true; }
         if (onPlayBGM) onPlayBGM(cmd.text, true);

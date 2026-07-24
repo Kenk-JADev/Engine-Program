@@ -815,6 +815,34 @@ ist jetzt Default ON (bei OFF: Draw = No-Op, Logik läuft — dokumentiert).
   werden — Bot pusht keine Workflow-Dateien), README +
   docs/ARCHITECTURE.md + docs/QT-EDITOR.md + Custom.h-Kommentare.
 
+## PAKET 11 — XP-Bildschirmeffekte sichtbar ✅ ERLEDIGT 2026-07-23
+
+Die Event-Befehle 223/224/225 (Farbton/Blitz/Erschütterung) schrieben
+bislang nur in den `ScreenEffects`-Zustand — **gerendert wurde nichts**;
+236 (Wetter) war ein reservierter No-op-Kommentar. Jetzt sichtbar:
+
+- [x] **Bildschirm-Farbton (223) + Blitz (224):** `GameUI::DrawScreenEffects()`
+  — unsichtbares Vollbild-Fenster ganz unten in der ImGui-Ordnung, also
+  ÜBER der 3D-Welt, aber UNTER Menüs/Nachrichten (XP färbt Fenster nicht
+  mit). Blitz: `flashColor` mit abklingendem Alpha (Timer 1→0). Farbton:
+  Vorzeichen-getrennter Veil — positives Signal legt die Farbe, negatives
+  dunkelt ab, Grauanteil legt Sepia. **Dokumentierte Näherung:** XP
+  verschiebt pro Kanal −255..+255 + Grau-Mischung; exakte Kanal-Mathe
+  bräuchte einen Post-Process-Shader (Szene rendert direkt ins Host-FBO,
+  kein Composite-Pass) — mit Alpha-Mischung bewusst angenähert.
+- [x] **Erschütterung (225):** Kamera-Jitter im Follow-Cam-Block der
+  Engine (funktioniert im Player UND eingebettetem Qt-Playtest),
+  Amplitude = `shakePower × 0,10 × (Timer/Duration)` auf den Bildachsen
+  x/y — die ganze 3D-Welt zittert, HUD/Menüs bleiben ruhig (wie XP).
+- [x] **Wetter (236) — vorher komplett ohne Wirkung:** Zustand in
+  `ScreenEffects` (Typ 0 Keins / 1 Regen / 2 Sturm / 3 Schnee, Stärke
+  0–9 mit sanfter Rampe in `Update`, 1,5 s), `GameUI::DrawWeather()`
+  zeichnet deterministische Partikel (`WeatherHash01`, kein `rand()`
+  pro Frame): Regen = schräge Streifen, Sturm = mehr/schneller/schiefer,
+  Schnee = treibende Flocken mit Sinus-Drift. Globales Overlay → läuft
+  auf der Karte UND im Kampf automatisch. `SetTimeOfDay` bleibt
+  bewusst reserviert (kein XP-Befehl).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und
