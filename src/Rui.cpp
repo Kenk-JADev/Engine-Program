@@ -127,6 +127,23 @@ void Gauge::Draw(DrawTarget& t) {
     t.FillRect(Rect{rect.x, rect.y, rect.w * frac, rect.h}, color, 2.0f);
 }
 
+void Picture::Draw(DrawTarget& t) {
+    if (!visible || !texture || imgW <= 0 || imgH <= 0) return;
+    Rect s{std::clamp(src.x, 0.0f, (float)imgW), std::clamp(src.y, 0.0f, (float)imgH),
+           std::clamp(src.w, 0.0f, (float)imgW), std::clamp(src.h, 0.0f, (float)imgH)};
+    if (s.w <= 0.0f || s.h <= 0.0f) return;
+    Rect d = rect;
+    if (keepAspect) {
+        const float kx = rect.w / s.w, ky = rect.h / s.h;
+        const float k = std::min(kx, ky);
+        d.w = s.w * k;
+        d.h = s.h * k;
+        d.x = rect.x + (rect.w - d.w) * 0.5f;
+        d.y = rect.y + (rect.h - d.h) * 0.5f;
+    }
+    t.Image(texture, imgW, imgH, s, d, tint);
+}
+
 // PAKET 33: Nine-Patch-Strecke einer Windowskin-Quelle (xp-artige
 // 96x96-Rahmenflaeche im Sheet; border px Rand). dst-Ecken bleiben 1:1,
 // Kanten/Flaeche strecken.

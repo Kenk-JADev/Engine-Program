@@ -43,9 +43,15 @@ Adapter: ImGui-DrawList   [spaeter: eigener GL-Batcher / RGSS-Canvas]
 
 | Bildschirm | Status |
 |---|---|
-| Message + Auswahl (`rui.msgbox`) | **RUI** (PAKET 31) |
-| Menue/Speicher/Shop/Name/Zahl/Kampf | ImGui-Overlay (Folgepakete nacheinander) |
-| HUD, Pictures, Wetter, Farbton | ImGui-Overlay (unveraendert) |
+| Message + Auswahl (`rui.msgbox`) | **RUI** (PAKET 31, Maus) |
+| Menue/Titel/Speicher/Laden (`rui.menu`) | **RUI** (PAKET 34, Maus: Hover/Click) |
+| XP-Kampfstatus (`rui.battlestatus`) | **RUI** (PAKET 34, Gauges + Faces) |
+| Zahl-/Namenseingabe (103/303) | ImGui-Overlay (Folgepaket) |
+| HUD, Pictures, Wetter, Farbton | ImGui-Overlay (Folgepaket) |
+
+PAKET 33: Windowskin-PNG (Nine-Patch, XP-96x96-Rahmenflaeche) im Skin-Slot
+von `Theme`; Auto-Suche `Graphics/System/windowskin.*`, Script-Override
+via `Rui.windowskin = "name"`. Flaechen-/Flat-Skin bleibt Fallback.
 
 Widget-Sync-Konvention: Der Spielzustand bleibt in den GameUI-Klassen;
 die Draw-Funktion baut den Widget-Baum pro Frame neu auf (Container wie

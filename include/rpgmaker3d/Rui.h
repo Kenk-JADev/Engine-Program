@@ -124,6 +124,17 @@ public:
     void Draw(DrawTarget& t) override;
 };
 
+// Bild-Widget (PAKET 33/34; Faces/Icons, spaeter add_picture aus Scripten)
+class Picture : public Widget {
+public:
+    void* texture = nullptr;   // adapter-opak
+    int imgW = 0, imgH = 0;
+    Rect src{0, 0, 1e9f, 1e9f}; // Teilbild (px); Overrun wird auf Bild geklemmt
+    Color4 tint{1, 1, 1, 1};
+    bool keepAspect = true;
+    void Draw(DrawTarget& t) override;
+};
+
 class Panel : public Widget {
 public:
     std::vector<std::unique_ptr<Widget>> children;

@@ -281,54 +281,88 @@ void MenuWindow::Cancel() {
 // Tastatur bleibt in GameUI::UpdateModalInput; die Maus kann zusaetzlich
 // klicken. Ohne ImGui-Define: No-Op (Logik laeuft weiter).
 void MenuWindow::Draw() {
-    if (!mVisible) return;
+    // PAKET 34: Menue/Titel/Speicher/Laden rendert ueber RUI (retained
+    // Fenster + XP-Windowskin-Support). Tastatur bleibt der native Pfad
+    // (UpdateModalInput -> MenuWindow), die MAUS geht jetzt endlich echt:
+    // Hover waehlt, Click bestaetigt (vorher an das unfedertabhaengige
+    // ImGui-Selectable gekoppelt, das nie feuerte).
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.menu");
+    if (!mVisible) {
+        if (win) mgr.RemoveWindow("rui.menu"); // Menues blenden sofort aus (XP)
+        return;
+    }
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.menu";
+        nw->openness = 255.0f; // sofort offen (kein Aufrollen bei Menues)
+        win = &mgr.AddWindow(std::move(nw));
+    }
+
+    float dispW = 1280.0f, dispH = 720.0f;
 #ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
+    dispW = ImGui::GetIO().DisplaySize.x;
+    dispH = ImGui::GetIO().DisplaySize.y;
+#endif
+    const auto& th = rui::Theme::Get();
     const bool titleMode = GameUI::Get().Title().IsVisible();
-    const float w = io.DisplaySize.x * (titleMode ? 0.40f : 0.46f);
+    const float w = dispW * (titleMode ? 0.40f : 0.46f);
+    const int rows = std::max(1, (int)mItems.size());
+    const float titleH = mTitle.empty() ? 0.0f : th.rowHeight + 4.0f;
+    const float hintH = th.rowHeight + 2.0f;
+    const float h = 2 * th.padding + titleH + hintH + rows * th.rowHeight;
     float x, y;
     if (titleMode) {
-        // XP: Titelmenue mittig
-        x = (io.DisplaySize.x - w) * 0.5f;
-        y = io.DisplaySize.y * 0.30f;
+        x = (dispW - w) * 0.5f;
+        y = dispH * 0.30f;                    // XP: Titelmenue mittig
     } else {
-        // im Spiel/Menue rechts oben (ehemalige #menu_box-Position)
-        x = io.DisplaySize.x - w - io.DisplaySize.x * 0.04f;
-        y = io.DisplaySize.y * 0.12f;
+        x = dispW - w - dispW * 0.04f;        // im Spiel: rechts oben
+        y = dispH * 0.12f;
     }
-    ImGui::SetNextWindowPos(ImVec2(x, y));
-    ImGui::SetNextWindowSize(ImVec2(w, 0.0f)); // Hoehe waechst mit dem Inhalt
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
-    ImGui::Begin("##MenuBox", nullptr,
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    win->rect = rui::Rect{x, y, w, h};
+    win->focus = true;
+
+    win->children.clear();
+    const float cx = x + th.padding;
+    float cy = y + th.padding;
+    const float cw = w - 2.0f * th.padding;
+
     if (!mTitle.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mTitle.c_str());
-        ImGui::Separator();
+        auto cap = std::make_unique<rui::Label>();
+        cap->text = mTitle;
+        cap->color = th.accent;
+        cap->rect = rui::Rect{cx, cy, cw, th.rowHeight};
+        win->children.push_back(std::move(cap));
+        cy += th.rowHeight + 4.0f;
     }
-    // Schnappschuss: onPick darf das Menue neu aufbauen (Show erneut rufen),
-    // waehrend wir noch in der Schleife waeren.
-    const std::vector<Entry> items = mItems;
-    for (size_t i = 0; i < items.size(); ++i) {
-        ImGui::PushID((int)i);
-        if (!items[i].enabled) {
-            ImGui::TextDisabled("%s", items[i].text.c_str());
-        } else if (ImGui::Selectable(items[i].text.c_str(), (int)i == mCursor)) {
-            mCursor = (int)i; // Maus bestaetigt direkt (Tastatur: UpdateModalInput)
+
+    auto lv = std::make_unique<rui::ListView>();
+    lv->id = "list";
+    lv->rect = rui::Rect{cx, cy, cw, th.rowHeight * (float)rows};
+    for (const auto& it : mItems) lv->items.push_back({it.text, it.enabled});
+    lv->selected = std::clamp(mCursor, 0, (int)lv->items.size() - 1);
+    lv->cursorVisible = true;
+    // Maus: Click = bestaetigen (Confirm erlaubt Neuaufbau des Menues).
+    lv->onPick = [this](int idx) {
+        if (idx >= 0 && idx < (int)mItems.size() && mItems[idx].enabled) {
+            mCursor = idx;
             Confirm();
-            ImGui::PopID();
-            break;
         }
-        ImGui::PopID();
-    }
-    ImGui::Dummy(ImVec2(0, 4));
-    if (mCancelable)
-        ImGui::TextDisabled("Pfeile/W-S waehlen | E/Enter bestaetigen | Esc zurueck");
-    else
-        ImGui::TextDisabled("Pfeile/W-S waehlen | E/Enter bestaetigen");
-    ImGui::End();
-    ImGui::PopStyleColor();
-#endif
+    };
+    // Maus: Hover = Cursor setzen (wie Tastatur-Pfeile)
+    lv->onHoverItem = [this](int idx) {
+        if (idx >= 0 && idx < (int)mItems.size() && mItems[idx].enabled)
+            mCursor = idx;
+    };
+    win->children.push_back(std::move(lv));
+
+    auto hint = std::make_unique<rui::Label>();
+    hint->text = mCancelable
+        ? "Pfeile/W-S waehlen | E/Enter/Click | Esc zurueck"
+        : "Pfeile/W-S waehlen | E/Enter/Click";
+    hint->color = th.textDisabled;
+    hint->rect = rui::Rect{cx, y + h - th.padding - th.rowHeight, cw, th.rowHeight};
+    win->children.push_back(std::move(hint));
 }
 
 // --- GameUI ---
@@ -2390,116 +2424,131 @@ unsigned int GameUI::GetFaceTexture(const std::string& faceName, int& outW, int&
 }
 
 void GameUI::DrawBattleStatus() {
-    if (!mBattleStatusActive || mBattleStatusEntries.empty()) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-    const float w = io.DisplaySize.x;
-    float h = io.DisplaySize.y * 0.20f;      // XP: Statuszeile ~1/5 unten
-    if (h < 110.0f) h = 110.0f;              // Mindesthoehe fuer 2 Balkenzeilen
-    ImGui::SetNextWindowPos(ImVec2(0.0f, io.DisplaySize.y - h));
-    ImGui::SetNextWindowSize(ImVec2(w, h));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.07f, 0.16f, 0.90f));
-    if (ImGui::Begin("##BattleStatus", nullptr,
-            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
-            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoScrollWithMouse)) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        const ImVec2 origin = ImGui::GetWindowPos();
-        const int n = (int)mBattleStatusEntries.size();
-        const int cols = std::max(4, n);     // XP: 4 Slots nebeneinander
-        const float slotW = w / (float)cols;
-        const float faceSz = h - 62.0f;      // Platz: Name + 2 Zeilen
-        const float pad = 10.0f;
-
-        // Kleiner lokaler Balkenzeichner (Hintergrund, Fuellung, Rahmen)
-        auto drawBar = [dl](float x, float y, float bw, float bh, float t,
-                            ImU32 fillCol) {
-            if (t < 0.0f) t = 0.0f;
-            if (t > 1.0f) t = 1.0f;
-            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw, y + bh),
-                              IM_COL32(18, 18, 22, 230));
-            if (t > 0.0f)
-                dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw * t, y + bh), fillCol);
-            dl->AddRect(ImVec2(x, y), ImVec2(x + bw, y + bh),
-                        IM_COL32(200, 200, 210, 160), 0.0f, 0, 1.0f);
-        };
-
-        for (int i = 0; i < n; ++i) {
-            const BattleStatusEntry& e = mBattleStatusEntries[(size_t)i];
-            const float x0 = origin.x + slotW * (float)i + pad;
-            const float y0 = origin.y + 8.0f;
-
-            // Gesicht (links), bei Bedarf aus dem Face-Sheet
-            float textX = x0;
-            int fw = 0, fh = 0;
-            const unsigned int faceTex = GetFaceTexture(e.faceName, fw, fh);
-            if (faceTex != 0 && faceSz > 8.0f) {
-                float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
-                if (fh > 0 && fw == fh * 2) {         // 4x2-Sheet (VX-Stil)
-                    const int idx = std::clamp(e.faceIndex, 0, 7);
-                    u0 = (float)(idx % 4) * 0.25f;
-                    v0 = (float)(idx / 4) * 0.5f;
-                    u1 = u0 + 0.25f;
-                    v1 = v0 + 0.5f;
-                }
-                const float a = e.dead ? 0.45f : 1.0f;
-                dl->AddImage((ImTextureID)(intptr_t)faceTex,
-                             ImVec2(x0, y0), ImVec2(x0 + faceSz, y0 + faceSz),
-                             ImVec2(u0, v0), ImVec2(u1, v1),
-                             IM_COL32(255, 255, 255, (int)(a * 255.0f)));
-                dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + faceSz, y0 + faceSz),
-                            IM_COL32(0, 0, 0, 160), 0.0f, 0, 1.0f);
-                textX = x0 + faceSz + 8.0f;
-            }
-
-            // Name (K.O. rot markiert)
-            const ImU32 nameCol = e.dead ? IM_COL32(255, 90, 80, 255)
-                                         : IM_COL32(235, 240, 255, 255);
-            dl->AddText(ImVec2(textX, y0), nameCol, e.name.c_str());
-            // PAKET 17: aktiver Zustand unter dem Namen (XP-Statusfenster)
-            if (!e.dead && !e.stateName.empty())
-                dl->AddText(ImVec2(textX, y0 + 13.0f), IM_COL32(255, 205, 90, 255),
-                            e.stateName.c_str());
-            if (e.dead)
-                dl->AddText(ImVec2(x0 + slotW - pad - 30.0f, y0),
-                            IM_COL32(255, 90, 80, 255), "K.O.");
-
-            const float barX = textX + 36.0f;
-            const float barW = slotW - (barX - x0) - pad - 74.0f;
-            const float rowY1 = y0 + 26.0f;
-            const float rowY2 = y0 + 50.0f;
-
-            // HP (XP: gruen -> gelb -> rot je nach Fuellstand)
-            const float hpT = e.maxHp > 0 ? (float)e.hp / (float)e.maxHp : 0.0f;
-            const ImU32 hpCol = e.dead ? IM_COL32(90, 90, 95, 255)
-                : hpT > 0.5f ? IM_COL32(64, 224, 88, 255)
-                : hpT > 0.25f ? IM_COL32(255, 200, 64, 255)
-                              : IM_COL32(240, 80, 70, 255);
-            dl->AddText(ImVec2(textX, rowY1 - 4.0f), IM_COL32(255, 190, 110, 255), "HP");
-            drawBar(barX, rowY1, barW, 7.0f, hpT, hpCol);
-            char buf[24];
-            std::snprintf(buf, sizeof(buf), "%d/%d", e.hp, e.maxHp);
-            dl->AddText(ImVec2(barX + barW + 8.0f, rowY1 - 4.0f),
-                        IM_COL32(220, 225, 240, 255), buf);
-
-            // MP (blaeulich)
-            const float mpT = e.maxMp > 0 ? (float)e.mp / (float)e.maxMp : 0.0f;
-            const ImU32 mpCol = e.dead ? IM_COL32(90, 90, 95, 255)
-                                       : IM_COL32(96, 150, 240, 255);
-            dl->AddText(ImVec2(textX, rowY2 - 4.0f), IM_COL32(150, 190, 255, 255), "MP");
-            drawBar(barX, rowY2, barW, 7.0f, mpT, mpCol);
-            std::snprintf(buf, sizeof(buf), "%d/%d", e.mp, e.maxMp);
-            dl->AddText(ImVec2(barX + barW + 8.0f, rowY2 - 4.0f),
-                        IM_COL32(220, 225, 240, 255), buf);
-        }
+    // PAKET 34: XP-Kampfstatus rendert ueber RUI (retained Fenster +
+    // Windowskin/Gauge/Picture-Widgets). Nicht-interaktiv: enabled=false,
+    // damit das Fenster keine Maus-Klicks konsumiert.
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.battlestatus");
+    if (!mBattleStatusActive || mBattleStatusEntries.empty()) {
+        if (win) mgr.RemoveWindow("rui.battlestatus");
+        return;
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-#else
-    (void)0; // Ohne ImGui: Status nur als interne Datenhalde (wie uebliche No-Op-Draws)
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.battlestatus";
+        nw->openness = 255.0f; // sofort offen
+        nw->enabled = false;   // kein Klick-Konsum
+        win = &mgr.AddWindow(std::move(nw));
+    }
+
+    float dispW = 1280.0f, dispH = 720.0f;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    dispW = ImGui::GetIO().DisplaySize.x;
+    dispH = ImGui::GetIO().DisplaySize.y;
 #endif
+    const auto& th = rui::Theme::Get();
+    const float w = dispW;
+    float h = dispH * 0.20f;               // XP: Statuszeile ~1/5 unten
+    if (h < 110.0f) h = 110.0f;
+    win->rect = rui::Rect{0.0f, dispH - h, w, h};
+    win->enabled = false;
+
+    win->children.clear();
+    const int n = (int)mBattleStatusEntries.size();
+    const int cols = std::max(4, n);       // XP: 4 Slots nebeneinander
+    const float slotW = w / (float)cols;
+    const float pad = 12.0f;
+    const float faceSz = h - 66.0f;
+    const rui::Color4 koCol(1.0f, 0.35f, 0.31f, 1.0f);
+    const rui::Color4 nameCol(0.92f, 0.94f, 1.0f, 1.0f);
+    const rui::Color4 stateCol(1.0f, 0.80f, 0.35f, 1.0f);
+    const rui::Color4 hpLabelCol(1.0f, 0.74f, 0.43f, 1.0f);
+    const rui::Color4 mpLabelCol(0.65f, 0.80f, 1.0f, 1.0f);
+    const rui::Color4 valueCol(0.86f, 0.88f, 0.94f, 1.0f);
+    const rui::Color4 dimCol(0.35f, 0.35f, 0.37f, 1.0f);
+
+    for (int i = 0; i < n; ++i) {
+        const BattleStatusEntry& e = mBattleStatusEntries[(size_t)i];
+        const float x0 = slotW * (float)i + pad;
+        float y0 = win->rect.y + 8.0f;
+        float textX = x0;
+
+        // Gesicht (links; 4x2-Sheet via faceIndex)
+        int fw = 0, fh = 0;
+        const unsigned int faceTex = GetFaceTexture(e.faceName, fw, fh);
+        if (faceTex != 0 && faceSz > 8.0f) {
+            auto pic = std::make_unique<rui::Picture>();
+            pic->texture = (void*)(intptr_t)faceTex;
+            pic->imgW = fw; pic->imgH = fh;
+            pic->keepAspect = false;
+            if (fh > 0 && fw == fh * 2) {     // VX-Stil 4x2
+                const int idx = std::clamp(e.faceIndex, 0, 7);
+                pic->src = rui::Rect{fw * 0.25f * (idx % 4), fh * 0.5f * (idx / 4),
+                                     fw * 0.25f, fh * 0.5f};
+            }
+            pic->rect = rui::Rect{x0, y0, faceSz, faceSz};
+            if (e.dead) pic->tint.a = 0.45f;
+            win->children.push_back(std::move(pic));
+            textX = x0 + faceSz + 8.0f;
+        }
+        const float txtW = std::max(30.0f, slotW - pad - (textX - x0));
+
+        auto name = std::make_unique<rui::Label>();
+        name->text = e.name + (e.dead ? "" : (e.stateName.empty() ? "" : "  |  " + e.stateName));
+        name->color = e.dead ? koCol : nameCol;
+        name->rect = rui::Rect{textX, y0, txtW, th.rowHeight};
+        win->children.push_back(std::move(name));
+        if (e.dead) {
+            auto ko = std::make_unique<rui::Label>();
+            ko->text = "K.O.";
+            ko->color = koCol;
+            ko->align = 2;
+            ko->rect = rui::Rect{textX, y0, std::max(30.0f, slotW - 2 * pad - (textX - x0)), th.rowHeight};
+            win->children.push_back(std::move(ko));
+        }
+        if (!e.dead && !e.stateName.empty()) {} // State steht schon in der Namenszeile
+
+        // HP/MP-Zeilen: Prefix + Gauge + Wert
+        const float rowY1 = y0 + 28.0f;
+        const float rowY2 = y0 + 52.0f;
+        const float barX = textX + 34.0f;
+        const float barW = std::max(20.0f, slotW - (barX - x0) - pad - 70.0f);
+        const float valX = barX + barW + 6.0f;
+
+        const float hpT = e.maxHp > 0 ? (float)e.hp / (float)e.maxHp : 0.0f;
+        auto hpPre = std::make_unique<rui::Label>();
+        hpPre->text = "HP"; hpPre->color = hpLabelCol;
+        hpPre->rect = rui::Rect{textX, rowY1 - 5.0f, 34.0f, th.rowHeight};
+        win->children.push_back(std::move(hpPre));
+        auto hpBar = std::make_unique<rui::Gauge>();
+        hpBar->current = e.hp; hpBar->maximum = std::max(1, e.maxHp);
+        hpBar->color = e.dead ? dimCol
+            : hpT > 0.5f ? rui::Color4(0.25f, 0.88f, 0.35f, 1.0f)
+            : hpT > 0.25f ? rui::Color4(1.0f, 0.78f, 0.25f, 1.0f)
+                          : rui::Color4(0.94f, 0.31f, 0.27f, 1.0f);
+        hpBar->rect = rui::Rect{barX, rowY1, barW, 7.0f};
+        win->children.push_back(std::move(hpBar));
+        auto hpVal = std::make_unique<rui::Label>();
+        hpVal->text = std::to_string(e.hp) + "/" + std::to_string(e.maxHp);
+        hpVal->color = valueCol;
+        hpVal->rect = rui::Rect{valX, rowY1 - 5.0f, 64.0f, th.rowHeight};
+        win->children.push_back(std::move(hpVal));
+
+        auto mpPre = std::make_unique<rui::Label>();
+        mpPre->text = "MP"; mpPre->color = mpLabelCol;
+        mpPre->rect = rui::Rect{textX, rowY2 - 5.0f, 34.0f, th.rowHeight};
+        win->children.push_back(std::move(mpPre));
+        auto mpBar = std::make_unique<rui::Gauge>();
+        mpBar->current = e.mp; mpBar->maximum = std::max(1, e.maxMp);
+        mpBar->color = e.dead ? dimCol : rui::Color4(0.38f, 0.59f, 0.94f, 1.0f);
+        mpBar->rect = rui::Rect{barX, rowY2, barW, 7.0f};
+        win->children.push_back(std::move(mpBar));
+        auto mpVal = std::make_unique<rui::Label>();
+        mpVal->text = std::to_string(e.mp) + "/" + std::to_string(e.maxMp);
+        mpVal->color = valueCol;
+        mpVal->rect = rui::Rect{valX, rowY2 - 5.0f, 64.0f, th.rowHeight};
+        win->children.push_back(std::move(mpVal));
+    }
 }
 
 void GameUI::DrawPictures() {
