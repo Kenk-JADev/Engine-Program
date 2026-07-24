@@ -162,6 +162,12 @@ void MessageWindow::Draw() {
     win->children.push_back(std::move(txt));
 
     if (hasChoices) {
+        // PAKET 36 (Fix): Flaechen-onClick der vorherigen Wahl-freien
+        // Nachricht ist ein Panel-Member und ueberlebt children.clear() —
+        // mit aktiven Choices zwingend zuruecksetzen, sonst wuerde ein
+        // Klick neben die Liste die Auswahl wegwerfen und das Event haengen
+        // lassen.
+        win->onClick = nullptr;
         auto lv = std::make_unique<rui::ListView>();
         lv->rect = rui::Rect{cx, wRect.y + wRect.h - th.padding -
                              th.rowHeight * (float)std::min<size_t>(mChoices.size(), 6) - 2.0f,
@@ -379,7 +385,10 @@ void GameUI::Update(float dt) {
 void GameUI::Draw() {
     if (mTitle.IsVisible()) mTitle.Draw();
     else if (mPause.IsVisible()) mPause.Draw();
-    else if (mMessage.IsVisible()) mMessage.Draw();
+    else mMessage.Draw(); // PAKET 36 (Fix): IMMER aufrufen — MessageWindow
+                          // verwaltet SetClosing/Entfernen der RUI-Box selbst;
+                          // sonst blieb rui.msgbox nach dem letzten
+                          // Weiterblattern als Geisterfenster stehen.
     DrawBattleStatus(); // PAKET 9: XP-Kampfstatus (unter den HUD-Overlays)
     // Screen texts and pictures always on top (HUD)
     DrawPictures();
@@ -1707,67 +1716,208 @@ void GameUI::UpdateModalInput(Input& input) {
     }
 }
 
-// PAKET 10: Modale Fenster im ImGui-Overlay. Prioritaet wie in
+// PAKET 10: Modale Fenster im Overlay. Prioritaet wie in
 // UpdateModalInput: Menue zuerst, dann Zahleneingabe, dann Namenseingabe;
 // Choices zeichnet MessageWindow::Draw direkt im Nachrichtenfenster.
+// PAKET 36 (Fix): ALLE Draw-Funktionen werden IMMER aufgerufen — sie
+// verwalten ihre retained RUI-Fenster selbst (Anlage bei Aktivitaet,
+// RemoveWindow bei Inaktivitaet). Der fruehere Frueh-Return stellte den
+// Aufruf nach dem Schliessen ein — dadurch blieb z.B. rui.menu als
+// sichtbares Geisterfenster im Manager stehen.
 void GameUI::DrawModalWindows() {
-    if (mMenu.IsVisible()) { mMenu.Draw(); return; }
-    if (mNumberActive)     { DrawNumberInput(); return; }
-    if (mNameActive)       { DrawNameInput(); return; }
+    mMenu.Draw();
+    if (mMenu.IsVisible()) return;
+    DrawNumberInput();
+    if (mNumberActive) return;
+    DrawNameInput();
 }
 
+// === Zahleneingabe (Event-Befehl 103) — PAKET 36: RUI-Migration ===
+// Fenster "rui.numberinput": mittig im oberen Bildschirmdrittel (das
+// Nachrichtenfenster unten bleibt frei). Zustand/Eingabe bleiben nativ
+// (UpdateModalInput: Pfeile, 0-9, Enter); die MAUS setzt per Click auf
+// eine Zelle den Cursor (neues Widget DigitRow, PAKET 36).
 void GameUI::DrawNumberInput() {
-    if (!mNumberActive) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-    const float w = io.DisplaySize.x * 0.32f;
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - io.DisplaySize.x * 0.04f,
-                                   io.DisplaySize.y * 0.12f));
-    ImGui::SetNextWindowSize(ImVec2(w, 0.0f)); // Hoehe nach Inhalt
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
-    ImGui::Begin("##NumberInput", nullptr,
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
-    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s",
-        mNumberPrompt.empty() ? "Zahleneingabe" : mNumberPrompt.c_str());
-    ImGui::Separator();
-    // Ziffernzeile, aktuelle Stelle in Klammern (links = hoechste Stelle, XP)
-    std::string line;
-    for (int pos = mNumberDigits - 1; pos >= 0; --pos) {
-        int div = 1;
-        for (int i = 0; i < pos; ++i) div *= 10;
-        const int d = (mNumberValue / div) % 10;
-        if (!line.empty()) line += " ";
-        line += (pos == mNumberCursor) ? "(" + std::to_string(d) + ")"
-                                       : std::to_string(d);
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.numberinput");
+    if (!mNumberActive) {
+        if (win) mgr.RemoveWindow("rui.numberinput"); // modal: sofort zu
+        return;
     }
-    ImGui::Text("%s", line.c_str());
-    ImGui::TextDisabled("links/rechts Stelle | hoch/runter Ziffer | 0-9 | Enter");
-    ImGui::End();
-    ImGui::PopStyleColor();
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.numberinput";
+        nw->openness = 255.0f; // Eingaben oeffnen sofort (kein Aufrollen)
+        win = &mgr.AddWindow(std::move(nw));
+    }
+
+    float dispW = 1280.0f, dispH = 720.0f;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    dispW = ImGui::GetIO().DisplaySize.x;
+    dispH = ImGui::GetIO().DisplaySize.y;
 #endif
+    const auto& th = rui::Theme::Get();
+    const float rowH = th.rowHeight;
+    const float digitH = rowH * 1.5f + 6.0f;
+    const float w = std::min(dispW * 0.40f,
+        2 * th.padding + (float)mNumberDigits * rowH * 1.25f + 12.0f);
+    const float h = 2 * th.padding + 2 * rowH + digitH + 8.0f;
+    const rui::Rect wRect{(dispW - w) * 0.5f, dispH * 0.30f, w, h}; // mittig
+    win->rect = wRect;
+    win->focus = true;
+
+    win->children.clear();
+    const float cx = wRect.x + th.padding;
+    float cy = wRect.y + th.padding;
+    const float cw = wRect.w - 2.0f * th.padding;
+
+    auto cap = std::make_unique<rui::Label>();
+    cap->text = mNumberPrompt.empty() ? "Zahleneingabe" : mNumberPrompt;
+    cap->color = th.accent;
+    cap->rect = rui::Rect{cx, cy, cw, rowH};
+    win->children.push_back(std::move(cap));
+    cy += rowH + 2.0f;
+
+    // Ziffern links = hoechste Stelle; mNumberCursor zaehlt die Zehner-
+    // potenz von RECHTS (UpdateModalInput) — hier in Zellen-Index wandeln.
+    std::string digits((size_t)mNumberDigits, '0');
+    for (int pos = 0; pos < mNumberDigits; ++pos) {
+        int div = 1;
+        for (int k = 0; k < pos; ++k) div *= 10;
+        digits[(size_t)(mNumberDigits - 1 - pos)] =
+            (char)('0' + (mNumberValue / div) % 10);
+    }
+    auto row = std::make_unique<rui::DigitRow>();
+    row->digits = digits;
+    row->cursor = mNumberDigits - 1 - mNumberCursor;
+    row->rect = rui::Rect{cx, cy + 2.0f, cw, digitH};
+    row->onDigitClick = [this](int col) {
+        if (col >= 0 && col < mNumberDigits)
+            mNumberCursor = mNumberDigits - 1 - col;
+    };
+    win->children.push_back(std::move(row));
+    cy += digitH + 6.0f;
+
+    auto hint = std::make_unique<rui::Label>();
+    hint->text = "links/rechts Stelle | hoch/runter Ziffer | 0-9 | Enter";
+    hint->color = th.textDisabled;
+    hint->rect = rui::Rect{cx, cy, cw, rowH};
+    win->children.push_back(std::move(hint));
 }
 
+// Zeichentafel der Namenseingabe (statisch, eine Tabelle fuer Anzeige UND
+// Click-Auswertung — kein Abgleich-Risiko zwischen zwei Kopien).
+static const std::vector<std::vector<std::string>> kNamePadRows = {
+    {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"},
+    {"K", "L", "M", "N", "O", "P", "Q", "R", "S", "T"},
+    {"U", "V", "W", "X", "Y", "Z", "\xC3\x84", "\xC3\x96", "\xC3\x9C", "\xC3\x9F"},
+    {"a", "b", "c", "d", "e", "f", "g", "h", "i", "j"},
+    {"k", "l", "m", "n", "o", "p", "q", "r", "s", "t"},
+    {"u", "v", "w", "x", "y", "z", "\xC3\xA4", "\xC3\xB6", "\xC3\xBC"},
+    {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"},
+    {"Leer", "L\xC3\xB6schen", "Fertig"}};
+
+// === Namenseingabe (Event-Befehl 303) — PAKET 36: RUI-Migration ===
+// Fenster "rui.nameinput" mit Zeichentafel (neues Widget CharPad, PAKET
+// 36): Buchstaben/Ziffern/Umlaute als klickbare Zellen plus Kommandozeile
+// Leer / Loeschen / Fertig. Direktes Tippen A-Z, Alt+A/O/U fuer Umlaute,
+// Backspace, Enter und Esc bleiben der native Tastaturpfad (schneller).
 void GameUI::DrawNameInput() {
-    if (!mNameActive) return;
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.nameinput");
+    if (!mNameActive) {
+        if (win) mgr.RemoveWindow("rui.nameinput"); // modal: sofort zu
+        return;
+    }
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.nameinput";
+        nw->openness = 255.0f; // Eingaben oeffnen sofort
+        win = &mgr.AddWindow(std::move(nw));
+    }
+
+    float dispW = 1280.0f, dispH = 720.0f;
 #ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-    const float w = io.DisplaySize.x * 0.32f;
-    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - io.DisplaySize.x * 0.04f,
-                                   io.DisplaySize.y * 0.12f));
-    ImGui::SetNextWindowSize(ImVec2(w, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
-    ImGui::Begin("##NameInput", nullptr,
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
-    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s",
-        mNamePrompt.empty() ? "Namenseingabe" : mNamePrompt.c_str());
-    ImGui::Separator();
-    ImGui::Text("%s_", mNameText.c_str()); // Unterstrich als Cursor
-    ImGui::TextDisabled("A-Z tippen | Alt+A/O/U Umlaute | Enter fertig | Esc Abbruch");
-    ImGui::End();
-    ImGui::PopStyleColor();
+    dispW = ImGui::GetIO().DisplaySize.x;
+    dispH = ImGui::GetIO().DisplaySize.y;
 #endif
+    const auto& th = rui::Theme::Get();
+    const float rowH = th.rowHeight;
+    const int padRows = (int)kNamePadRows.size();
+    const float w = std::min(dispW * 0.46f,
+        2 * th.padding + 10.0f * (rowH * 1.5f));
+    const float h = 2 * th.padding + (float)(padRows + 3) * rowH + 10.0f;
+    const rui::Rect wRect{(dispW - w) * 0.5f, dispH * 0.18f, w, h}; // mittig
+    win->rect = wRect;
+    win->focus = true;
+
+    win->children.clear();
+    const float cx = wRect.x + th.padding;
+    float cy = wRect.y + th.padding;
+    const float cw = wRect.w - 2.0f * th.padding;
+
+    auto cap = std::make_unique<rui::Label>();
+    cap->text = mNamePrompt.empty() ? "Namenseingabe" : mNamePrompt;
+    cap->color = th.accent;
+    cap->rect = rui::Rect{cx, cy, cw, rowH};
+    win->children.push_back(std::move(cap));
+    cy += rowH + 2.0f;
+
+    // Aktueller Text + blinkender Unterstrich-Cursor (Blink-Uhr des
+    // RUI-Managers; positive Halbwelle = sichtbar).
+    const bool cursorOn = std::sin(rui::GetBlinkTime() * 6.2831853f) > 0.0f;
+    auto cur = std::make_unique<rui::Label>();
+    cur->text = mNameText + (cursorOn ? "_" : " ");
+    cur->color = th.text;
+    cur->scale = 1.25f;
+    cur->rect = rui::Rect{cx + 2.0f, cy, cw - 4.0f, rowH};
+    win->children.push_back(std::move(cur));
+    cy += rowH + 6.0f;
+
+    auto pad = std::make_unique<rui::CharPad>();
+    pad->rows = kNamePadRows;
+    pad->rect = rui::Rect{cx, cy, cw, rowH * (float)padRows};
+    pad->onPick = [this](int r, int c) {
+        if (!mNameActive) return; // Click kam nach dem Schliessen an
+        if (r < 0 || r >= (int)kNamePadRows.size()) return;
+        const auto& line = kNamePadRows[(size_t)r];
+        if (c < 0 || c >= (int)line.size()) return;
+        const std::string& cell = line[(size_t)c];
+        if (r == (int)kNamePadRows.size() - 1) {
+            // Kommandozeile: Leer / Loeschen / Fertig
+            if (c == 0) {
+                if ((int)mNameText.size() < mNameMaxChars)
+                    mNameText.push_back(' ');
+            } else if (c == 1) {
+                // UTF-8-sicher loeschen: Fortsetzungsbytes (0x80..0xBF)
+                // mitentfernen (gleiche Regel wie die Backspace-Taste).
+                while (!mNameText.empty()) {
+                    const unsigned char b = (unsigned char)mNameText.back();
+                    mNameText.pop_back();
+                    if ((b & 0xC0) != 0x80) break; // Lead-Byte erreicht
+                }
+            } else {
+                // Fertig = derselbe Abschluss wie die Enter-Taste
+                mNameActive = false;
+                if (mNameText.empty()) mNameText = mNameInitial;
+                auto cb = std::move(mNameDone);
+                if (cb) cb(mNameText);
+            }
+            return;
+        }
+        // Zeichenzelle: anhaengen, solange Platz (Byte-Limit wie Tastatur;
+        // Umlaute belegen 2 Bytes — dafuer gilt +1 Reserve wie bei Alt+X).
+        if ((int)mNameText.size() + (int)cell.size() <= mNameMaxChars)
+            mNameText += cell;
+    };
+    win->children.push_back(std::move(pad));
+    cy += rowH * (float)padRows + 2.0f;
+
+    auto hint = std::make_unique<rui::Label>();
+    hint->text = "Tippen A-Z | Alt+A/O/U Umlaute | Enter fertig | Esc Abbruch";
+    hint->color = th.textDisabled;
+    hint->rect = rui::Rect{cx, cy, cw, rowH};
+    win->children.push_back(std::move(hint));
 }
 
 void GameUI::DrawPlayHud(bool playtest) {

@@ -281,6 +281,87 @@ void ListView::OnMouseMove(float mx, float my) {
     }
 }
 
+// PAKET 36: Ziffernzeile (Zahleneingabe 103) --------------------------------
+int DigitRow::CellAt(float mx) const {
+    if (digits.empty() || rect.w <= 0.0f) return -1;
+    const float cw = rect.w / (float)digits.size();
+    const int col = (int)((mx - rect.x) / cw);
+    return (col >= 0 && col < (int)digits.size()) ? col : -1;
+}
+
+void DigitRow::Draw(DrawTarget& t) {
+    if (!visible || digits.empty()) return;
+    const Theme& th = Theme::Get();
+    const float cw = rect.w / (float)digits.size();
+    const float blink = 0.60f + 0.40f * (float)std::sin(GetBlinkTime() * 6.2831853f);
+    const int hover = rect.Contains(GetMouse().x, GetMouse().y)
+        ? CellAt(GetMouse().x) : -1;
+    for (int i = 0; i < (int)digits.size(); ++i) {
+        Rect cell{rect.x + i * cw, rect.y, cw, rect.h};
+        if (i == cursor) { // Cursor-Zelle: XP-artig blinkend markiert
+            t.FillRect(cell, th.cursorBg.WithAlpha(0.65f + 0.35f * blink), 3.0f);
+        } else if (i == hover) {
+            t.FillRect(cell, th.cursorBg.WithAlpha(0.35f), 3.0f);
+        }
+        const Color4 c = !enabled ? th.textDisabled
+                         : (i == cursor) ? th.accent : th.text;
+        t.Text(cell.x + cw * 0.5f, cell.y, digits.substr((size_t)i, 1),
+               c, scale, 1); // zentriert in der Zelle
+    }
+}
+
+bool DigitRow::OnMouseClick(float mx, float my) {
+    if (!visible || !enabled || !rect.Contains(mx, my)) return false;
+    const int col = CellAt(mx);
+    if (col >= 0 && onDigitClick) onDigitClick(col);
+    return true; // Klick in der Zeile verschlucken (modal)
+}
+
+// PAKET 36: Zeichentabelle (Namenseingabe 303) ------------------------------
+bool CharPad::CellAt(float mx, float my, int& row, int& col) const {
+    row = -1; col = -1;
+    if (rows.empty() || rect.h <= 0.0f) return false;
+    const float rh = rect.h / (float)rows.size();
+    const int r = (int)((my - rect.y) / rh);
+    if (r < 0 || r >= (int)rows.size() || rows[(size_t)r].empty()) return false;
+    const float cw = rect.w / (float)rows[(size_t)r].size();
+    const int c = (int)((mx - rect.x) / cw);
+    if (c < 0 || c >= (int)rows[(size_t)r].size()) return false;
+    row = r; col = c;
+    return true;
+}
+
+void CharPad::Draw(DrawTarget& t) {
+    if (!visible || rows.empty()) return;
+    const Theme& th = Theme::Get();
+    t.ClipPush(rect);
+    const float rh = rect.h / (float)rows.size();
+    int hRow = -1, hCol = -1;
+    if (rect.Contains(GetMouse().x, GetMouse().y))
+        CellAt(GetMouse().x, GetMouse().y, hRow, hCol);
+    const float blink = 0.60f + 0.40f * (float)std::sin(GetBlinkTime() * 6.2831853f);
+    for (int r = 0; r < (int)rows.size(); ++r) {
+        const auto& line = rows[(size_t)r];
+        if (line.empty()) continue;
+        const float cw = rect.w / (float)line.size();
+        for (int c = 0; c < (int)line.size(); ++c) {
+            Rect cell{rect.x + c * cw, rect.y + r * rh, cw, rh};
+            if (r == hRow && c == hCol && enabled)
+                t.FillRect(cell, th.cursorBg.WithAlpha(0.65f + 0.35f * blink), 3.0f);
+            const Color4 col = enabled ? th.text : th.textDisabled;
+            t.Text(cell.x + cw * 0.5f, cell.y + 2.0f, line[(size_t)c], col, 1.0f, 1);
+        }
+    }
+    t.ClipPop();
+}
+
+bool CharPad::OnMouseClick(float mx, float my) {
+    if (!visible || !enabled || !rect.Contains(mx, my)) return false;
+    int r = -1, c = -1;
+    if (CellAt(mx, my, r, c) && onPick) onPick(r, c);
+    return true; // Klick in der Tafel verschlucken (modal)
+}
+
 void Window::Update(float dt) {
     const float step = openSpeed * 255.0f * dt;
     if (mClosing) {

@@ -166,6 +166,35 @@ public:
     void EnsureSelectedVisible();
 };
 
+// PAKET 36: Ziffernzeile fuer die Zahleneingabe (Event 103). Jede Ziffer
+// ist eine Zelle; die Cursor-Zelle blinkt XP-artig. Tastatur laeuft nativ
+// (GameUI::UpdateModalInput), die MAUS setzt per Click die Stelle.
+class DigitRow : public Widget {
+public:
+    std::string digits;                        // N Ziffern, links = hoechste Stelle
+    int cursor = -1;                           // Zellen-Index von links (-1 = kein)
+    float scale = 1.5f;                        // Ziffern groesser als Hinweis
+    std::function<void(int)> onDigitClick;     // Click auf Zelle -> Cursor setzen
+    void Draw(DrawTarget& t) override;
+    bool OnMouseClick(float mx, float my) override;
+private:
+    int CellAt(float mx) const;                // -1 = ausserhalb
+};
+
+// PAKET 36: Zeichentabelle fuer die Namenseingabe (Event 303) — XP zeigt
+// eine anklickbare Buchstaben-Tafel. Jede Zeile teilt die Breite gleich-
+// maessig unter ihren Zellen auf (Buchstaben 10er-Reihen, Kommandozeile
+// 3 breite Zellen). Zelltext ist ein UTF-8-Stueck (z.B. "Ä" = 2 Bytes).
+class CharPad : public Widget {
+public:
+    std::vector<std::vector<std::string>> rows;
+    std::function<void(int, int)> onPick;      // Click auf Zelle (zeile, spalte)
+    void Draw(DrawTarget& t) override;
+    bool OnMouseClick(float mx, float my) override;
+private:
+    bool CellAt(float mx, float my, int& row, int& col) const;
+};
+
 // ---------------------------------------------------------------------------
 // Window: XP-artiger Container (Panel + Oeffnen-Animation + Fokus-Flag).
 // openness 0..255: Fenster waechst vertikal auf (wie die Messagebox).
@@ -250,5 +279,8 @@ private:
 /// Der aktuelle Frame-Mausstatus (von Update gesetzt, Views lesen ihn)
 const rpg::Vec2& GetMouse();
 bool GetMousePressed();
+/// Blink-Uhr (Cursor/Puls), von Manager::Update getaktet — auch fuer
+/// Fenster-Inhalte ausserhalb der Widgets nutzbar (PAKET 36).
+float GetBlinkTime();
 
 } // namespace rui

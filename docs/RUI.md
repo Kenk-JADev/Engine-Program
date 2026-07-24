@@ -36,6 +36,8 @@ Adapter: ImGui-DrawList   [spaeter: eigener GL-Batcher / RGSS-Canvas]
 | `rui::Gauge` | Balken (HP/MP), fract-gefuellt |
 | `rui::Panel` | Container + optional Skin (Schatten/Face/Rahmen) + `onClick` |
 | `rui::ListView` | Auswahl-Liste: Cursor mit Blinken, Scroll-Offset, `onPick`, `onHoverItem`, Maus |
+| `rui::DigitRow` | PAKET 36: Ziffernzeile (Event 103) — Zellen, Cursor-Blinken, Click setzt Stelle |
+| `rui::CharPad` | PAKET 36: Zeichentafel (Event 303) — Zeilen mit gleich breiten Zellen, Hover, Click |
 | `rui::Window` | Panel + Oeffnen/Schliessen-Animation (`openness` 0..255) |
 | `rui::Manager` | Fenster-Liste (Z-Ordnung), Update(dt, Maus x/y/pressed), Draw |
 
@@ -46,8 +48,20 @@ Adapter: ImGui-DrawList   [spaeter: eigener GL-Batcher / RGSS-Canvas]
 | Message + Auswahl (`rui.msgbox`) | **RUI** (PAKET 31, Maus) |
 | Menue/Titel/Speicher/Laden (`rui.menu`) | **RUI** (PAKET 34, Maus: Hover/Click) |
 | XP-Kampfstatus (`rui.battlestatus`) | **RUI** (PAKET 34, Gauges + Faces) |
-| Zahl-/Namenseingabe (103/303) | ImGui-Overlay (Folgepaket) |
+| Zahleneingabe 103 (`rui.numberinput`) | **RUI** (PAKET 36, DigitRow, Maus) |
+| Namenseingabe 303 (`rui.nameinput`) | **RUI** (PAKET 36, CharPad, Maus) |
 | HUD, Pictures, Wetter, Farbton | ImGui-Overlay (Folgepaket) |
+
+PAKET 36 (Fenster-Lebenszyklus-Fixes):
+- `DrawModalWindows` ruft jetzt IMMER alle Sync-Funktionen — jede verwaltet
+  ihr retained Fenster selbst (RemoveWindow sobald inaktiv). Der fruehere
+  Frueh-Return liess z.B. `rui.menu` nach dem Schliessen als Geisterfenster
+  stehen.
+- `GameUI::Draw` ruft `MessageWindow::Draw` jetzt immer auf (nicht nur bei
+  Sichtbarkeit), damit die Schliess-Animation der Box wirklich laeuft.
+- `rui.msgbox`: Flaechen-`onClick` einer frueheren Nachricht ueberlebte
+  `children.clear()` und haette bei aktiven Choices die Auswahl wegwerfen
+  koennen — wird jetzt mit Choices explizit zurueckgesetzt.
 
 PAKET 33: Windowskin-PNG (Nine-Patch, XP-96x96-Rahmenflaeche) im Skin-Slot
 von `Theme`; Auto-Suche `Graphics/System/windowskin.*`, Script-Override
