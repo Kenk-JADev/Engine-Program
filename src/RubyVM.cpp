@@ -14,6 +14,7 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Custom.h" // "alles custom"-Schalter (UI.native_*)
 #include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (Ruby-Klasse Window)
+#include "rpgmaker3d/Rui.h"    // PAKET 32: eigenes UI-Framework (Script-Windows)
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -98,6 +99,7 @@ bool RubyVM::Initialize(Engine* engine) {
     BindActor();
     BindCamera();
     BindUI();
+    BindRui();        // PAKET 32: eigenes UI-Framework (Script-Windows)
     BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
     BindRgssObjects();   // RGSS-XP: Rect/Color/Tone/Font/Table/Bitmap/Viewport
     BindRgssDrawables(); // RGSS-XP: Sprite/Plane/Tilemap
@@ -2784,6 +2786,514 @@ static mrb_value rb_rgss_clear_windows(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+// ===========================================================================
+// PAKET 32: Rui — eigenes UI-Framework, Ruby-Bindings (Script-Windows)
+//
+// Handle-Modell: Die Ruby-Objekte (Rui::Window/Label/Gauge/ListView) tragen
+// nur IDs (@__wid Fenster, @__cid Widget). Die Objekte leben in
+// rui::Manager; verschwindet ein Fenster (Close/destroy/clear), werden
+// spaetere Zugriffe zu sicheren No-Ops (kein dangling native pointer).
+// Bloecke (on_pick/on_cancel) werden unter "$__rpg3d_rui_blocks"[key][kind]
+// GC-sicher geparkt; Listen-Lambdas rufen RubyVM::CallRuiBlock.
+// ===========================================================================
+namespace {
+
+constexpr const char* kRuiBlocksVar = "$__rpg3d_rui_blocks";
+
+struct RuiHandleMaps {
+    struct RClass* mod = nullptr;
+    struct RClass* win = nullptr;
+    struct RClass* label = nullptr;
+    struct RClass* gauge = nullptr;
+    struct RClass* list = nullptr;
+};
+RuiHandleMaps g_rui;
+
+std::string RuiIvarStr(mrb_state* mrb, mrb_value self, const char* name) {
+    mrb_value v = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, name));
+    if (!mrb_string_p(v)) return {};
+    return std::string(RSTRING_PTR(v), (size_t)RSTRING_LEN(v));
+}
+
+mrb_value RuiMakeHandle(mrb_state* mrb, struct RClass* klass,
+                        const std::string& wid, const std::string& cid) {
+    mrb_value obj = mrb_obj_new(mrb, klass, 0, nullptr);
+    mrb_iv_set(mrb, obj, mrb_intern_lit(mrb, "@__wid"),
+               mrb_str_new(mrb, wid.data(), (mrb_int)wid.size()));
+    mrb_iv_set(mrb, obj, mrb_intern_lit(mrb, "@__cid"),
+               mrb_str_new(mrb, cid.data(), (mrb_int)cid.size()));
+    return obj;
+}
+
+rui::Window* RuiResolveWin(mrb_state* mrb, mrb_value self) {
+    const std::string wid = RuiIvarStr(mrb, self, "@__wid");
+    if (wid.empty()) return nullptr;
+    return rui::Manager::Get().FindWindow(wid);
+}
+
+// Kind-Widget beliebigen Typs im Fenster aufloesen (cid leer = Fenster selbst)
+rui::Widget* RuiResolveWidget(mrb_state* mrb, mrb_value self) {
+    rui::Window* win = RuiResolveWin(mrb, self);
+    if (!win) return nullptr;
+    const std::string cid = RuiIvarStr(mrb, self, "@__cid");
+    if (cid.empty()) return win;
+    return win->FindWidget(cid);
+}
+
+// Haengt Pick/Hover/Cancel-Lambdas einer Liste an den Ruby-Block-Store-
+// Aufrufpfad (key = "<wid>/<cid>", kind in {"pick","hover","cancel"}).
+void RuiWireListCallbacks(mrb_state* mrb, rui::ListView* lv, const std::string& key) {
+    Engine* eng = static_cast<Engine*>(mrb->ud);
+    lv->onPick = [eng, key](int idx) {
+        if (eng) eng->GetRubyVM().CallRuiBlock(key.c_str(), idx, "pick");
+    };
+    lv->onHoverItem = [eng, key](int idx) {
+        if (eng) eng->GetRubyVM().CallRuiBlock(key.c_str(), idx, "hover");
+    };
+    lv->onCancel = [eng, key]() {
+        if (eng) eng->GetRubyVM().CallRuiBlock(key.c_str(), -1, "cancel");
+    };
+}
+
+void RuiStoreBlock(mrb_state* mrb, const std::string& key, const char* kind, mrb_value blk) {
+    mrb_value all = mrb_gv_get(mrb, mrb_intern_lit(mrb, kRuiBlocksVar));
+    if (!mrb_hash_p(all)) {
+        all = mrb_hash_new(mrb);
+        mrb_gv_set(mrb, mrb_intern_lit(mrb, kRuiBlocksVar), all);
+    }
+    mrb_value k = mrb_str_new(mrb, key.data(), (mrb_int)key.size());
+    mrb_value entry = mrb_hash_get(mrb, all, k);
+    if (!mrb_hash_p(entry)) {
+        entry = mrb_hash_new(mrb);
+        mrb_hash_set(mrb, all, k, entry);
+    }
+    mrb_hash_set(mrb, entry, mrb_symbol_value(mrb_intern_lit(mrb, kind)), blk);
+}
+
+// ---------- Modul-Funktionen Rui.* ----------
+mrb_value rb_rui_window_create(mrb_state* mrb, mrb_value) {
+    char* id = nullptr; mrb_float x = 0, y = 0, w = 100, h = 100;
+    mrb_get_args(mrb, "zffff", &id, &x, &y, &w, &h);
+    if (!id || !*id) return mrb_nil_value();
+    if (rui::Manager::Get().FindWindow(id))
+        rui::Manager::Get().RemoveWindow(id); // Neuaufbau ersetzt gleichnamiges Fenster
+    auto nw = std::make_unique<rui::Window>();
+    nw->id = id;
+    nw->rect = rui::Rect{(float)x, (float)y, (float)w, (float)h};
+    rui::Window& ref = rui::Manager::Get().AddWindow(std::move(nw));
+    (void)ref;
+    return RuiMakeHandle(mrb, g_rui.win, id, "");
+}
+
+mrb_value rb_rui_window_find(mrb_state* mrb, mrb_value) {
+    char* id = nullptr;
+    mrb_get_args(mrb, "z", &id);
+    if (!id || !rui::Manager::Get().FindWindow(id)) return mrb_nil_value();
+    return RuiMakeHandle(mrb, g_rui.win, id, "");
+}
+
+mrb_value rb_rui_destroy(mrb_state*, mrb_value) {
+    // rein: entfernt sofort (fuer Animation: win.close)
+    return mrb_nil_value(); // wird auf self-Methode abgebildet, s.u.
+}
+
+mrb_value rb_rui_clear(mrb_state* mrb, mrb_value) {
+    (void)mrb;
+    rui::Manager::Get().Clear();
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_set_focus_list(mrb_state* mrb, mrb_value) {
+    char* wid = nullptr; char* cid = nullptr;
+    mrb_get_args(mrb, "zz", &wid, &cid);
+    if (wid && cid) rui::Manager::Get().SetFocusList(std::string(wid) + "/" + cid);
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_clear_focus(mrb_state* mrb, mrb_value) {
+    (void)mrb;
+    rui::Manager::Get().ClearFocus();
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_has_focus(mrb_state* mrb, mrb_value) {
+    (void)mrb;
+    return mrb_bool_value(rui::Manager::Get().HasFocus());
+}
+
+// ---------- Rui::Window-Methoden ----------
+mrb_value rb_rui_win_id(mrb_state* mrb, mrb_value self) {
+    const std::string s = RuiIvarStr(mrb, self, "@__wid");
+    return mrb_str_new(mrb, s.data(), (mrb_int)s.size());
+}
+
+mrb_value rb_rui_win_move(mrb_state* mrb, mrb_value self) {
+    mrb_float x, y, w, h;
+    mrb_get_args(mrb, "ffff", &x, &y, &w, &h);
+    if (auto* win = RuiResolveWin(mrb, self))
+        win->rect = rui::Rect{(float)x, (float)y, (float)w, (float)h};
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_win_x(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_float_value(mrb, win->rect.x);
+    return mrb_float_value(mrb, 0);
+}
+mrb_value rb_rui_win_y(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_float_value(mrb, win->rect.y);
+    return mrb_float_value(mrb, 0);
+}
+mrb_value rb_rui_win_w(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_float_value(mrb, win->rect.w);
+    return mrb_float_value(mrb, 0);
+}
+mrb_value rb_rui_win_h(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_float_value(mrb, win->rect.h);
+    return mrb_float_value(mrb, 0);
+}
+mrb_value rb_rui_win_x_set(mrb_state* mrb, mrb_value self) {
+    mrb_float v = 0; mrb_get_args(mrb, "f", &v);
+    if (auto* win = RuiResolveWin(mrb, self)) win->rect.x = (float)v;
+    return mrb_nil_value();
+}
+mrb_value rb_rui_win_y_set(mrb_state* mrb, mrb_value self) {
+    mrb_float v = 0; mrb_get_args(mrb, "f", &v);
+    if (auto* win = RuiResolveWin(mrb, self)) win->rect.y = (float)v;
+    return mrb_nil_value();
+}
+mrb_value rb_rui_win_w_set(mrb_state* mrb, mrb_value self) {
+    mrb_float v = 0; mrb_get_args(mrb, "f", &v);
+    if (auto* win = RuiResolveWin(mrb, self)) win->rect.w = (float)v;
+    return mrb_nil_value();
+}
+mrb_value rb_rui_win_h_set(mrb_state* mrb, mrb_value self) {
+    mrb_float v = 0; mrb_get_args(mrb, "f", &v);
+    if (auto* win = RuiResolveWin(mrb, self)) win->rect.h = (float)v;
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_win_openness(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_float_value(mrb, win->openness);
+    return mrb_float_value(mrb, 0);
+}
+mrb_value rb_rui_win_openness_set(mrb_state* mrb, mrb_value self) {
+    mrb_float v = 0; mrb_get_args(mrb, "f", &v);
+    if (auto* win = RuiResolveWin(mrb, self))
+        win->openness = std::clamp((float)v, 0.0f, 255.0f);
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_win_open(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) { win->SetClosing(false); win->Open(); }
+    return mrb_nil_value();
+}
+mrb_value rb_rui_win_close(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) win->SetClosing(true);
+    return mrb_nil_value();
+}
+mrb_value rb_rui_win_closing_p(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_bool_value(win->IsClosing());
+    return mrb_bool_value(false);
+}
+mrb_value rb_rui_win_open_p(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_bool_value(win->IsFullyOpen());
+    return mrb_bool_value(false);
+}
+
+mrb_value rb_rui_win_visible(mrb_state* mrb, mrb_value self) {
+    if (auto* win = RuiResolveWin(mrb, self)) return mrb_bool_value(win->visible);
+    return mrb_bool_value(false);
+}
+mrb_value rb_rui_win_visible_set(mrb_state* mrb, mrb_value self) {
+    mrb_bool v = MRUBY_TRUE; mrb_get_args(mrb, "b", &v);
+    if (auto* win = RuiResolveWin(mrb, self)) win->visible = !!v;
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_win_add_label(mrb_state* mrb, mrb_value self) {
+    char* cid = nullptr; char* text = nullptr;
+    mrb_float x = 0, y = 0, align = 0, scale = 1.0;
+    mrb_get_args(mrb, "zz|ffff", &cid, &text, &x, &y, &align, &scale);
+    rui::Window* win = RuiResolveWin(mrb, self);
+    if (!win || !cid || !*cid) return mrb_nil_value();
+    auto lbl = std::make_unique<rui::Label>();
+    lbl->id = cid;
+    lbl->text = text ? text : "";
+    lbl->align = std::clamp((int)align, 0, 2);
+    lbl->scale = (float)scale;
+    const auto& th = rui::Theme::Get();
+    lbl->rect = rui::Rect{win->rect.x + th.padding + (float)x,
+                          win->rect.y + th.padding + (float)y,
+                          win->rect.w - 2.0f * th.padding - (float)x,
+                          th.rowHeight * (float)scale};
+    lbl->color = th.text;
+    win->children.push_back(std::move(lbl));
+    return RuiMakeHandle(mrb, g_rui.label, win->id, cid);
+}
+
+mrb_value rb_rui_win_add_gauge(mrb_state* mrb, mrb_value self) {
+    // add_gauge(id, x, y, w, h, current=0, maximum=100, kind="hp")
+    // kind: "hp" (gruen) / "mp" (blau) — Farben aus dem Theme, spaeter
+    // per set_color uebersteuerbar.
+    char* cid = nullptr; char* kind = nullptr;
+    mrb_float x = 0, y = 0, w = 100, h = 10;
+    mrb_int cur = 0, mx2 = 100;
+    mrb_get_args(mrb, "zffff|iiz", &cid, &x, &y, &w, &h, &cur, &mx2, &kind);
+    rui::Window* win = RuiResolveWin(mrb, self);
+    if (!win || !cid || !*cid) return mrb_nil_value();
+    auto g = std::make_unique<rui::Gauge>();
+    g->id = cid;
+    g->current = (int)cur;
+    g->maximum = (int)mx2;
+    const auto& th = rui::Theme::Get();
+    g->color = (kind && std::string(kind) == "mp") ? th.gaugeMp : th.gaugeHp;
+    g->rect = rui::Rect{win->rect.x + th.padding + (float)x,
+                        win->rect.y + th.padding + (float)y,
+                        (float)w, (float)h};
+    win->children.push_back(std::move(g));
+    return RuiMakeHandle(mrb, g_rui.gauge, win->id, cid);
+}
+
+mrb_value rb_rui_win_add_list(mrb_state* mrb, mrb_value self) {
+    char* cid = nullptr; mrb_value items; mrb_float x = 0, y = 0, w = 100, h = 100;
+    mrb_get_args(mrb, "zo|ffff", &cid, &items, &x, &y, &w, &h);
+    rui::Window* win = RuiResolveWin(mrb, self);
+    if (!win || !cid || !*cid) return mrb_nil_value();
+    auto lv = std::make_unique<rui::ListView>();
+    lv->id = cid;
+    if (mrb_array_p(items)) {
+        const mrb_int n = RARRAY_LEN(items);
+        for (mrb_int i = 0; i < n; ++i) {
+            mrb_value e = mrb_ary_ref(mrb, items, i);
+            if (mrb_string_p(e)) {
+                lv->items.push_back({std::string(RSTRING_PTR(e), (size_t)RSTRING_LEN(e)), true});
+            } else if (mrb_array_p(e)) { // [text, enabled]
+                mrb_value t = mrb_ary_ref(mrb, e, 0);
+                mrb_value en = mrb_ary_ref(mrb, e, 1);
+                std::string ts;
+                if (mrb_string_p(t)) ts.assign(RSTRING_PTR(t), (size_t)RSTRING_LEN(t));
+                lv->items.push_back({ts, mrb_nil_p(en) || mrb_test(en)});
+            }
+        }
+    }
+    const auto& th = rui::Theme::Get();
+    lv->rect = rui::Rect{win->rect.x + th.padding + (float)x,
+                         win->rect.y + th.padding + (float)y, (float)w, (float)h};
+    lv->selected = lv->items.empty() ? -1 : 0;
+    const std::string key = win->id + "/" + cid;
+    RuiWireListCallbacks(mrb, lv.get(), key);
+    win->children.push_back(std::move(lv));
+    return RuiMakeHandle(mrb, g_rui.list, win->id, cid);
+}
+
+mrb_value rb_rui_win_remove_widget(mrb_state* mrb, mrb_value self) {
+    char* cid = nullptr; mrb_get_args(mrb, "z", &cid);
+    rui::Window* win = RuiResolveWin(mrb, self);
+    if (!win || !cid) return mrb_nil_value();
+    win->children.erase(std::remove_if(win->children.begin(), win->children.end(),
+        [&](const std::unique_ptr<rui::Widget>& c) { return c->id == cid; }),
+        win->children.end());
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_win_destroy(mrb_state* mrb, mrb_value self) {
+    const std::string wid = RuiIvarStr(mrb, self, "@__wid");
+    if (!wid.empty()) rui::Manager::Get().RemoveWindow(wid);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@__wid"), mrb_str_new(mrb, "", 0));
+    return mrb_nil_value();
+}
+
+// ---------- Rui::Label-Methoden ----------
+mrb_value rb_rui_label_text(mrb_state* mrb, mrb_value self) {
+    if (auto* w = dynamic_cast<rui::Label*>(RuiResolveWidget(mrb, self)))
+        return mrb_str_new(mrb, w->text.data(), (mrb_int)w->text.size());
+    return mrb_str_new(mrb, nullptr, 0);
+}
+mrb_value rb_rui_label_text_set(mrb_state* mrb, mrb_value self) {
+    char* t = nullptr; mrb_get_args(mrb, "z", &t);
+    if (auto* w = dynamic_cast<rui::Label*>(RuiResolveWidget(mrb, self)))
+        w->text = t ? t : "";
+    return mrb_nil_value();
+}
+mrb_value rb_rui_label_color_set(mrb_state* mrb, mrb_value self) {
+    mrb_float r = 1, g = 1, b = 1, a = 1;
+    mrb_get_args(mrb, "f|fff", &r, &g, &b, &a);
+    if (auto* w = dynamic_cast<rui::Label*>(RuiResolveWidget(mrb, self)))
+        w->color = rui::Color4((float)r, (float)g, (float)b, (float)a);
+    return mrb_nil_value();
+}
+
+// ---------- Rui::Gauge-Methoden ----------
+mrb_value rb_rui_gauge_current(mrb_state* mrb, mrb_value self) {
+    if (auto* w = dynamic_cast<rui::Gauge*>(RuiResolveWidget(mrb, self)))
+        return mrb_int_value(mrb, w->current);
+    return mrb_int_value(mrb, 0);
+}
+mrb_value rb_rui_gauge_current_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0; mrb_get_args(mrb, "i", &v);
+    if (auto* w = dynamic_cast<rui::Gauge*>(RuiResolveWidget(mrb, self)))
+        w->current = (int)v;
+    return mrb_nil_value();
+}
+mrb_value rb_rui_gauge_maximum(mrb_state* mrb, mrb_value self) {
+    if (auto* w = dynamic_cast<rui::Gauge*>(RuiResolveWidget(mrb, self)))
+        return mrb_int_value(mrb, w->maximum);
+    return mrb_int_value(mrb, 0);
+}
+mrb_value rb_rui_gauge_maximum_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0; mrb_get_args(mrb, "i", &v);
+    if (auto* w = dynamic_cast<rui::Gauge*>(RuiResolveWidget(mrb, self)))
+        w->maximum = (int)v;
+    return mrb_nil_value();
+}
+mrb_value rb_rui_gauge_color_set(mrb_state* mrb, mrb_value self) {
+    mrb_float r = 1, g = 1, b = 1, a = 1;
+    mrb_get_args(mrb, "f|fff", &r, &g, &b, &a);
+    if (auto* w = dynamic_cast<rui::Gauge*>(RuiResolveWidget(mrb, self)))
+        w->color = rui::Color4((float)r, (float)g, (float)b, (float)a);
+    return mrb_nil_value();
+}
+
+// ---------- Rui::ListView-Methoden ----------
+mrb_value rb_rui_list_selected(mrb_state* mrb, mrb_value self) {
+    if (auto* w = dynamic_cast<rui::ListView*>(RuiResolveWidget(mrb, self)))
+        return mrb_int_value(mrb, w->selected);
+    return mrb_int_value(mrb, -1);
+}
+mrb_value rb_rui_list_selected_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 0; mrb_get_args(mrb, "i", &v);
+    if (auto* w = dynamic_cast<rui::ListView*>(RuiResolveWidget(mrb, self)))
+        if (v >= 0 && v < (mrb_int)w->items.size()) w->selected = (int)v;
+    return mrb_nil_value();
+}
+mrb_value rb_rui_list_items_set(mrb_state* mrb, mrb_value self) {
+    mrb_value items; mrb_get_args(mrb, "o", &items);
+    auto* w = dynamic_cast<rui::ListView*>(RuiResolveWidget(mrb, self));
+    if (!w) return mrb_nil_value();
+    w->items.clear();
+    if (mrb_array_p(items)) {
+        const mrb_int n = RARRAY_LEN(items);
+        for (mrb_int i = 0; i < n; ++i) {
+            mrb_value e = mrb_ary_ref(mrb, items, i);
+            if (mrb_string_p(e))
+                w->items.push_back({std::string(RSTRING_PTR(e), (size_t)RSTRING_LEN(e)), true});
+            else if (mrb_array_p(e)) {
+                mrb_value t = mrb_ary_ref(mrb, e, 0);
+                mrb_value en = mrb_ary_ref(mrb, e, 1);
+                std::string ts;
+                if (mrb_string_p(t)) ts.assign(RSTRING_PTR(t), (size_t)RSTRING_LEN(t));
+                w->items.push_back({ts, mrb_nil_p(en) || mrb_test(en)});
+            }
+        }
+    }
+    w->selected = w->items.empty() ? -1 : std::clamp(w->selected, 0, (int)w->items.size() - 1);
+    return mrb_nil_value();
+}
+mrb_value rb_rui_list_on_pick(mrb_state* mrb, mrb_value self) {
+    mrb_value blk; mrb_get_args(mrb, "&", &blk);
+    const std::string key = RuiIvarStr(mrb, self, "@__wid") + "/" + RuiIvarStr(mrb, self, "@__cid");
+    RuiStoreBlock(mrb, key, "pick", blk);
+    return mrb_nil_value();
+}
+mrb_value rb_rui_list_on_cancel(mrb_state* mrb, mrb_value self) {
+    mrb_value blk; mrb_get_args(mrb, "&", &blk);
+    const std::string key = RuiIvarStr(mrb, self, "@__wid") + "/" + RuiIvarStr(mrb, self, "@__cid");
+    RuiStoreBlock(mrb, key, "cancel", blk);
+    return mrb_nil_value();
+}
+mrb_value rb_rui_list_on_hover(mrb_state* mrb, mrb_value self) {
+    mrb_value blk; mrb_get_args(mrb, "&", &blk);
+    const std::string key = RuiIvarStr(mrb, self, "@__wid") + "/" + RuiIvarStr(mrb, self, "@__cid");
+    RuiStoreBlock(mrb, key, "hover", blk);
+    return mrb_nil_value();
+}
+
+} // namespace
+
+void RubyVM::CallRuiBlock(const char* key, int idx, const char* kind) {
+    if (!mMrb || !key || !kind) return;
+    mrb_value all = mrb_gv_get(mMrb, mrb_intern_lit(mMrb, kRuiBlocksVar));
+    if (!mrb_hash_p(all)) return;
+    const std::string ks(key);
+    mrb_value k = mrb_str_new(mMrb, ks.data(), (mrb_int)ks.size());
+    mrb_value entry = mrb_hash_get(mMrb, all, k);
+    if (!mrb_hash_p(entry)) return;
+    mrb_value blk = mrb_hash_get(mMrb, entry, mrb_symbol_value(mrb_intern_lit(mMrb, kind)));
+    if (mrb_nil_p(blk)) return;
+    mrb_value arg = mrb_int_value(mMrb, idx);
+    mrb_funcall_argv(mMrb, blk, mrb_intern_lit(mMrb, "call"), 1, &arg);
+    if (mMrb->exc) {
+        CaptureException("Rui-Block");
+        mMrb->exc = nullptr; // Engine darf bei Ruby-Fehler nicht stehen bleiben
+    }
+}
+
+void RubyVM::BindRui() {
+    struct RClass* mod = mrb_define_module(mMrb, "Rui");
+    g_rui.mod = mod;
+    g_rui.win = mrb_define_class_under(mMrb, mod, "Window", mMrb->object_class);
+    g_rui.label = mrb_define_class_under(mMrb, mod, "Label", mMrb->object_class);
+    g_rui.gauge = mrb_define_class_under(mMrb, mod, "Gauge", mMrb->object_class);
+    g_rui.list = mrb_define_class_under(mMrb, mod, "ListView", mMrb->object_class);
+
+    // Modul-Funktionen
+    mrb_define_module_function(mMrb, mod, "window", rb_rui_window_create, MRB_ARGS_REQ(5));
+    mrb_define_module_function(mMrb, mod, "find", rb_rui_window_find, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, mod, "clear", rb_rui_clear, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, mod, "set_focus_list", rb_rui_set_focus_list, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, mod, "clear_focus", rb_rui_clear_focus, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, mod, "has_focus?", rb_rui_has_focus, MRB_ARGS_NONE());
+
+    // Rui::Window (Instanz-Methoden; Fenster-Handles, XP-Ergonomie)
+    auto W = g_rui.win;
+    mrb_define_method(mMrb, W, "id", rb_rui_win_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "move", rb_rui_win_move, MRB_ARGS_REQ(4));
+    mrb_define_method(mMrb, W, "x", rb_rui_win_x, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "y", rb_rui_win_y, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "width", rb_rui_win_w, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "height", rb_rui_win_h, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "x=", rb_rui_win_x_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "y=", rb_rui_win_y_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "width=", rb_rui_win_w_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "height=", rb_rui_win_h_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "openness", rb_rui_win_openness, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "openness=", rb_rui_win_openness_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "open", rb_rui_win_open, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "close", rb_rui_win_close, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "closing?", rb_rui_win_closing_p, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "fully_open?", rb_rui_win_open_p, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "visible", rb_rui_win_visible, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, W, "visible=", rb_rui_win_visible_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "add_label", rb_rui_win_add_label, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(4));
+    mrb_define_method(mMrb, W, "add_gauge", rb_rui_win_add_gauge, MRB_ARGS_REQ(5) | MRB_ARGS_OPT(3));
+    mrb_define_method(mMrb, W, "add_list", rb_rui_win_add_list, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(4));
+    mrb_define_method(mMrb, W, "remove_widget", rb_rui_win_remove_widget, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, W, "destroy", rb_rui_win_destroy, MRB_ARGS_NONE());
+
+    // Rui::Label
+    auto L = g_rui.label;
+    mrb_define_method(mMrb, L, "text", rb_rui_label_text, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, L, "text=", rb_rui_label_text_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, L, "set_color", rb_rui_label_color_set, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(3));
+
+    // Rui::Gauge
+    auto G = g_rui.gauge;
+    mrb_define_method(mMrb, G, "current", rb_rui_gauge_current, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, G, "current=", rb_rui_gauge_current_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, G, "maximum", rb_rui_gauge_maximum, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, G, "maximum=", rb_rui_gauge_maximum_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, G, "set_color", rb_rui_gauge_color_set, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(3));
+
+    // Rui::ListView
+    auto V = g_rui.list;
+    mrb_define_method(mMrb, V, "selected", rb_rui_list_selected, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, V, "selected=", rb_rui_list_selected_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, V, "items=", rb_rui_list_items_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, V, "on_pick", rb_rui_list_on_pick, MRB_ARGS_BLOCK());
+    mrb_define_method(mMrb, V, "on_cancel", rb_rui_list_on_cancel, MRB_ARGS_BLOCK());
+    mrb_define_method(mMrb, V, "on_hover", rb_rui_list_on_hover, MRB_ARGS_BLOCK());
+}
+
 void RubyVM::BindRgssWindow() {
     struct RClass* win = mrb_define_class(mMrb, "Window", mMrb->object_class);
     mrb_define_method(mMrb, win, "initialize", rb_win_init, MRB_ARGS_OPT(4));
@@ -3607,6 +4117,7 @@ void RubyVM::CollectGarbage() {} // ScriptManager ruft das ungeschuetzt
 
 bool RubyVM::CallGameHook(const std::string& name) { (void)name; return false; }
 void RubyVM::CallListMenuBlock(int index) { (void)index; }
+void RubyVM::CallRuiBlock(const char* key, int idx, const char* kind) { (void)key; (void)idx; (void)kind; }
 void RubyVM::CallNameInputResult(const std::string& name) { (void)name; }
 
 bool RubyVM::CaptureException(const std::string&) { return false; }
@@ -3619,6 +4130,7 @@ void RubyVM::BindActor() {}
 void RubyVM::BindCamera() {}
 void RubyVM::BindGame() {}
 void RubyVM::BindUI() {}
+void RubyVM::BindRui() {}
 void RubyVM::BindRgssWindow() {}
 
 } // namespace rpg

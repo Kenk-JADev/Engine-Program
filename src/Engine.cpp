@@ -1230,14 +1230,20 @@ void Engine::Update(float dt) {
     if (!mPlayMode && GameUI::Get().Title().IsVisible())
         GameUI::Get().UpdateModalInput(*mInput);
 
-    // PAKET 31: RUI-Framework (eigene Window-Schicht) — einmal pro Frame
-    // takten: Oeffnen/Schliessen-Animation + NATIVES Maus-Routing (Hover/
-    // Click) auf die Rui::Widgets. Eingabe kommt ausschliesslich aus
-    // rpg::Input (Tasten UND Maus) - ImGui erhaelt weiterhin nichts.
+    // PAKET 31/32: RUI-Framework (eigene Window-Schicht) — einmal pro Frame
+    // takten: Animation + NATIVES Maus-Routing + Fokus-Navigation fuer
+    // Script-Listen. Eingabe kommt ausschliesslich aus rpg::Input (Tasten
+    // UND Maus) - ImGui erhaelt weiterhin nichts.
     if (mInput) {
         const Vec2 mpos = mInput->GetMousePosition();
+        const int navV = mInput->IsKeyPressed(Key::Up) ? -1 :
+                         (mInput->IsKeyPressed(Key::Down) ? 1 : 0);
+        const bool navOk = mInput->IsKeyPressed(Key::Enter) ||
+                           mInput->IsKeyPressed(Key::E);
+        const bool navCancel = mInput->IsKeyPressed(Key::Escape);
         rui::Manager::Get().Update(dt, mpos.x, mpos.y,
-                                   mInput->IsMousePressed(MouseButton::Left));
+                                   mInput->IsMousePressed(MouseButton::Left),
+                                   navV, navOk, navCancel);
     }
 
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
@@ -1246,12 +1252,15 @@ void Engine::Update(float dt) {
         // haben Vorrang vor allem anderen und konsumieren die Tasten zuerst.
         GameUI::Get().UpdateModalInput(*mInput);
 
-        // XP-Debug-Inspektor (F10) blockt die Spieleingabe, solange er offen ist
+        // XP-Debug-Inspektor (F10) blockt die Spieleingabe, solange er offen ist.
+        // PAKET 32: Auch ein fokussiertes Script-Menue (RUI SetFocusList)
+        // zaehlt als modal - Interagieren/Menueaufruf werden gesperrt.
         const bool modalActive = mDbgVisible ||
                                  GameUI::Get().IsNumberInputActive() ||
                                  GameUI::Get().IsNameInputActive() ||
                                  GameUI::Get().Message().HasChoices() ||
-                                 GameUI::Get().Menu().IsVisible();
+                                 GameUI::Get().Menu().IsVisible() ||
+                                 rui::Manager::Get().HasFocus();
         // XP: Esc oeffnet das Spielmenue; Schliessen laeuft ueber
         // MenuWindow::Cancel in UpdateModalInput (Teil von modalActive).
         // Im Kampf ist der Menueaufruf gesperrt (XP-Verhalten).

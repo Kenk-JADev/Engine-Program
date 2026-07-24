@@ -51,17 +51,19 @@ Widget-Sync-Konvention: Der Spielzustand bleibt in den GameUI-Klassen;
 die Draw-Funktion baut den Widget-Baum pro Frame neu auf (Container wie
 `rui.msgbox` bleiben retained, inkl. Openness/Z-Ordnung).
 
-## 4. Script-Windows (Folgepaket)
+## 4. Script-Windows (PAKET 32 — umgesetzt)
 
-Geplant: Ruby/RGSS-Bindings direkt auf die Widgets
-(`Rui::Window`, `Rui::Label`, `Rui::ListView`, `Rui::Gauge`), z. B.
+Ruby-Zugriff liegt direkt auf den C++-Widgets (`Rui::Window/Label/Gauge/
+ListView`), inkl. Bloecke fuer Pick/Cancel/Hover und Tastatur-Fokus
+(`Rui.set_focus_list` — die Engine sperrt dann Spiel-Eingaben):
 
 ```ruby
-win = Rui.window("hud.hp", x, y, w, h)
-win.openness = 0            # XP-Oeffnen
-label = win.add_label("HP", 8, 8)
-win.add_gauge(8, 26, w - 16, 10, actor.hp, actor.max_hp)
+win = Rui.window("hud.hp", 10.0, 10.0, 240.0, 90.0)
+win.openness = 0.0
+win.open            # XP-Aufroll-Animation
+win.add_label("t", "HP", 8.0, 4.0)
+@hp = win.add_gauge("hp", 8.0, 26.0, 180.0, 10.0, 85, 100, "hp")
 ```
 
-Damit lassen sich eigene HUDs/Menues komplett aus Skripten bauen —
-das XP-Window_Base-Pendant, aber ohne ImGui-Abhaengigkeit.
+Vollstaendige API + Beispiele: `docs/SCRIPT-RUI.md`;
+Demo: `SampleProject/scripts/17_Rui_Demo.rb`.

@@ -84,6 +84,7 @@ public:
 class Widget {
 public:
     virtual ~Widget() = default;
+    std::string id;   // PAKET 32: optional ansprechbar (Script-Windows)
     Rect rect;
     bool visible = true;
     bool enabled = true;
@@ -119,6 +120,8 @@ public:
     void Draw(DrawTarget& t) override;
     bool OnMouseClick(float mx, float my) override;
     void OnMouseMove(float mx, float my) override;
+    /// Rekursive Suche nach einem Kind-Widget mit passender ID (nullptr)
+    Widget* FindWidget(const std::string& id);
 };
 
 // Auswahl-Liste mit Cursor (Tastatur nativ ODER Maus-Hover/Click)
@@ -181,17 +184,33 @@ public:
     Window* FindWindow(const std::string& id);
     void Clear();
 
-    /// 1x pro Frame: dt-Takt (Oeffnen/Schliessen) + Maus-Routing
-    void Update(float dt, float mouseX, float mouseY, bool mousePressed);
+    /// 1x pro Frame: dt-Takt (Oeffnen/Schliessen), Maus-Routing und
+    /// PAKET 32: Fokus-Navigation (navV -1/0/+1 = hoch/runter, navOk,
+    /// navCancel) fuer von Scripts fokussierte Listen (s. SetFocusList).
+    void Update(float dt, float mouseX, float mouseY, bool mousePressed,
+                int navV = 0, bool navOk = false, bool navCancel = false);
     void Draw(); // auf mDrawTarget (no-op ohne Adapter)
 
     int WindowCount() const { return (int)mWindows.size(); }
+
+    /// PAKET 32 (Script-Windows): EINE Liste darf den Tastatur-Fokus
+    /// besitzen (SetFocusList "<winId>/<widgetId>"). Solange sie fokussiert
+    /// ist, steuern navV/navOk/navCancel ihre Auswahl; navCancel ruft das
+    /// ListView-onCancel auf. HasFocus kann die Engine nutzen, um
+    /// Spiel-Eingaben (Interagieren/Menues) zu sperren, solange ein
+    /// Skript-Menue aktiv ist.
+    void SetFocusList(const std::string& key);
+    void ClearFocus() { mFocusKey.clear(); }
+    bool HasFocus() const { return !mFocusKey.empty(); }
+    const std::string& GetFocusKey() const { return mFocusKey; }
 
 private:
     Manager() = default;
     Theme mTheme;
     DrawTarget* mDrawTarget = nullptr;
     std::vector<std::unique_ptr<Window>> mWindows;
+    std::string mFocusKey;
+    ListView* ResolveFocusList(); // nullptr, wenn Fokusziel verschwunden
 };
 
 /// Der aktuelle Frame-Mausstatus (von Update gesetzt, Views lesen ihn)

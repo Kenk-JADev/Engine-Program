@@ -143,6 +143,17 @@ void Panel::OnMouseMove(float mx, float my) {
     for (auto& c : children) c->OnMouseMove(mx, my);
 }
 
+Widget* Panel::FindWidget(const std::string& id) {
+    if (id.empty()) return nullptr;
+    for (auto& c : children) {
+        if (c->id == id) return c.get();
+        if (auto* p = dynamic_cast<Panel*>(c.get())) {
+            if (auto* hit = p->FindWidget(id)) return hit;
+        }
+    }
+    return nullptr;
+}
+
 int ListView::VisibleRowCount() const {
     const Theme& th = Theme::Get();
     return std::max(1, (int)(rect.h / th.rowHeight));
@@ -255,9 +266,26 @@ Window* Manager::FindWindow(const std::string& id) {
     return nullptr;
 }
 
-void Manager::Clear() { mWindows.clear(); }
+void Manager::Clear() { mWindows.clear(); mFocusKey.clear(); }
 
-void Manager::Update(float dt, float mouseX, float mouseY, bool mousePressed) {
+void Manager::SetFocusList(const std::string& key) {
+    mFocusKey = key;
+}
+
+ListView* Manager::ResolveFocusList() {
+    if (mFocusKey.empty()) return nullptr;
+    const size_t slash = mFocusKey.find('/');
+    if (slash == std::string::npos) { mFocusKey.clear(); return nullptr; }
+    Window* win = FindWindow(mFocusKey.substr(0, slash));
+    if (!win || !win->visible) { mFocusKey.clear(); return nullptr; }
+    Widget* w = win->FindWidget(mFocusKey.substr(slash + 1));
+    auto* lv = dynamic_cast<ListView*>(w);
+    if (!lv || !lv->visible || !lv->enabled) { mFocusKey.clear(); return nullptr; }
+    return lv;
+}
+
+void Manager::Update(float dt, float mouseX, float mouseY, bool mousePressed,
+                     int navV, bool navOk, bool navCancel) {
     gBlinkTime += dt * GetTheme().blinkHz;   // blinkHz*2pi in Draw
     gMouse = rpg::Vec2(mouseX, mouseY);
     gMousePressed = mousePressed;
@@ -268,6 +296,29 @@ void Manager::Update(float dt, float mouseX, float mouseY, bool mousePressed) {
         (*it)->OnMouseMove(mouseX, mouseY);
         if (mousePressed) {
             if ((*it)->OnMouseClick(mouseX, mouseY)) break;
+        }
+    }
+    // PAKET 32: Fokus-Navigation fuer Script-Listen (Tastatur).
+    // Wurde ein Fokusziel gesetzt (SetFocusList), steuern navV/navOk das
+    // ListView direkt; navCancel ruft onCancel (und loest den Fokus nur,
+    // wenn onCancel ihn aufloest - die Skriptseite entscheidet).
+    if (ListView* lv = ResolveFocusList()) {
+        if (lv->items.empty()) lv->selected = -1;
+        else {
+            if (lv->selected < 0 || lv->selected >= (int)lv->items.size()) lv->selected = 0;
+            // aktivierte Zeilen ansteuern (deaktivierte ueberspringen)
+            auto stepEnabled = [&](int dir) {
+                for (size_t guard = 0; guard < lv->items.size(); ++guard) {
+                    int n = (lv->selected + dir + (int)lv->items.size()) % (int)lv->items.size();
+                    if (lv->items[n].enabled) { lv->selected = n; break; }
+                    lv->selected = n;
+                }
+            };
+            if (navV < 0) stepEnabled(-1);
+            else if (navV > 0) stepEnabled(+1);
+            if (navOk && lv->selected >= 0 && lv->items[lv->selected].enabled && lv->onPick)
+                lv->onPick(lv->selected);
+            if (navCancel && lv->onCancel) lv->onCancel();
         }
     }
     // Voll geschlossene Fenster entfernen (nach Close-Animation)

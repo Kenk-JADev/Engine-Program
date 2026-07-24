@@ -46,6 +46,10 @@ public:
     /// Interne Bruecke fuer UI.open_list_menu: ruft den per Block
     /// uebergebenen Ruby-Callback mit dem gewaehlten Index (-1 = Abbruch).
     void CallListMenuBlock(int index);
+    /// PAKET 32 (RUI Script-Windows): ruft einen pro Schluessel geparkten
+    /// Ruby-Block auf (kind: "pick" | "cancel" | "hover"; idx = Listen-
+    /// Index, bei cancel -1). No-op ohne Ruby/ohne Block.
+    void CallRuiBlock(const char* key, int idx, const char* kind);
     /// Interne Bruecke fuer UI.open_name_input: ruft den per Block
     /// uebergebenen Ruby-Callback mit dem eingegebenen Namen auf.
     void CallNameInputResult(const std::string& name);
@@ -66,6 +70,7 @@ private:
     void BindCamera();
     void BindGame();
     void BindUI();
+    void BindRui();        // PAKET 32: eigenes UI-Framework (Script-Windows)
     void BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
     // RGSS-Vollset (RPG Maker XP-Paritaet) - in src/RubyRgss.cpp:
     void BindRgssObjects();   // Rect/Color/Tone/Font/Table/Bitmap/Viewport
