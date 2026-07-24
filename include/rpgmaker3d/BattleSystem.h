@@ -112,6 +112,14 @@ public:
     /// Battler::ApplyDamage/Recover/NotifyMiss gemeldet und deckt so
     /// Angriffe, Fertigkeiten, Items UND Kampf-Ereignis-Befehle ab.
     std::function<void(const Battler& b, BattleHitKind kind, int amount)> onBattlerHit;
+    /// PAKET 12: XP-Kampf-Animationen (Waffen-/Skill-/Item-Animation) — wird
+    /// VOR dem Schaden einer Aktion am Ziel-Battler gefeuert. animId: Waffe
+    /// des Angreifers (nur Akteure; XP: Gegner-Standardangriff ist ohne
+    /// Animation), Skill.animationId (Fallback: Namens-Abgleich des alten
+    /// String-Felds), Item.animationId. Die Engine projiziert die Position
+    /// und startet die Sequenz; der Kampf wartet in BattleState::Action auf
+    /// das Ende (IsAnimationPlaying), siehe ProcessTurn.
+    std::function<void(const Battler& target, int animId)> onBattleAnimation;
     std::function<void()> onVictory;
     std::function<void()> onDefeat;
     /// XP "Game Over": bei Niederlage UND !canLose (nach onDefeat).

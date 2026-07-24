@@ -103,6 +103,9 @@ struct SkillData {
     int scope = 1; // 1=enemy
     int power = 100;
     std::string animation = "fire";
+    // PAKET 12: XP animation_id (Animations-Tab) fuer die Kampf-Animation.
+    // 0 = Fallback: obiger Namens-String per Datenbank-Abgleich aufloesen.
+    int animationId = 0;
 };
 
 struct EnemyData {

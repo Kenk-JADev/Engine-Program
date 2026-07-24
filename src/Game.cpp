@@ -1162,6 +1162,43 @@ void Game::StartMapAnimationAt(int animId, const Vec3& worldPos) {
     const AnimationData* anim = Database::Get().GetAnimation(animId);
     if (!anim || anim->frames.empty()) return;
 
+    // Zielzentrum (Paket 6): Weltposition ueber Engine-Hook in den RGSS-
+    // Canvas (640x480) projizieren; position versetzt relativ dazu (XP).
+    // Fallback bei fehlendem Hook/Projektion (z.B. Ziel hinter Kamera):
+    // altes statisches Verhalten (Canvas-Mitte +- 80).
+    int baseX = 320, baseY = 240;
+    float cx = 0.0f, cy = 0.0f;
+    if (worldToScreenHook && worldToScreenHook(worldPos, cx, cy)) {
+        baseX = (int)std::round(cx);
+        baseY = (int)std::round(cy);
+        if (anim->position == 0) baseY -= 80;
+        else if (anim->position == 2) baseY += 80;
+        baseX = std::clamp(baseX, 32, 608);
+        baseY = std::clamp(baseY, 16, 464);
+    } else {
+        baseX = 320;
+        baseY = (anim->position == 0) ? 160
+              : (anim->position == 2) ? 320 : 240;
+    }
+    InitRunningAnimation(animId, baseX, baseY);
+}
+
+void Game::StartAnimationAtCanvas(int animId, int canvasX, int canvasY) {
+    const AnimationData* anim = Database::Get().GetAnimation(animId);
+    if (!anim || anim->frames.empty()) return;
+    // PAKET 12: direkte Canvas-Position (top-origin 0..640/0..480) — die
+    // XP-positions-Verschiebung entfaellt, der Aufrufer uebergibt bereits
+    // die Trefferstelle (Kampf: Battler-Bild-Mitte bzw. Statuszeile).
+    InitRunningAnimation(animId,
+                         std::clamp(canvasX, 32, 608),
+                         std::clamp(canvasY, 16, 464));
+}
+
+void Game::InitRunningAnimation(int animId, int baseX, int baseY) {
+    // Aufrufer haben GetAnimation(animId) bereits geprueft (frames non-empty).
+    const AnimationData* anim = Database::Get().GetAnimation(animId);
+    if (!anim) return;
+
     // laufende Animation sauber beenden
     if (mRunningAnim.active) {
         for (int sid : mRunningAnim.spriteIds)
@@ -1189,23 +1226,8 @@ void Game::StartMapAnimationAt(int animId, const Vec3& worldPos) {
     }
     mRunningAnim.bmpId = sheetId;
 
-    // Zielzentrum (Paket 6): Weltposition ueber Engine-Hook in den RGSS-
-    // Canvas (640x480) projizieren; position versetzt relativ dazu (XP).
-    // Fallback bei fehlendem Hook/Projektion (z.B. Ziel hinter Kamera):
-    // altes statisches Verhalten (Canvas-Mitte +- 80).
-    float cx = 0.0f, cy = 0.0f;
-    if (worldToScreenHook && worldToScreenHook(worldPos, cx, cy)) {
-        mRunningAnim.baseX = (int)std::round(cx);
-        mRunningAnim.baseY = (int)std::round(cy);
-        if (anim->position == 0) mRunningAnim.baseY -= 80;
-        else if (anim->position == 2) mRunningAnim.baseY += 80;
-        mRunningAnim.baseX = std::clamp(mRunningAnim.baseX, 32, 608);
-        mRunningAnim.baseY = std::clamp(mRunningAnim.baseY, 16, 464);
-    } else {
-        mRunningAnim.baseX = 320;
-        mRunningAnim.baseY = (anim->position == 0) ? 160
-                           : (anim->position == 2) ? 320 : 240;
-    }
+    mRunningAnim.baseX = baseX;
+    mRunningAnim.baseY = baseY;
 
     ApplyAnimFrame(); // erster Frame sofort
 }

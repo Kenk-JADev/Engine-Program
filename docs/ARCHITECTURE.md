@@ -95,6 +95,14 @@
   ImGui GameUI-Overlay (sichtbare Anzeige im GL-Fenster)
 ```
 
+**ImGui-Frame-Lebenszyklus (PAKET-10-Nachtrag 2026-07-24):** Kontext +
+OpenGL3-Backend werden in `Engine::InitImGui` erzeugt (host-neutral:
+SDL-Player und Qt-GameView gleich; kein SDL-Backend — Eingaben laufen
+nativ, DisplaySize/DeltaTime pro Frame manuell). Render-Reihenfolge:
+3D-Szene → GameUI-DrawData (ImGui GL-Backend) → RgssUI-Canvas
+(Ruby-Fenster bleiben oberste Schicht). Ohne diesen Lebenszyklus ist
+jeder ImGui-Draw ein NULL-Kontext-Zugriff (historischer Bug).
+
 **Die Anzeige hat kein Ruby-Binding.** Scripts nutzen immer das Modul `UI`
 (C++-Bindings in `RubyVM::BindUI`). Das ImGui-Overlay ist nur der Renderer
 fuer das Game-Fenster; `UI.hud_visible=` steuert das HUD, F9 toggelt es.

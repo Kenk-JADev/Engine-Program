@@ -104,7 +104,8 @@ if(RPGMAKER3D_ENABLE_IMGUI)
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
         third_party/imgui/imgui_widgets.cpp
-        third_party/imgui/backends/imgui_impl_sdl2.cpp
+        # PAKET 10 Fix: nur das OpenGL3-Backend (eingebetteter gl3w-Loader).
+        # Kein SDL-Backend: Eingaben laufen nativ, der Qt-Host pumpt kein SDL.
         third_party/imgui/backends/imgui_impl_opengl3.cpp
     )
     # AudioPreview war ImGui-Panel – nur mit ImGui bauen
@@ -533,7 +534,7 @@ if(RPGMAKER3D_BUILD_PLAYER)
             third_party/imgui/imgui_draw.cpp
             third_party/imgui/imgui_tables.cpp
             third_party/imgui/imgui_widgets.cpp
-            third_party/imgui/backends/imgui_impl_sdl2.cpp
+            # siehe oben: nur OpenGL3-Backend, kein SDL-Backend
             third_party/imgui/backends/imgui_impl_opengl3.cpp
         )
     endif()

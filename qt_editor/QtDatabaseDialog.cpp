@@ -606,12 +606,14 @@ void QtDatabaseDialog::buildSkillsTab() {
                                        QL("Anwender")}, 1);
     auto* power = makeSpin(0, 9999, 100, formHost);
     auto* anim = makeLine(formHost);
+    auto* animId = makeSpin(0, 999, 0, formHost); // PAKET 12: XP animation_id
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("MP-Kosten"), cost);
     form->addRow(QL("Reichweite"), scope);
     form->addRow(QL("Stärke"), power);
-    form->addRow(QL("Animation"), anim);
+    form->addRow(QL("Animations-ID"), animId);
+    form->addRow(QL("Legacy-Animationsname"), anim);
 
     tp->count = [this]() { return (int)mSkills.size(); };
     tp->nameAt = [this](int i) {
@@ -621,7 +623,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         mSkills.resize((size_t)n);
         for (size_t i = 0; i < mSkills.size(); ++i) mSkills[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, cost, scope, power, anim](int i) {
+    tp->loadForm = [this, name, desc, cost, scope, power, anim, animId](int i) {
         auto& s = mSkills[(size_t)i];
         name->setText(QString::fromStdString(s.name));
         desc->setText(QString::fromStdString(s.description));
@@ -629,8 +631,9 @@ void QtDatabaseDialog::buildSkillsTab() {
         scope->setCurrentIndex(qBound(0, s.scope, 5));
         power->setValue(s.power);
         anim->setText(QString::fromStdString(s.animation));
+        animId->setValue(s.animationId);
     };
-    tp->storeForm = [this, tp, name, desc, cost, scope, power, anim](int i) {
+    tp->storeForm = [this, tp, name, desc, cost, scope, power, anim, animId](int i) {
         if ((size_t)i >= mSkills.size()) return;
         auto& s = mSkills[(size_t)i];
         s.name = name->text().toStdString();
@@ -639,6 +642,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         s.scope = scope->currentIndex();
         s.power = power->value();
         s.animation = anim->text().toStdString();
+        s.animationId = animId->value();
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);
@@ -664,6 +668,7 @@ void QtDatabaseDialog::buildItemsTab() {
                                        QL("Anwender")}, 3);
     auto* hpRec = makeSpin(0, 99999, 100, formHost);
     auto* mpRec = makeSpin(0, 99999, 0, formHost);
+    auto* animId = makeSpin(0, 999, 0, formHost); // PAKET 12: XP-Animation im Kampf
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
@@ -672,6 +677,7 @@ void QtDatabaseDialog::buildItemsTab() {
     form->addRow(QL("Reichweite"), scope);
     form->addRow(QL("HP-Genesung"), hpRec);
     form->addRow(QL("MP-Genesung"), mpRec);
+    form->addRow(QL("Animations-ID"), animId);
 
     tp->count = [this]() { return (int)mItems.size(); };
     tp->nameAt = [this](int i) {
@@ -681,7 +687,7 @@ void QtDatabaseDialog::buildItemsTab() {
         mItems.resize((size_t)n);
         for (size_t i = 0; i < mItems.size(); ++i) mItems[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, price, type, consumable, scope, hpRec, mpRec](int i) {
+    tp->loadForm = [this, name, desc, price, type, consumable, scope, hpRec, mpRec, animId](int i) {
         auto& it = mItems[(size_t)i];
         name->setText(QString::fromStdString(it.name));
         desc->setText(QString::fromStdString(it.description));
@@ -691,9 +697,10 @@ void QtDatabaseDialog::buildItemsTab() {
         scope->setCurrentIndex(qBound(0, (int)it.scope, 7));
         hpRec->setValue(it.hpRecovery);
         mpRec->setValue(it.mpRecovery);
+        animId->setValue(it.animationId);
     };
     tp->storeForm = [this, tp, name, desc, price, type, consumable, scope,
-                     hpRec, mpRec](int i) {
+                     hpRec, mpRec, animId](int i) {
         if ((size_t)i >= mItems.size()) return;
         auto& it = mItems[(size_t)i];
         it.name = name->text().toStdString();
@@ -704,6 +711,7 @@ void QtDatabaseDialog::buildItemsTab() {
         it.scope = (rpg::ItemData::Scope)scope->currentIndex();
         it.hpRecovery = hpRec->value();
         it.mpRecovery = mpRec->value();
+        it.animationId = animId->value();
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);

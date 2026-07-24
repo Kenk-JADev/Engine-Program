@@ -268,7 +268,8 @@ schwebenden Text „*" (`onShowAnimation`-Hook existiert, wird NIRGENDS gesetzt)
    Frame = 1/15 s? — prüfen: XP Default-Skript `Sprite_Animation` = 2
    Ticks/Frame) nacheinander via RgssUI-Sprites rendern (Sprite existiert,
    `RPG::Animation`-ähnlich), Audio via AudioManager, danach
-   Interpreter-Warte-Flag aufheben. Waffen-/Skill-Animationen im Kampf später.
+   Interpreter-Warte-Flag aufheben. Waffen-/Skill-Animationen im Kampf:
+   **erledigt mit PAKET 12** (2026-07-24).
 
 **Akzeptanz:** Befehl „Animation zeigen" spielt im Spiel die gebaute Sequenz
 am Ziel ab und wartet bis zum Ende.
@@ -814,6 +815,28 @@ ist jetzt Default ON (bei OFF: Draw = No-Op, Logik läuft — dokumentiert).
   Workflow .github/workflows/Main.yml muss vom Nutzer gespiegelt
   werden — Bot pusht keine Workflow-Dateien), README +
   docs/ARCHITECTURE.md + docs/QT-EDITOR.md + Custom.h-Kommentare.
+- [x] **NACHTRAG 2026-07-24 — Kritischer Fix: ImGui-Frame-Lebenszyklus
+  nachgezogen.** Die PAKET-10-Umstellung hatte ImGui-Aufrufe
+  (`ImGui::Begin/GetIO/...`) in allen Draw-Pfaden, aber **nirgendwo
+  `ImGui::CreateContext`/`NewFrame`/`Render`** (auch schon im
+  Basis-Commit nicht; die CI baute bisher nur mit IMGUI=**OFF**, wo
+  Draw ein No-Op ist). Mit IMGUI=ON waere der erste Draw (schon der
+  Titelbildschirm) ein NULL-Kontext-Zugriff = Absturz gewesen.
+  Jetzt: `Engine::InitImGui/ImGuiBeginFrame/ImGuiEndFrame/ShutdownImGui`
+  (geht nur mit dem Define an). Host-unabhaengig (SDL-Player UND
+  Qt-GameView): bewusst **kein** SDL-Backend — Eingaben laufen nativ
+  (Input/UpdateModalInput), Qt pumpt keine SDL-Events; DisplaySize +
+  DeltaTime werden pro Frame manuell gesetzt (Quelle: `mWindow`,
+  im Qt-Host via `Window::SetForeignSize` gepflegt). GL3-Backend mit
+  eingebettetem gl3w-Loader (kein Loader-Konflikt mit glad, kein
+  CMake-Eingriff noetig); `imgui_impl_sdl2.cpp` dafuer aus beiden
+  CMake-Quellisten entfernt. Zeichen-Reihenfolge: Szene → GameUI-
+  DrawData → RgssUI (dokumentierte Ordnung „Ruby-UI oberste Schicht“
+  stimmt jetzt real). Draw-Aufrufe laufen nur bei `mImGuiReady`.
+  **Konsequenz:** Erst MIT diesem Fix werden die ImGui-Anzeigen
+  (Titel/Messages/Menues/HUD/Battler-Bilder/Kampfstatus/Bildschirm-
+  effekte, PAKETe 9–11) ueberhaupt sichtbar — ohne ihn waere jeder
+  IMGUI=ON-Build beim Start abgestuerzt.
 
 ## PAKET 11 — XP-Bildschirmeffekte sichtbar ✅ ERLEDIGT 2026-07-23
 
@@ -842,6 +865,44 @@ bislang nur in den `ScreenEffects`-Zustand — **gerendert wurde nichts**;
   Schnee = treibende Flocken mit Sinus-Drift. Globales Overlay → läuft
   auf der Karte UND im Kampf automatisch. `SetTimeOfDay` bleibt
   bewusst reserviert (kein XP-Befehl).
+
+## PAKET 12 — Kampf-Animationen (XP Waffen-/Skill-/Item-Animation) ✅ ERLEDIGT 2026-07-24
+
+Schliesst den „später“-Vermerk aus PAKET 5: Im Kampf loesten
+Angriff/Fertigkeit/Item bislang nur Popups/Flash aus — keine
+Animationssequenz. XP-Referenz (Scene_Battle phase4): der Angreifer
+spielt seine `animation1_id` (Waffen-Animation) bzw. die der Fertigkeit
+am Ziel ab; die Runde wartet sichtbar auf das Ende.
+
+- [x] **Datenbank: `animationId` komplett + Persistenz-Luecken
+  geschlossen.** `WeaponData`/`ItemData` hatten das Feld bereits, aber
+  es wurde **nie gespeichert** (Weapons.json/Items.json schrieben es
+  nicht — Editor-Werte gingen verloren). Neu: `SkillData.animationId`
+  (XP `animation_id`; der alte Freitext `animation` bleibt als
+  Legacy-Fallback per Namensabgleich). Parse + Save in Database.cpp
+  fuer alle drei Typen ergaenzt.
+- [x] **Editor:** Skills-Tab „Animations-ID“-Spin (0–999, wie Waffen)
+  + der alte Text ist als „Legacy-Animationsname“ weiter editierbar;
+  Gegenstaende-Tab „Animations-ID“-Spin ergaenzt.
+- [x] **Laufzeit:** neuer Hook `BattleSystem::onBattleAnimation(target,
+  animId)` — gefeuert VOR dem Schaden in `ProcessTurn` (Angriff nur bei
+  Akteur-Angreifern ueber die ausgeruestete Waffe — XP: Gegner-
+  Standardangriff hat keine Sequenz, Ziel-Flash laeuft ueber
+  `onBattlerHit`; Schaden-/Heil-Skills; Schaden-/Heil-Items).
+  `Game::StartAnimationAtCanvas(animId, x, y)` spielt die Sequenz
+  direkt an einer RGSS-Canvas-Position (Refaktor: gemeinsames
+  `InitRunningAnimation`; Kartenpfad via Weltprojektion unveraendert).
+  Engine verdrahtet Positionen wie Battler-Bilder/Popups (Gegner
+  y=0,30, Akteure Statuszeile y=0,90); Sequenz laeuft als
+  RGSS-Sprites (z=9999 → ueber Battler-Bildern UND 3D). Timing:
+  `BattleState::Action` wartet zusaetzlich auf `IsAnimationPlaying()`
+  (XP: naechster Kaempfer erst nach Animations-Ende). SE je Frame ueber
+  den vorhandenen `playSeHook`.
+
+**Akzeptanz:** Akteur greift mit Waffe (Animations-ID > 0) an →
+Schwung-Sequenz am Gegner-Bild; Fertigkeit spielt ihre Animation am
+Ziel; Runde geht erst nach Ende weiter. Ohne hinterlegte Animation
+(ID 0/legacy unbekannt) bleibt alles beim alten Popup/Flash-Verhalten.
 
 ## Arbeitsregeln (für Agenten-Sessions)
 

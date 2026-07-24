@@ -31,6 +31,13 @@
 #include <SDL.h>
 
 #include <glad/gl.h>
+// PAKET 10 Fix: GameUI-ImGui-Overlay bekommt einen echten Frame-Lebenszyklus
+// (Kontext + OpenGL3-Backend). Nur das GL-Backend — kein SDL-Backend
+// (Eingaben laufen nativ; der Qt-Host hat keine SDL-Event-Schleife).
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+#include <imgui.h>
+#include <imgui_impl_opengl3.h>
+#endif
 #include <iostream>
 #include <chrono>
 #include <cmath>
@@ -107,6 +114,10 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     // FPS/Karte/Status in der eigenen Statuszeile); es wird beim
     // Playtest-Start sichtbar (F9 toggelt jederzeit). Im Player: an.
     GameUI::Get().SetHudVisible(!mEditorMode);
+
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    InitImGui(); // PAKET 10 Fix: Lebenszyklus fehlte komplett (s.u.)
+#endif
 
     // Core Systeme
     mInput = std::make_unique<Input>();
@@ -248,6 +259,31 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
                     break;
             }
         }
+    };
+
+    // PAKET 12: XP-Kampf-Animationen — Waffen-/Skill-/Item-Animation am
+    // Ziel-Battler (BattleSystem::onBattleAnimation). Zielpunkt wie die
+    // Battler-Bilder/Popup-Formel (normierte Bildschirmposition -> RGSS-
+    // Canvas 640x480, top-origin — dieselbe Konvention wie GameUI-Pictures
+    // und RGSS-Canvas). Die Sequenz laeuft ueber das RGSS-Spritesystem
+    // (z=9999) und deckt damit Battler-Bilder UND 3D-Karte einheitlich ab.
+    BattleSystem::Get().onBattleAnimation = [this](const Battler& b, int animId) {
+        if (animId <= 0) return;
+        auto& bs = BattleSystem::Get();
+        float x;
+        if (b.isActor) {
+            const int n = (int)bs.Actors().size();
+            x = n > 1 ? (0.25f + 0.5f * (float)b.index / (float)(n - 1)) : 0.5f;
+        } else {
+            const int n = (int)bs.Enemies().size();
+            x = n > 1 ? (0.25f + 0.5f * (float)b.index / (float)(n - 1)) : 0.5f;
+        }
+        // Gegner: Mitte des Battler-Bildes (y=0.30). Akteure: Mitte der
+        // XP-Statuszeile unten (~20% hoch -> Zentrum bei y=0.90).
+        const float yNorm = b.isActor ? 0.90f : 0.30f;
+        Game::Get().StartAnimationAtCanvas(animId,
+                                           (int)std::round(x * 640.0f),
+                                           (int)std::round(yNorm * 480.0f));
     };
 
     // Bild-Pfadaufloeser fuer GameUI (UI.show_picture + Titelgrafik):
@@ -684,10 +720,91 @@ void Engine::PlayEventAudio(const std::string& name, int kind, bool loop) {
                  kind == 2 ? "ME" : "SE") + ": " + name);
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 10 Fix: ImGui-Frame-Lebenszyklus (Kontext + OpenGL3-Backend)
+// ---------------------------------------------------------------------------
+// Hintergrund: Seit PAKET 10 zeichnet die KOMPLETTE Spielanzeige (Titel,
+// Messages, Menues, HUD, Pictures, Kampfstatus, Bildschirmeffekte) ueber
+// ImGui — aber es gab nirgendwo ImGui::CreateContext/NewFrame/Render. Mit
+// aktivem RPGMAKER3D_ENABLE_IMGUI waere der erste Draw ein NULL-Kontext-
+// Zugriff gewesen (Absturz). Hier laeuft alles host-unabhaengig:
+// - SDL-Player (Game.exe): Kontext nach Window/GL-Init, Fenster = SDL.
+// - Qt-Editor (GameView): Kontext in initializeGL (Qt-Kontext ist current),
+//   Fenstergroesse kommt ueber Window::SetForeignSize.
+// Loader: das Backend nutzt seinen eingebetteten gl3w-Loader
+// (IMGUI_IMPL_OPENGL_LOADER_IMGL3W) — kein Eingriff in glad noetig.
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+
+void Engine::InitImGui() {
+    if (mImGuiReady) return;
+    IMGUI_CHECKVERSION();
+    if (!ImGui::CreateContext()) {
+        RPG_LOG_ERROR("ImGui::CreateContext fehlgeschlagen - GameUI-Overlay aus");
+        return;
+    }
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;   // keine imgui.ini-ins-Projekt schreiben
+    io.LogFilename = nullptr;   // kein imgui_log.txt
+    ImGui::StyleColorsDark();
+    // GLSL 130 = GL 3.0+ (Engine-Kontext ist 3.3, Abwaertskompatibilitaet ok)
+    if (!ImGui_ImplOpenGL3_Init("#version 130")) {
+        RPG_LOG_ERROR("ImGui GL3-Backend-Init fehlgeschlagen - GameUI-Overlay aus");
+        ImGui::DestroyContext();
+        return;
+    }
+    mImGuiReady = true;
+    mImGuiLastTime = std::chrono::steady_clock::now();
+    RPG_LOG_INFO("ImGui-Overlay bereit (GameUI: Titel/Messages/Menues/HUD)");
+}
+
+void Engine::ImGuiBeginFrame() {
+    if (!mImGuiReady || mImGuiFrameOpen) return;
+    ImGuiIO& io = ImGui::GetIO();
+    int w = mWindow ? mWindow->GetWidth() : 0;
+    int h = mWindow ? mWindow->GetHeight() : 0;
+    // DisplaySize ist LESE-relevant fuer das gesamte GameUI-Layout
+    // (Messages/Menues positionieren relativ zur Fenstergroesse).
+    io.DisplaySize = ImVec2((float)std::max(1, w), (float)std::max(1, h));
+    const auto now = std::chrono::steady_clock::now();
+    float dt = std::chrono::duration<float>(now - mImGuiLastTime).count();
+    mImGuiLastTime = now;
+    if (dt <= 0.0f || dt > 0.5f) dt = 1.0f / 60.0f; // Pausen/Stopps abfangen
+    io.DeltaTime = dt;
+    // Keine Maus/Tastatur-Fuetterung: GameUI liest Eingaben nativ
+    // (Input::IsKeyPressed / UpdateModalInput), Mausposition bleibt "keine".
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui::NewFrame();
+    mImGuiFrameOpen = true;
+}
+
+void Engine::ImGuiEndFrame() {
+    if (!mImGuiReady || !mImGuiFrameOpen) return;
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    mImGuiFrameOpen = false;
+}
+
+void Engine::ShutdownImGui() {
+    if (!mImGuiReady) return;
+    if (mImGuiFrameOpen) {       // defensiv: offenen Frame sauber schliessen
+        ImGui::EndFrame();
+        mImGuiFrameOpen = false;
+    }
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui::DestroyContext();
+    mImGuiReady = false;
+}
+
+#endif // RPGMAKER3D_ENABLE_IMGUI
+
 void Engine::Shutdown() {
     RPG_LOG_INFO("Engine shutdown started");
     // PAKET 9: Kampf-Feedback-Hook loesen (haelt this)
     BattleSystem::Get().onBattlerHit = nullptr;
+    BattleSystem::Get().onBattleAnimation = nullptr; // PAKET 12 (haelt this)
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ShutdownImGui(); // vor Window/GL-Teardown (Backend loescht GL-Ressourcen)
+#endif
     mInitialized = false;
 // ImGui/Editor shutdown removed
     mGridMesh.Delete();
@@ -1361,11 +1478,16 @@ void Engine::Render() {
     // PAKET 10: Die gesamte Spielanzeige (Messages, Menues, HUD, Pictures,
     // ScreenTexts, Kampfstatus) laeuft im GameUI-ImGui-Overlay — ohne
     // ImGui-Define ist Draw ein No-Op, die Logik (Modal-Input) laeuft weiter.
+    // PAKET 10 Fix: echter Frame-Lebenszyklus (BeginFrame/EndFrame) — das
+    // GL-Zeichnen der DrawData passiert VOR RgssUI, damit die dokumentierte
+    // Ordnung stimmt (Ruby-UI bleibt oberste Schicht).
 #ifdef RPGMAKER3D_ENABLE_IMGUI
-    if (mPlayMode || !mEditorMode) {
+    ImGuiBeginFrame();
+    if (mImGuiReady && (mPlayMode || !mEditorMode)) {
         GameUI::Get().Draw();
         if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
     }
+    ImGuiEndFrame();
 #endif
 
     // RGSS-Fenster (reine Ruby-UI) liegen auf der obersten Schicht -

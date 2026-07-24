@@ -346,6 +346,11 @@ public:
     /// Engine projiziert ueber worldToScreenHook in den RGSS-Canvas; ohne
     /// Hook/Kamera bleibt das alte Zentrum-Verhalten als Fallback.
     void StartMapAnimationAt(int animId, const Vec3& worldPos);
+    /// PAKET 12: Startet Animation <animId> direkt an einer Canvas-Position
+    /// (RGSS 640x480, top-origin). Fuer Ziele, die keinen 3D-Weltpunkt haben
+    /// — XP-Kampf: Waffen-/Skill-/Item-Animation am Ziel-Battler
+    /// (Battler-Bilder/Statuszeile sind normierte Bildschirmpositionen).
+    void StartAnimationAtCanvas(int animId, int canvasX, int canvasY);
     bool IsAnimationPlaying() const { return mRunningAnim.active; }
     void UpdateAnimations(float dt);
     /// Wire-once-Hook (Engine): SE-Abspielen zu Frame-Wechseln.
@@ -389,6 +394,9 @@ public:
     RunningAnimation mRunningAnim;
     int mFallbackCellBmpId = 0;         // 8x8-Rund als Ersatzzelle
     void ApplyAnimFrame();              // baut Sprite-Pool auf mRunningAnim.frameIdx
+    /// Gemeinsamer Start (Karten-/Kampf-Animation): vorige Sequenz beenden,
+    /// Sheet laden/cachen, Zielzentrum setzen, ersten Frame anzeigen.
+    void InitRunningAnimation(int animId, int baseX, int baseY);
 
 private:
     Game() = default;

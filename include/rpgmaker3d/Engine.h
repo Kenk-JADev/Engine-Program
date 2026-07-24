@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <chrono>
 #include "Types.h"
 #include "Model.h"
 
@@ -131,6 +132,20 @@ public:
     int GetSelectedEntity() const { return mSelectedEntity; }
 
 private:
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    // ---- PAKET 10 Fix: ImGui-Frame-Lebenszyklus (GameUI-Overlay) ----
+    // Kontext + OpenGL3-Backend (eingebetteter gl3w-Loader, kein Konflikt
+    // mit glad). SDL-Backend bewusst NICHT: Eingaben laufen nativ ueber
+    // Input/GameUI::UpdateModalInput und der Qt-Host pumpt keine SDL-Events.
+    void InitImGui();               // einmalig in InitializeInternal (GL laeuft)
+    void ImGuiBeginFrame();         // DisplaySize/DeltaTime + NewFrame (Render)
+    void ImGuiEndFrame();           // ImGui::Render + GL-DrawData zeichnen
+    void ShutdownImGui();           // Backend + Kontext (Engine::Shutdown)
+    bool mImGuiReady = false;       // Kontext + Backend initialisiert?
+    bool mImGuiFrameOpen = false;   // NewFrame ohne Render verhindern
+    std::chrono::steady_clock::time_point mImGuiLastTime{}; // DeltaTime-Uhr
+#endif
+
     bool InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow);
     /// Event-Audio (BGM/BGS/ME/SE) + Karten-Autoplay: loest Dateinamen gegen
     /// <Projekt>/Audio/<Art>/ (XP-Struktur) und assets/audio/<Art>/ auf und

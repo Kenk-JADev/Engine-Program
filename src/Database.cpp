@@ -330,6 +330,7 @@ rpg::ItemData ParseItemObject(const std::string& obj) {
     if (TryParseInt(obj, "hpRecovery", 0, rec)) it.hpRecovery = rec;
     if (TryParseInt(obj, "mpRecovery", 0, rec)) it.mpRecovery = rec;
     if (TryParseInt(obj, "iconIndex", 0, rec)) it.iconIndex = rec;
+    if (TryParseInt(obj, "animationId", 0, rec)) it.animationId = rec; // PAKET 12
     bool cons = true;
     if (TryParseBool(obj, "consumable", 0, cons)) it.consumable = cons;
     if (TryParseString(obj, "iconName", 0, name)) it.iconName = name;
@@ -410,6 +411,7 @@ rpg::SkillData ParseSkillObject(const std::string& obj) {
     if (TryParseString(obj, "description", 0, name)) s.description = name;
     if (TryParseString(obj, "animation", 0, name)) s.animation = name;
     int v = 0;
+    if (TryParseInt(obj, "animationId", 0, v)) s.animationId = v; // PAKET 12 (XP animation_id)
     if (TryParseInt(obj, "mpCost", 0, v)) s.mpCost = v;
     if (TryParseInt(obj, "power", 0, v)) s.power = v;
     if (TryParseInt(obj, "iconIndex", 0, v)) s.iconIndex = v;
@@ -1003,6 +1005,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"mpRecovery\":" << it.mpRecovery
                   << ",\"iconName\":\"" << Escape(it.iconName) << "\""
                   << ",\"iconIndex\":" << it.iconIndex
+                  << ",\"animationId\":" << it.animationId
                   << "}";
                 if (i+1<mItems.size()) f << ",";
                 f << "\n";
@@ -1111,6 +1114,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"price\":" << w.price
                   << ",\"atk\":" << w.atk
                   << ",\"iconIndex\":" << w.iconIndex
+                  << ",\"animationId\":" << w.animationId
                   << "}";
                 if (i+1<mWeapons.size()) f << ",";
                 f << "\n";
@@ -1150,6 +1154,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"iconIndex\":" << s.iconIndex
                   << ",\"scope\":" << s.scope
                   << ",\"animation\":\"" << Escape(s.animation) << "\""
+                  << ",\"animationId\":" << s.animationId
                   << "}";
                 if (i+1<mSkills.size()) f << ",";
                 f << "\n";

@@ -3,6 +3,7 @@
 #include "rpgmaker3d/Logger.h"
 #include <algorithm>
 #include <random>
+#include <cctype>
 
 namespace rpg {
 
@@ -11,6 +12,36 @@ namespace {
 std::mt19937& BattleRng() {
     static std::mt19937 g(std::random_device{}());
     return g;
+}
+
+// --- PAKET 12: Animationsauflösung (XP animation_id / Legacy-Name) --------
+/// Legacy-Fallback: der alte Freitext (Skill.animation) wird per
+/// Namensabgleich (gross/klein egal) gegen die Datenbank-Animationen geloest.
+/// Effektive ID wie im Editor: id > 0, sonst Listenindex + 1.
+int FindAnimationIdByName(const std::string& name) {
+    if (name.empty()) return 0;
+    const auto& set = Database::Get().AnimationSet();
+    for (size_t i = 0; i < set.size(); ++i) {
+        const std::string& t = set[i].name;
+        if (t.size() != name.size()) continue;
+        bool eq = true;
+        for (size_t k = 0; k < t.size(); ++k) {
+            if (std::tolower((unsigned char)t[k]) != std::tolower((unsigned char)name[k])) {
+                eq = false; break;
+            }
+        }
+        if (eq) return set[i].id > 0 ? set[i].id : (int)i + 1;
+    }
+    return 0;
+}
+
+/// XP Game_Actor#animation1_id: Animation der ausgeruesteten Waffe.
+int ActorWeaponAnimationId(int actorId) {
+    if (auto* ga = Game::Get().Party().GetActor(actorId)) {
+        for (const auto& w : Database::Get().Weapons())
+            if (w.id == ga->weaponId) return w.animationId;
+    }
+    return 0;
 }
 } // namespace
 
@@ -165,7 +196,10 @@ void BattleSystem::Update(float dt) {
             ProcessTurn();
             break;
         case BattleState::Action:
-            if (mTimer > 0.8f) {
+            // PAKET 12: XP-Warteverhalten — die Aktions-Animation (Waffe/
+            // Skill/Item) laeuft sichtbar zu Ende, bevor der naechste
+            // Kaempfer an der Reihe ist. Mindestpause 0.8 s wie bisher.
+            if (mTimer > 0.8f && !Game::Get().IsAnimationPlaying()) {
                 mState = BattleState::Turn;
                 mTimer = 0;
                 mTurn++;
@@ -315,6 +349,13 @@ void BattleSystem::ProcessTurn() {
     if (action.type==BattleActionType::Attack) {
         Battler* target = targetOf(action);
         if (target && !target->isDead) {
+            // PAKET 12: Waffen-Animation am Ziel (nur Akteure — XP: der
+            // Gegner-Standardangriff hat keine Grafiksequenz, das Ziel
+            // blinkt/blitzt ueber onBattlerHit).
+            if (subject->isActor && onBattleAnimation) {
+                const int animId = ActorWeaponAnimationId(subject->id);
+                if (animId > 0) onBattleAnimation(*target, animId);
+            }
             // PAKET 9: XP-Kampfregel — Ausweichen (5%) vor kritischem
             // Treffer (1/16, dreifacher Schaden), beides im Popup sichtbar
             std::uniform_real_distribution<float> uni(0.0f, 1.0f);
@@ -344,10 +385,17 @@ void BattleSystem::ProcessTurn() {
         const bool allyScope = sk && sk->scope >= 3;
         const std::string sname = sk ? sk->name : "Fertigkeit";
         if (sk) subject->mp = std::max(0, subject->mp - sk->mpCost);
+        // PAKET 12: Skill-Animation (XP animation_id; Fallback: Legacy-
+        // Namens-String per Datenbank-Abgleich).
+        const int skillAnimId = sk ? (sk->animationId > 0
+                                      ? sk->animationId
+                                      : FindAnimationIdByName(sk->animation)) : 0;
         if (!allyScope) {
             // Schadens-Skill - Zielseite steht in action.targetIsActor
             Battler* target = targetOf(action);
             if (target && !target->isDead) {
+                if (skillAnimId > 0 && onBattleAnimation)
+                    onBattleAnimation(*target, skillAnimId);
                 // PAKET 9: gleiche XP-Regel wie beim Angriff (Miss 5%, Crit 1/16 x3)
                 std::uniform_real_distribution<float> uni(0.0f, 1.0f);
                 if (uni(BattleRng()) < 0.05f) {
@@ -373,6 +421,9 @@ void BattleSystem::ProcessTurn() {
             if (action.targetIsActor) {
                 if (Battler* t = targetOf(action)) target = t;
             }
+            // PAKET 12
+            if (skillAnimId > 0 && onBattleAnimation)
+                onBattleAnimation(*target, skillAnimId);
             target->Recover(power, 0);
             if (onMessage) onMessage(subject->name + " setzt " + sname + " ein: " +
                                      target->name + " +" + std::to_string(power) + " HP");
@@ -383,6 +434,9 @@ void BattleSystem::ProcessTurn() {
                 // Schadens-Item (z. B. Bombe) - Zielseite aus der Aktion
                 Battler* target = targetOf(action);
                 if (target && !target->isDead) {
+                    // PAKET 12
+                    if (it->animationId > 0 && onBattleAnimation)
+                        onBattleAnimation(*target, it->animationId);
                     const int dmg = -it->hpRecovery;
                     target->ApplyDamage(dmg);
                     std::string msg = subject->name + " benutzt " + it->name + ": " +
@@ -397,6 +451,9 @@ void BattleSystem::ProcessTurn() {
                 if (action.targetIsActor) {
                     if (Battler* t = targetOf(action)) target = t;
                 }
+                // PAKET 12
+                if (it->animationId > 0 && onBattleAnimation)
+                    onBattleAnimation(*target, it->animationId);
                 target->Recover(it->hpRecovery, it->mpRecovery);
                 if (onMessage) onMessage(subject->name + " benutzt " + it->name +
                                          " auf " + target->name + " (+" +
