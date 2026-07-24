@@ -1160,6 +1160,41 @@ Meldung + Schlupfschaden + Status im Fenster); verteidigt zwischendurch
 (halbierter Schaden); Editieren im Gegner-Tab speichert eine
 `"actions":[{...}]`-Zeile, die nach Reload identisch wieder erscheint.
 
+## PAKET 19 — XP `Game_Event` + `$game_map.events`-Hash ✅ ERLEDIGT 2026-07-24
+
+`rb_game_map_events` lieferte bewusst einen **leeren Hash** („NPCs laufen
+nativ ueber das EventSystem") — XP-Skripte konnten Events damit nicht
+lesen oder steuern (`$game_map.events[7].moveto(x, y)` scheiterte).
+
+- [x] **Native `Game_Event`-Klasse:** Wrapper nach dem Game_Actor-Muster
+  (nur `@ev_id`/`@map_id` als Ivars, native Aufloesung frisch je Aufruf
+  ueber `EventSystem::GetEvent` — vektor- und kartenwechselfest; nicht
+  aufloesbare Events liefern nil statt zu crashen). Methoden: `map_id`,
+  `id`, `valid?`, `name`, `x`, `y` (XP 2D = ev.z), `direction`,
+  `through`/`through=`, `transparent`/`transparent=` (PAKET-16-
+  Laufzeitfelder — Move-Routen und Skripte teilen sich jetzt denselben
+  Zustand), `move_speed`/`move_speed=` (clamp 1..6), `moveto(x, y)`
+  (Semantik von Event-Befehl 202 inkl. Blick-Reset nach unten, XP),
+  `erase`, `erased`/`erased?`, `refresh` (= RefreshAllPages).
+- [x] **`$game_map.events`:** echter Hash `{id => Game_Event}` mit
+  Dauer-Cache auf der Game_Map-Instanz (gleiche Objekte wie XP, Ivars
+  ueberlebensfaehig); bei abweichender Karten-ID Neuaufbau. Events
+  ohne Seiten (Platzhalter) uebersprungen, erased bleibt drin (XP).
+- [x] Kein Stub-Pfad betroffen (keine neuen oeffentlichen
+  RubyVM-Methoden); Prelude unveraendert (definiert kein Game_Event —
+  keine Kollision; `RPG::Map#events = {}` ist die Daten-Klasse).
+
+**Bewusst offen (XP-Rest von Game_Event):** `start`/`unlock`, Trigger-
+Logik und Interpreter-Steuerung aus Ruby heraus (laeuft nativ), volle
+Game_Character-Oberflaeche (bush_depth, screen_z, animation usw. —
+Klasse leitet bewusst von Object ab, solange Game_Character nicht
+existiert).
+
+**Akzeptanz:** `SC $game_map.events[1].moveto(3, 4)` im Routen-/Event-
+Script versetzt das Demo-Event sichtbar; `$game_map.events[1].through =
+true` wirkt identisch zum Routen-Token H1; nach Kartenwechsel liefert
+`$game_map.events` den Hash der neuen Karte.
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

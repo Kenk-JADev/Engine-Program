@@ -1793,12 +1793,30 @@ static mrb_value rb_game_map_display_y_set(mrb_state* mrb, mrb_value self) {
     return mrb_int_value(mrb, v);
 }
 
-// events: bewusst leer (NPC-Darstellung/Interpreter laufen nativ ueber das
-// EventSystem — wie in der Map%03d-Bruecke dokumentiert). Spriteset_Map u.ae.
-// iterieren .values gefahrlos ueber den leeren Hash.
+// PAKET 19: XP $game_map.events — {event_id => Game_Event} der AKTUELLEN
+// Karte. Die Objekte sind dauerhaft gecacht (XP: gleiche Instanzen, damit
+// Skripte Ivars an ihnen setzen koennen); bei Kartenwechsel (map_id anders)
+// wird der Hash neu gebaut. Erased-Events bleiben drin (XP setzt dort nur
+// @erased — Spriteset_Map iteriert weiter gefahrlos).
 static mrb_value rb_game_map_events(mrb_state* mrb, mrb_value self) {
-    (void)self;
-    return mrb_hash_new(mrb);
+    const int curMap = Game::Get().Map().GetMapId();
+    mrb_value cache = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "__events_cache"));
+    mrb_value cacheMap = mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "__events_map_id"));
+    if (mrb_hash_p(cache) && mrb_int_p(cacheMap) &&
+        (int)mrb_as_int(mrb, cacheMap) == curMap)
+        return cache;
+    struct RClass* cev = mrb_class_get(mrb, "Game_Event");
+    mrb_value h = mrb_hash_new(mrb);
+    for (const auto& ev : EventSystem::Get().GetEvents()) {
+        if (!ev.IsValid()) continue; // Platzhalter ohne Seiten ueberspringen
+        mrb_value args[2] = { mrb_int_value(mrb, curMap), mrb_int_value(mrb, ev.id) };
+        mrb_value obj = mrb_obj_new(mrb, cev, 2, args);
+        mrb_hash_set(mrb, h, mrb_int_value(mrb, ev.id), obj);
+    }
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__events_cache"), h);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "__events_map_id"),
+               mrb_int_value(mrb, curMap));
+    return h;
 }
 
 // need_refresh: XP-Marker „Events neu bewerten" — bei uns sofort-Semantik:
@@ -1817,6 +1835,108 @@ static mrb_value rb_game_map_need_refresh_set(mrb_state* mrb, mrb_value self) {
 }
 static mrb_value rb_game_map_refresh(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
+    EventSystem::Get().RefreshAllPages();
+    return mrb_nil_value();
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 19: XP Game_Event-Bruecke — Wrapper auf die nativen MapEvents des
+// EventSystems. wie Game_Actor: nur die ID als Ivar, Aufloesung frisch je
+// Aufruf (vektorstabil, kartenwechselfest). Events anderer Karten loesen zu
+// nullptr auf; alle Methoden liefern dann nil (statt Absturz — ehrlich).
+// ---------------------------------------------------------------------------
+static MapEvent* GEventPtr(mrb_state* mrb, mrb_value self) {
+    const mrb_int id = mrb_as_int(mrb, mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@ev_id")));
+    return EventSystem::Get().GetEvent((int)id);
+}
+static mrb_value rb_gev_initialize(mrb_state* mrb, mrb_value self) {
+    mrb_int mapId = 0, evId = 0;
+    mrb_get_args(mrb, "|ii", &mapId, &evId);
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@map_id"), mrb_int_value(mrb, mapId));
+    mrb_iv_set(mrb, self, mrb_intern_lit(mrb, "@ev_id"), mrb_int_value(mrb, evId));
+    return self;
+}
+static mrb_value rb_gev_map_id(mrb_state* mrb, mrb_value self) {
+    return mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@map_id"));
+}
+static mrb_value rb_gev_id(mrb_state* mrb, mrb_value self) {
+    return mrb_iv_get(mrb, self, mrb_intern_lit(mrb, "@ev_id"));
+}
+static mrb_value rb_gev_valid(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return mrb_bool_value(ev && ev->IsValid() && !ev->erased);
+}
+static mrb_value rb_gev_name(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    if (!ev) return mrb_nil_value();
+    return mrb_str_new(mrb, ev->name.data(), (mrb_int)ev->name.size());
+}
+// XP 2D: x/y — unser grid ist ev.x / ev.z
+static mrb_value rb_gev_x(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_int_value(mrb, ev->x) : mrb_nil_value();
+}
+static mrb_value rb_gev_y(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_int_value(mrb, ev->z) : mrb_nil_value();
+}
+static mrb_value rb_gev_direction(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_int_value(mrb, ev->direction) : mrb_nil_value();
+}
+// Laufzeit-Flags aus PAKET 16 (Move-Routen teilen sich die Felder!)
+static mrb_value rb_gev_through_get(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_bool_value(ev->through) : mrb_nil_value();
+}
+static mrb_value rb_gev_through_set(mrb_state* mrb, mrb_value self) {
+    mrb_bool v = 0;
+    mrb_get_args(mrb, "b", &v);
+    if (MapEvent* ev = GEventPtr(mrb, self)) ev->through = v != 0;
+    return mrb_bool_value(v);
+}
+static mrb_value rb_gev_transparent_get(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_bool_value(ev->transparent) : mrb_nil_value();
+}
+static mrb_value rb_gev_transparent_set(mrb_state* mrb, mrb_value self) {
+    mrb_bool v = 0;
+    mrb_get_args(mrb, "b", &v);
+    if (MapEvent* ev = GEventPtr(mrb, self)) ev->transparent = v != 0;
+    return mrb_bool_value(v);
+}
+static mrb_value rb_gev_move_speed_get(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_int_value(mrb, ev->moveSpeedRt) : mrb_nil_value();
+}
+static mrb_value rb_gev_move_speed_set(mrb_state* mrb, mrb_value self) {
+    mrb_int v = 3;
+    mrb_get_args(mrb, "i", &v);
+    if (MapEvent* ev = GEventPtr(mrb, self))
+        ev->moveSpeedRt = std::clamp((int)v, 1, 6);
+    return mrb_int_value(mrb, v);
+}
+// XP Game_Character#moveto — gleiche Semantik wie Event-Befehl 202
+static mrb_value rb_gev_moveto(mrb_state* mrb, mrb_value self) {
+    mrb_int x = 0, y = 0;
+    mrb_get_args(mrb, "ii", &x, &y);
+    if (MapEvent* ev = GEventPtr(mrb, self)) {
+        ev->x = (int)x; ev->z = (int)y;
+        ev->worldPos = Vec3((float)x, ev->worldPos.y, (float)y);
+        ev->direction = DIR_DOWN; // XP: moveto setzt Blick nach unten
+    }
+    return mrb_nil_value();
+}
+static mrb_value rb_gev_erase(mrb_state* mrb, mrb_value self) {
+    if (MapEvent* ev = GEventPtr(mrb, self)) ev->erased = true;
+    return mrb_nil_value();
+}
+static mrb_value rb_gev_erased(mrb_state* mrb, mrb_value self) {
+    MapEvent* ev = GEventPtr(mrb, self);
+    return ev ? mrb_bool_value(ev->erased) : mrb_true_value();
+}
+static mrb_value rb_gev_refresh(mrb_state* mrb, mrb_value self) {
+    (void)self;
     EventSystem::Get().RefreshAllPages();
     return mrb_nil_value();
 }
@@ -2796,6 +2916,30 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, gameModule, "setup_map", rb_game_map_setup, MRB_ARGS_REQ(1));
 
     // Game_Map module for map data via script - damit Scenes Map Daten nutzen
+    // ---------- XP Game_Event (PAKET 19) ----------
+    // Wrapper-Klasse auf die nativen MapEvents des EventSystems — $game_map
+    // .events liefert gecachte Instanzen (siehe rb_game_map_events).
+    struct RClass* cGameEvent = mrb_define_class(mMrb, "Game_Event", mMrb->object_class);
+    mrb_define_method(mMrb, cGameEvent, "initialize", rb_gev_initialize, MRB_ARGS_OPT(2));
+    mrb_define_method(mMrb, cGameEvent, "map_id", rb_gev_map_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "id", rb_gev_id, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "valid?", rb_gev_valid, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "name", rb_gev_name, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "x", rb_gev_x, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "y", rb_gev_y, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "direction", rb_gev_direction, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "through", rb_gev_through_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "through=", rb_gev_through_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEvent, "transparent", rb_gev_transparent_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "transparent=", rb_gev_transparent_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEvent, "move_speed", rb_gev_move_speed_get, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "move_speed=", rb_gev_move_speed_set, MRB_ARGS_REQ(1));
+    mrb_define_method(mMrb, cGameEvent, "moveto", rb_gev_moveto, MRB_ARGS_REQ(2));
+    mrb_define_method(mMrb, cGameEvent, "erase", rb_gev_erase, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "erased", rb_gev_erased, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "erased?", rb_gev_erased, MRB_ARGS_NONE());
+    mrb_define_method(mMrb, cGameEvent, "refresh", rb_gev_refresh, MRB_ARGS_NONE());
+
     // XP Game_Map als vollwertige KLASSE (Stufe 4f): $game_map ist eine
     // Instanz, nicht mehr das Modul selbst — so wie XP-Skripte es erwarten
     // ($game_map.data[x, y, z], .display_x, .events, .need_refresh).
