@@ -458,12 +458,12 @@ void QtDatabaseDialog::buildActorsTab() {
     rankEdit->setToolTip(QL("Zustands-Resistenz als ID=Rang, kommagetrennt (A..F).\n"
                             "A = 100 % Treffer, F = 0 % (immun). Fehlende Zustände = C (60 %).\n"
                             "Beispiel: 1=C, 2=A, 4=F"));
-    // PAKET 24: XP element_raten — Element-Rang \"ID=Rang(A..F)\"
+    // PAKET 24: XP element_raten — Element-Rang "ID=Rang(A..F)"
     auto* elemRankEdit = makeLine(formHost);
-    elemRankEdit->setToolTip(QL(\"Element-Rang als ID=Rang, kommagetrennt (A..F).\n\"
-                                \"A = 200 % Schaden, B = 150, C = 100, D = 50, E = 0 (immun),\n\"
-                                \"F = -100 % (absorbiert/heilt). Fehlende Elemente = C.\n\"
-                                \"Beispiel: 1=D, 4=E, 7=A\"));
+    elemRankEdit->setToolTip(QL("Element-Rang als ID=Rang, kommagetrennt (A..F).\n"
+                                "A = 200 % Schaden, B = 150, C = 100, D = 50, E = 0 (immun),\n"
+                                "F = -100 % (absorbiert/heilt). Fehlende Elemente = C.\n"
+                                "Beispiel: 1=D, 4=E, 7=A"));
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Klasse"), klass);

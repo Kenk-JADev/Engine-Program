@@ -1469,6 +1469,27 @@ Menü: Speichern/Laden (Esc).
 
 `fb39a19`-Basis: PAKETe 1–24 enthalten; HEAD-Wächter geprüft.
 
+## Hotfix 25a — MSVC-Buildfix (CI „Build Windows EXE“) ✅
+
+Der CI-Lauf auf `81c376e` (erster Windows-Build nach PAKET 25) zeigte zwei
+Fehlergruppen, die GCC lokal nicht meldete:
+
+1. **`std::clamp` ohne `<algorithm>`** — MSVC zieht den Header nicht
+   transitiv herein (GCC tut es): `src/RubyVM.cpp` (6 Stellen),
+   `src/Database.cpp` (Item-/Armor-/Skill-Clamps aus PAKET 20–24).
+   Ebenso `std::snprintf` ohne `<cstdio>`: `src/UI.cpp` (Kampf-HUD
+   HP/MP-Texte), `qt_editor/QtEventCommandCatalog.cpp`.
+2. **Literale `\"` im Akteurs-Tab** (`QtDatabaseDialog.cpp` Zeilen
+   461–466): Das PAKET-24-python-Zeileninsert hatte Backslash-Anführungs-
+   zeichen als Inhalt geschrieben → MSVC „newline in string literal“ /
+   „unexpected end of file in macro expansion“. Korrigiert (jetzt exakt
+   wie das korrekte Gegner-Pendant), via od-Byte-Dump + String-Scanner
+   verifiziert.
+
+Lokal nachgeprüft: g++ `-fsyntax-only` (beide ImGui-Varianten) für
+Database/UI; String-/Brace-Checks für beide Qt-Dateien; globaler Scan
+aller src/qt_editor-Dateien auf fehlende `<algorithm>`/`<cstdio>`.
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 

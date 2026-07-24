@@ -4,6 +4,7 @@
 #include <fstream>
 #include <filesystem>
 #include <sstream>
+#include <algorithm> // std::clamp (MSVC: nicht transitiv vorhanden)
 
 namespace rpg {
 

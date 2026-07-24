@@ -2,6 +2,7 @@
 
 #include <QMap>
 #include <cmath>
+#include <cstdio> // std::snprintf (MSVC: nicht transitiv vorhanden)
 
 namespace qt_editor {
 

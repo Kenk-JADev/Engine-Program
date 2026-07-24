@@ -67,6 +67,7 @@ typedef std::intptr_t ssize_t;
 #include <cstring> // strlen (mrb_intern mit Laenge, mruby 4.x 3-arg)
 #include <iostream>
 #include <memory>
+#include <algorithm> // std::clamp (MSVC zieht es NICHT transitiv herein)
 
 namespace rpg {
 

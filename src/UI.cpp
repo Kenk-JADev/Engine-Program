@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <cmath>
 #include <cctype>
+#include <cstdio> // std::snprintf (MSVC: nicht transitiv vorhanden)
 #include <memory>
 
 namespace rpg {
