@@ -135,6 +135,27 @@ struct EnemyData {
     // PAKET 17: XP state_ranks — index = Zustands-ID - 1, Wert 0..5 =
     // Rang A..F (Trefferchance 100/80/60/40/20/0 %). Fehlender Eintrag = C.
     std::vector<int> stateRanks;
+    // PAKET 18: XP RPG::Enemy.actions — Verhaltenstabelle des Gegners.
+    // kind 0 = Basis-Aktion (basic: 0 Angriff, 1 Verteidigen, 2 Flucht,
+    // 3 Nichtstun), kind 1 = Fertigkeit (skillId). Gegner ohne Eintraege
+    // fallen auf den bisherigen Standardangriff zurueck.
+    // Bedingungen pro Aktion (alle erfuellt, XP): Runde == turnA + turnB*x
+    // (x>=0), eigene HP <= hpBelow %, hoechstes Party-Level >= level,
+    // Schalter switchId AN (0 = egal). rating (1..10) gewichtet die Wahl —
+    // XP laesst nur Aktionen mit rating > max-3 in den Lostopf.
+    // Skills zaehlen nur, wenn das Ziel sie sich mp-maessig leisten kann.
+    struct Action {
+        int kind = 0;      // 0 = Basis, 1 = Fertigkeit
+        int basic = 0;     // kind 0: 0 Angriff 1 Verteidigen 2 Flucht 3 Nichts
+        int skillId = 0;   // kind 1: Fertigkeits-ID
+        int rating = 5;    // 1..10
+        int turnA = 0;     // Runde turnA + turnB*x (0/0 = immer)
+        int turnB = 0;
+        int hpBelow = 100; // eigene HP <= x % (100 = immer)
+        int level = 1;     // hoechstes Party-Level >= x (1 = immer)
+        int switchId = 0;  // 0 = keine Schalter-Bedingung
+    };
+    std::vector<Action> actions;
 };
 
 // Truppe (Gegner-Gruppe fuer Random Encounters / Battle Processing)

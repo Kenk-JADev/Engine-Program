@@ -93,9 +93,21 @@ void Database::CreateDefaults() {
 
     // Enemies
     if (mEnemies.empty()) {
-        EnemyData slime; slime.id=1; slime.name="Slime"; slime.maxHp=40; slime.atk=10; slime.def=3; slime.exp=8; slime.gold=5;
+        EnemyData slime; slime.id=1; slime.name="Slime"; slime.maxHp=40; slime.maxMp=10; slime.atk=10; slime.def=3; slime.exp=8; slime.gold=5;
+        // PAKET 18: einfache Verhaltenstabelle (nur Angriff, wie bisher)
+        slime.actions.push_back({}); // ein Standardangriff, rating 5
         mEnemies.push_back(slime);
-        EnemyData bat; bat.id=2; bat.name="Bat"; bat.maxHp=60; bat.atk=15; bat.agi=14; bat.exp=15; bat.gold=10;
+        EnemyData bat; bat.id=2; bat.name="Bat"; bat.maxHp=60; bat.maxMp=10; bat.atk=15; bat.agi=14; bat.exp=15; bat.gold=10;
+        // PAKET 18: Bat nutzt „Giftstich" (Skill 3), wenn HP <= 80 % —
+        // Demo fuer die XP-Aktionstabelle (rating 4 < Angriff 5)
+        {
+            EnemyData::Action atk; atk.kind=0; atk.basic=0; atk.rating=5;
+            bat.actions.push_back(atk);
+            EnemyData::Action tox; tox.kind=1; tox.skillId=3; tox.rating=4; tox.hpBelow=80;
+            bat.actions.push_back(tox);
+            EnemyData::Action def; def.kind=0; def.basic=1; def.rating=3;
+            bat.actions.push_back(def);
+        }
         mEnemies.push_back(bat);
     }
 
@@ -382,6 +394,25 @@ rpg::EnemyData ParseEnemyObject(const std::string& obj) {
     if (TryParseInt(obj, "battlerHue", 0, v)) e.battlerHue = v;
     // PAKET 17: XP state_ranks [0..5] (Index = Zustands-ID-1, fehlt = C)
     ParseIntArrayInto(obj, "stateRanks", e.stateRanks);
+    // PAKET 18: XP RPG::Enemy.actions (Objekt-Array, optional)
+    {
+        std::string arr;
+        if (FindArrayForKey(obj, "actions", 0, arr)) {
+            for (const auto& ao : ExtractObjectsFromArray(arr)) {
+                rpg::EnemyData::Action act;
+                if (TryParseInt(ao, "kind", 0, v)) act.kind = v;
+                if (TryParseInt(ao, "basic", 0, v)) act.basic = v;
+                if (TryParseInt(ao, "skillId", 0, v)) act.skillId = v;
+                if (TryParseInt(ao, "rating", 0, v)) act.rating = v;
+                if (TryParseInt(ao, "turnA", 0, v)) act.turnA = v;
+                if (TryParseInt(ao, "turnB", 0, v)) act.turnB = v;
+                if (TryParseInt(ao, "hpBelow", 0, v)) act.hpBelow = v;
+                if (TryParseInt(ao, "level", 0, v)) act.level = v;
+                if (TryParseInt(ao, "switchId", 0, v)) act.switchId = v;
+                e.actions.push_back(act);
+            }
+        }
+    }
     return e;
 }
 
@@ -1053,7 +1084,22 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"exp\":" << e.exp
                   << ",\"gold\":" << e.gold;
                 WriteIntArray(f, "stateRanks", e.stateRanks); // PAKET 17
-                f << "}";
+                // PAKET 18: XP actions-Objekt-Array
+                f << ",\"actions\":[";
+                for (size_t j = 0; j < e.actions.size(); ++j) {
+                    const auto& ac = e.actions[j];
+                    if (j) f << ",";
+                    f << "{\"kind\":" << ac.kind
+                      << ",\"basic\":" << ac.basic
+                      << ",\"skillId\":" << ac.skillId
+                      << ",\"rating\":" << ac.rating
+                      << ",\"turnA\":" << ac.turnA
+                      << ",\"turnB\":" << ac.turnB
+                      << ",\"hpBelow\":" << ac.hpBelow
+                      << ",\"level\":" << ac.level
+                      << ",\"switchId\":" << ac.switchId << "}";
+                }
+                f << "]}";
                 if (i+1<mEnemies.size()) f << ",";
                 f << "\n";
             }

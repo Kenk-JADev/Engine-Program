@@ -1115,6 +1115,51 @@ Verwirrung (1..3) -> automatischer Angriff; Haltezeit abgelaufen oder
 Kampfende -> Zustand loest sich mit Meldung; Statusname steht im
 Statusfenster.
 
+## PAKET 18 — Gegner-Skilltabelle (XP RPG::Enemy.actions) ✅ ERLEDIGT 2026-07-24
+
+Gegner konnten nur den Standardangriff auf einen zufaelligen Akteur —
+die XP-Verhaltenstabelle (Basis-Aktionen/Fertigkeiten mit Bedingungen
+und Rating) fehlte komplett (Daten, Engine, Editor).
+
+- [x] **Datenmodell:** `EnemyData::Action` (kind 0=Basis/1=Fertigkeit;
+  basic 0 Angriff 1 Verteidigen 2 Flucht 3 Nichtstun; skillId; rating
+  1..10; Bedingungen Runde turnA+turnB*x, eigene HP <= hpBelow %,
+  hoechstes Party-Level >= level, Schalter switchId). Load/Save in
+  Enemies.json (Objekt-Array, robust optional — alte Projekte lesen
+  sich unveraendert); Editor-Unterformular im Gegner-Tab (Liste mit
+  lesbarer Zeile, Hinzufuegen/Entfernen, Felder mit Write-Through,
+  Art-Umschaltung aktiviert Basis-/Fertigkeits-Combo).
+- [x] **Engine-Auswahl (`MakeEnemyAction`, XP Game_Enemy#make_action):**
+  alle Bedingungen erfuellt -> Lostopf; XP-Regel: nur Eintraege mit
+  rating > Tabellenmaximum - 3 ziehen, gleichverteilt. Skills nur, wenn
+  der Gegner sich die MP leisten kann (sonst nicht verfuegbar, XP
+  usable?). Gegner OHNE Tabelleneintraege behalten exakt das bisherige
+  Verhalten (Standardangriff). Sind alle Eintraege durch Bedingungen
+  gesperrt, tut der Gegner nichts (XP).
+- [x] **Ausfuehrung:** Angriffe/Skills laufen ueber die bestehenden
+  Pfade — inklusive Skill-Animation, MP-Kostenabzug UND PAKET-17-
+  Zustands-Effekte (vergiftende Gegner-Skills wirken jetzt korrekt);
+  Zielwahl nach Scope (Schaden = zufaelliger Akteur, Unterstuetzung =
+  zufaelliger eigener Trupp-Mitstreiter / selbst). Verteidigen nutzt
+  den Guard-Pfad (halbierter Schaden bis zur naechsten Aktion).
+- [x] **Gegner-Flucht (basic 2):** neues `Battler::escaped` — zaehlt
+  fuer den Sieg wie tot, feuert aber KEIN onEnemyDefeated (kein
+  Collapse-Fade) und bringt kein EXP/Gold (beides XP).
+- [x] **Demo:** Fallback + SampleProject — Bat wirkt „Giftstich"
+  (PAKET 17, Skill 3) mit rating 4 sobald HP <= 80 %, verteidigt
+  gelegentlich (rating 3); Slime bleibt purer Angreifer.
+
+**Bewusst offen:** seltene XP-Feinheiten (force_action 339 ignoriert
+die Tabelle weiterhin; mehrere Aktionen pro Runde pro Gegner, falls
+ein RPG-Projekt das nutzt); Rating-Auswahl folgt exakt der XP-Regel
+max-3.
+
+**Akzeptanz:** Bat mit voller HP greift an; faellt unter 80 % HP, kommt
+„Giftstich" in den Lostopf (Ziel vergiftet -> PAKET-17-Kette:
+Meldung + Schlupfschaden + Status im Fenster); verteidigt zwischendurch
+(halbierter Schaden); Editieren im Gegner-Tab speichert eine
+`"actions":[{...}]`-Zeile, die nach Reload identisch wieder erscheint.
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

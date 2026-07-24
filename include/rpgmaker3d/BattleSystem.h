@@ -60,6 +60,9 @@ struct Battler {
     int agi = 10;
     bool isDead = false;
     bool isGuarding = false; // Verteidigen: halbiert Schaden bis zur naechsten eigenen Aktion
+    // PAKET 18: Gegner-Flucht (XP basic 2) — zaehlt fuer den Sieg wie tot,
+    // bringt aber kein EXP/Gold und feuert kein onEnemyDefeated.
+    bool escaped = false;
     Vec3 position{0,0,0};
     std::string name;
 
@@ -184,6 +187,12 @@ private:
     /// Fertigkeits-Zustaende am Ziel anwenden (plus/minus, XP-Trefferquote
     /// ueber die Resistenz-Raenge A..F des Ziels)
     void ApplySkillStates(Battler& target, const SkillData& sk);
+    // ---- PAKET 18: XP-Gegner-Verhaltenstabelle (RPG::Enemy.actions) ----
+    /// Waehlt die Aktion eines Gegner-Kaempfers (Bedinungen, Rating-Lostopf
+    /// max-3, Skill-MP-Check; Flucht/Nichtstun wird intern abgewickelt und
+    /// liefert dann BattleActionType::None). Gegner ohne Tabelleneintrag
+    /// faellt auf den Standardangriff zurueck.
+    BattleAction MakeEnemyAction(Battler& enemy);
 
     BattleState mState = BattleState::None;
     std::vector<Battler> mActors;

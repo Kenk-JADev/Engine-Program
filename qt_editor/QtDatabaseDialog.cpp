@@ -67,6 +67,21 @@ QString RanksToText(const std::vector<int>& ranks) {
         l << QL("%1=%2").arg(i + 1).arg(QLatin1Char((char)('A' + std::clamp(ranks[i], 0, 5))));
     return l.join(QL(", "));
 }
+// PAKET 18: lesbare Zeile fuer die XP-Gegner-Aktionstabelle
+QString DescribeEnemyAction(const rpg::EnemyData::Action& a) {
+    QString base;
+    if (a.kind == 1) base = QL("Fertigkeit #%1").arg(a.skillId);
+    else base = a.basic == 1 ? QL("Verteidigen") :
+                a.basic == 2 ? QL("Flucht") :
+                a.basic == 3 ? QL("Nichtstun") : QL("Angriff");
+    QString cond;
+    if (a.hpBelow < 100) cond += QL(", HP<=%1%").arg(a.hpBelow);
+    if (a.turnA > 0 || a.turnB > 0) cond += QL(", Runde %1+%2x").arg(a.turnA).arg(a.turnB);
+    if (a.level > 1) cond += QL(", Lv>=%1").arg(a.level);
+    if (a.switchId > 0) cond += QL(", Schalter %1").arg(a.switchId);
+    return QL("[R%1] %2%3").arg(a.rating).arg(base).arg(cond);
+}
+
 std::vector<int> ParseRanksText(const QString& s) {
     std::vector<int> out;
     const QStringList parts = s.split(QLatin1Char(','), Qt::SkipEmptyParts);
@@ -924,6 +939,128 @@ void QtDatabaseDialog::buildEnemiesTab() {
     form->addRow(QL("Beute"), drops);
     form->addRow(QL("Zustands-Ränge (ID=Grad)"), rankEdit); // PAKET 17
 
+    // ------------------------------------------------------------------
+    // PAKET 18: XP-Aktionstabelle (RPG::Enemy.actions) — Gegner ohne
+    // Eintrag fuehren weiterhin den Standardangriff aus (Engine-Fallback).
+    // ------------------------------------------------------------------
+    auto actBuffer = std::make_shared<std::vector<rpg::EnemyData::Action>>();
+    auto actLoading = std::make_shared<bool>(false);
+    auto* actBox = new QGroupBox(QL("Aktionen (XP-Verhaltenstabelle)"), formHost);
+    actBox->setToolTip(QL("Alle erfüllten Aktionen kommen in den Lostopf — XP wählt "
+                          "gleichverteilt nur aus Einträgen mit Rating > Tabellenmaximum − 3.\n"
+                          "Leere Tabelle = Standardangriff (bisheriges Verhalten)."));
+    auto* actVL = new QVBoxLayout(actBox);
+    auto* actList = new QListWidget(actBox);
+    actList->setMaximumHeight(120);
+    actVL->addWidget(actList);
+    auto* actBtnRow = new QHBoxLayout();
+    auto* actAdd = new QPushButton(QL("Hinzufügen"), actBox);
+    auto* actDel = new QPushButton(QL("Entfernen"), actBox);
+    actBtnRow->addWidget(actAdd);
+    actBtnRow->addWidget(actDel);
+    actBtnRow->addStretch(1);
+    actVL->addLayout(actBtnRow);
+    auto* actForm = new QFormLayout();
+    auto* kindC = makeCombo(actBox, {QL("Basis-Aktion"), QL("Fertigkeit")}, 0);
+    auto* basicC = makeCombo(actBox, {QL("Angriff"), QL("Verteidigen"),
+                                      QL("Flucht"), QL("Nichtstun")}, 0);
+    auto* skillC = new QComboBox(actBox);
+    for (const auto& s : mSkills)
+        skillC->addItem(IdName(s.id, QString::fromStdString(s.name)), s.id);
+    auto* ratingS = makeSpin(1, 10, 5, actBox);
+    auto* hpS = makeSpin(0, 100, 100, actBox);
+    auto* turnAS = makeSpin(0, 99, 0, actBox);
+    auto* turnBS = makeSpin(0, 99, 0, actBox);
+    auto* levelS = makeSpin(1, 99, 1, actBox);
+    auto* switchS = makeSpin(0, 9999, 0, actBox);
+    actForm->addRow(QL("Art"), kindC);
+    actForm->addRow(QL("Basis-Aktion"), basicC);
+    actForm->addRow(QL("Fertigkeit"), skillC);
+    actForm->addRow(QL("Rating (1..10)"), ratingS);
+    actForm->addRow(QL("Bedingung: eigene HP ≤ %"), hpS);
+    auto* turnRowW = new QWidget(actBox);
+    auto* turnRowL = new QHBoxLayout(turnRowW);
+    turnRowL->setContentsMargins(0, 0, 0, 0);
+    turnRowL->addWidget(new QLabel(QL("Runde A"), turnRowW));
+    turnRowL->addWidget(turnAS);
+    turnRowL->addWidget(new QLabel(QL("+ B·x"), turnRowW));
+    turnRowL->addWidget(turnBS);
+    turnRowL->addStretch(1);
+    actForm->addRow(QL("Bedingung: Runde"), turnRowW);
+    actForm->addRow(QL("Bedingung: Party-Level ≥"), levelS);
+    actForm->addRow(QL("Bedingung: Schalter-ID (0=keiner)"), switchS);
+    actVL->addLayout(actForm);
+    form->addRow(actBox);
+
+    // Felder einer Tabellenzeile laden/schreiben (Schreiben = write-through)
+    auto loadActFields = [=](int row) {
+        *actLoading = true;
+        if (row >= 0 && row < (int)actBuffer->size()) {
+            const auto& a = (*actBuffer)[(size_t)row];
+            kindC->setCurrentIndex(qBound(0, a.kind, 1));
+            basicC->setCurrentIndex(qBound(0, a.basic, 3));
+            const int si = skillC->findData(a.skillId);
+            skillC->setCurrentIndex(si >= 0 ? si : 0);
+            ratingS->setValue(qBound(1, a.rating, 10));
+            hpS->setValue(qBound(0, a.hpBelow, 100));
+            turnAS->setValue(a.turnA);
+            turnBS->setValue(a.turnB);
+            levelS->setValue(a.level);
+            switchS->setValue(a.switchId);
+        }
+        const bool isSkill = row >= 0 && (*actBuffer)[(size_t)row].kind == 1;
+        basicC->setEnabled(!isSkill);
+        skillC->setEnabled(isSkill);
+        *actLoading = false;
+    };
+    std::function<void(int)> refreshActs = [=](int select) {
+        *actLoading = true;
+        actList->clear();
+        for (const auto& a : *actBuffer) actList->addItem(DescribeEnemyAction(a));
+        *actLoading = false;
+        if (!actBuffer->empty()) {
+            const int s = qBound(0, select, (int)actBuffer->size() - 1);
+            actList->setCurrentRow(s);
+        }
+        loadActFields(actBuffer->empty() ? -1 : actList->currentRow());
+    };
+    std::function<void()> applyActFields = [=]() {
+        if (*actLoading) return;
+        const int row = actList->currentRow();
+        if (row < 0 || row >= (int)actBuffer->size()) return;
+        auto& a = (*actBuffer)[(size_t)row];
+        a.kind = kindC->currentIndex();
+        a.basic = basicC->currentIndex();
+        a.skillId = skillC->currentData().toInt();
+        a.rating = ratingS->value();
+        a.hpBelow = hpS->value();
+        a.turnA = turnAS->value();
+        a.turnB = turnBS->value();
+        a.level = levelS->value();
+        a.switchId = switchS->value();
+        basicC->setEnabled(a.kind == 0);
+        skillC->setEnabled(a.kind == 1);
+        if (auto* it = actList->item(row)) it->setText(DescribeEnemyAction(a));
+    };
+    QObject::connect(actList, &QListWidget::currentRowChanged, actList,
+                     [loadActFields](int r) { loadActFields(r); });
+    QObject::connect(actAdd, &QPushButton::clicked, actAdd, [=]() {
+        actBuffer->push_back({}); // Defaults: Angriff, Rating 5
+        refreshActs((int)actBuffer->size() - 1);
+    });
+    QObject::connect(actDel, &QPushButton::clicked, actDel, [=]() {
+        const int r = actList->currentRow();
+        if (r < 0 || r >= (int)actBuffer->size()) return;
+        actBuffer->erase(actBuffer->begin() + r);
+        refreshActs(qMin(r, (int)actBuffer->size() - 1));
+    });
+    for (auto* c : {kindC, basicC, skillC})
+        QObject::connect(c, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                         c, [applyActFields](int) { applyActFields(); });
+    for (auto* s : {ratingS, hpS, turnAS, turnBS, levelS, switchS})
+        QObject::connect(s, QOverload<int>::of(&QSpinBox::valueChanged),
+                         s, [applyActFields](int) { applyActFields(); });
+
     tp->count = [this]() { return (int)mEnemies.size(); };
     tp->nameAt = [this](int i) {
         return IdName(i + 1, QString::fromStdString(mEnemies[(size_t)i].name));
@@ -933,8 +1070,10 @@ void QtDatabaseDialog::buildEnemiesTab() {
         for (size_t i = 0; i < mEnemies.size(); ++i) mEnemies[i].id = (int)i + 1;
     };
     tp->loadForm = [this, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi, luk,
-                    exp, gold, drops, rankEdit](int i) {
+                    exp, gold, drops, rankEdit, actBuffer, refreshActs](int i) {
         auto& e = mEnemies[(size_t)i];
+        *actBuffer = e.actions;           // PAKET 18: Tabelle uebernehmen
+        refreshActs(0);
         name->setText(QString::fromStdString(e.name));
         battler->setText(QString::fromStdString(e.battlerName));
         rankEdit->setText(RanksToText(e.stateRanks)); // PAKET 17
@@ -954,9 +1093,10 @@ void QtDatabaseDialog::buildEnemiesTab() {
         drops->setText(ids.join(QLatin1Char(',')));
     };
     tp->storeForm = [this, tp, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi,
-                     luk, exp, gold, drops, rankEdit](int i) {
+                     luk, exp, gold, drops, rankEdit, actBuffer](int i) {
         if ((size_t)i >= mEnemies.size()) return;
         auto& e = mEnemies[(size_t)i];
+        e.actions = *actBuffer;                        // PAKET 18
         e.stateRanks = ParseRanksText(rankEdit->text()); // PAKET 17
         e.name = name->text().toStdString();
         e.battlerName = battler->text().toStdString();

@@ -464,6 +464,112 @@ void BattleSystem::ApplySkillStates(Battler& target, const SkillData& sk) {
     if (!msg.empty() && onMessage) onMessage(msg);
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 18: XP-Gegner-Verhaltenstabelle (Game_Enemy#make_action)
+// ---------------------------------------------------------------------------
+BattleAction BattleSystem::MakeEnemyAction(Battler& enemy) {
+    BattleAction out;
+    out.type = BattleActionType::None;
+    // Zufaelligen lebenden Akteur als Angriffsziel waehlen (Bestandspfad)
+    auto pickTargetActor = [&]() -> int {
+        std::vector<int> alive;
+        for (size_t i = 0; i < mActors.size(); ++i)
+            if (!mActors[i].isDead) alive.push_back((int)i);
+        if (alive.empty()) return -1;
+        std::uniform_int_distribution<> dist(0, (int)alive.size() - 1);
+        return alive[(size_t)dist(BattleRng())];
+    };
+    const EnemyData* data = Database::Get().GetEnemy(enemy.id);
+    if (!data || data->actions.empty()) {
+        // Kein Tabelleneintrag: bisheriges Verhalten (Standardangriff)
+        out.type = BattleActionType::Attack;
+        out.targetIsActor = true;
+        out.targetIndex = pickTargetActor();
+        return out;
+    }
+
+    // ---- Verfuegbare Aktionen sammeln (alle Bedingungen erfuellt) ----
+    // Hoechstes Party-Level (XP condition_level)
+    int partyMaxLevel = 1;
+    for (const auto& m : Game::Get().Party().Members())
+        partyMaxLevel = std::max(partyMaxLevel, m.level);
+    const int ownHpPct = enemy.maxHp > 0 ? (100 * enemy.hp / enemy.maxHp) : 0;
+    std::vector<const EnemyData::Action*> avail;
+    int ratingsMax = 0;
+    for (const auto& a : data->actions) {
+        ratingsMax = std::max(ratingsMax, a.rating);
+        // Runde turnA + turnB*x (x>=0), siehe TroopPage-Bedingung „Runde"
+        if (mRound < a.turnA) continue;
+        const int d = mRound - a.turnA;
+        if (a.turnB > 0) { if (d % a.turnB != 0) continue; }
+        else if (d != 0) continue;
+        if (ownHpPct > a.hpBelow) continue;              // eigene HP <= x %
+        if (partyMaxLevel < a.level) continue;
+        if (a.switchId > 0 && !Game::Get().Switches().Get(a.switchId)) continue;
+        if (a.kind == 1) {
+            // Skill nur, wenn bekannt UND bezahlbar (XP usable?)
+            const SkillData* sk = Database::Get().GetSkill(a.skillId);
+            if (!sk || enemy.mp < sk->mpCost) continue;
+        }
+        avail.push_back(&a);
+    }
+    if (avail.empty()) {
+        // Bedingungen sperren alles -> XP macht nichts (basic 3)
+        return out;
+    }
+    // XP: nur Aktionen mit rating > (Tabellenmaximum - 3) kommen in den
+    // Lostopf, dann gleichverteilt ziehen.
+    std::vector<const EnemyData::Action*> pot;
+    for (const auto* a : avail)
+        if (a->rating > ratingsMax - 3) pot.push_back(a);
+    if (pot.empty()) pot = avail;
+    std::uniform_int_distribution<> dist(0, (int)pot.size() - 1);
+    const EnemyData::Action& act = *pot[(size_t)dist(BattleRng())];
+
+    if (act.kind == 0) {
+        switch (act.basic) {
+            case 1: // Verteidigen
+                out.type = BattleActionType::Guard;
+                return out;
+            case 2: // Flucht (XP basic 2): verschwindet ohne EXP/Gold
+                enemy.escaped = true;
+                enemy.isDead = true;
+                enemy.states.clear(); enemy.stateTurns.clear();
+                if (onMessage) onMessage(enemy.name + " ist geflohen!");
+                return out; // None -> Zug endet
+            case 3: // Nichtstun
+                return out; // None -> Zug endet
+            default: // 0 = Angriff
+                out.type = BattleActionType::Attack;
+                out.targetIsActor = true;
+                out.targetIndex = pickTargetActor();
+                return out;
+        }
+    }
+    // kind == 1: Fertigkeit einsetzen (Zielseite nach scope)
+    const SkillData* sk = Database::Get().GetSkill(act.skillId);
+    out.type = BattleActionType::Skill;
+    out.skillId = act.skillId;
+    const bool allyScope = sk && sk->scope >= 3;
+    if (allyScope) {
+        // eigene Seite: zufaelliger lebender Gegner (Fallback: sich selbst)
+        std::vector<int> alive;
+        for (size_t i = 0; i < mEnemies.size(); ++i)
+            if (!mEnemies[i].isDead) alive.push_back((int)i);
+        out.targetIsActor = false;
+        if (alive.empty()) {
+            out.targetIndex = enemy.index;
+        } else {
+            std::uniform_int_distribution<> d2(0, (int)alive.size() - 1);
+            out.targetIndex = alive[(size_t)d2(BattleRng())];
+        }
+    } else {
+        out.targetIsActor = true;
+        out.targetIndex = pickTargetActor();
+    }
+    return out;
+}
+
 void BattleSystem::ProcessTurn() {
     // Simple: if all actors acted, enemies act automatically
     CheckVictory();
@@ -540,17 +646,9 @@ void BattleSystem::ProcessTurn() {
             onMessage(subject->name + " ist ausser Kontrolle (" +
                       subject->MostSevereStateName() + ")!");
     } else if (!isActorTurn) {
-        // Enemy AI: einen zufaelligen LEBENDEN Akteur angreifen
-        action.type = BattleActionType::Attack;
-        action.targetIsActor = true;
-        std::vector<int> alive;
-        for (size_t i=0;i<mActors.size();++i)
-            if (!mActors[i].isDead) alive.push_back((int)i);
-        if (!alive.empty()) {
-            std::random_device rd; std::mt19937 gen(rd());
-            std::uniform_int_distribution<> dist(0, (int)alive.size()-1);
-            action.targetIndex = alive[(size_t)dist(gen)];
-        }
+        // PAKET 18: XP-Verhaltenstabelle (RPG::Enemy.actions) — Bedin-
+        // gungen/Rating/Skills; Flucht/Nichtstun liefert None (Zug endet).
+        action = MakeEnemyAction(*subject);
     }
 
     // Verteidigen endet, sobald der Kaempfer wieder handelt
@@ -718,6 +816,7 @@ void BattleSystem::CheckVictory() {
         if (onVictoryMe) onVictoryMe(Database::Get().System().battleEndMe);
         mLastExp = 0; mLastGold = 0;
         for (auto& e : mEnemies) {
+            if (e.escaped) continue; // PAKET 18: Flucht = kein EXP/Gold (XP)
             if (const auto* d = Database::Get().GetEnemy(e.id)) {
                 mLastExp += d->exp;
                 mLastGold += d->gold;
