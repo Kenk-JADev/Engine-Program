@@ -1228,6 +1228,44 @@ sind ein eigener Block.
 Entscheiden-SE; Anzahl sinkt; Zustand bleibt weg (Spielstand-haeltig
 seit PAKET 17).
 
+## PAKET 21 — Skill-Anlass (XP occasion) + Menue-Skill-Zustaende ✅ ERLEDIGT 2026-07-24
+
+XP-Skills tragen ein Anlass-Feld (Immer / Nur im Kampf / Nur im Menue /
+Nie) und wirken aus dem Menue auch auf Zustaende (Esuna-Art). Beides
+fehlte; ausserdem hatte der Fallback-„Heal" scope=1 (Gegnerseite!) und
+konnte so nie im Menue wirken.
+
+- [x] `SkillData.occasion` (0=immer, 1=nur Kampf, 2=nur Menue, 3=nie)
+  mit Persistenz (Skills.json Load+Save, clamp) und Editor-Combo
+  „Anlass" im Fertigkeiten-Tab.
+- [x] **Kampf-Liste filtert:** Eintraege mit Anlass 2/3 bleiben
+  sichtbar, aber deaktiviert (XP `skill_can_use?`-Farblogik); MP-Gate
+  unveraendert.
+- [x] **Menue-Liste erweitert:** benutzbar, wenn eigene Seite zielend
+  UND wirksam (Staerke ODER plus/minus-Zustandssets) UND Anlass 0/2
+  UND MP reicht — ein rein heilender Zustands-Skill (Staerke 0) ist
+  jetzt nutzbar.
+- [x] **Menue-Anwendung wirkt auf `GameActor.states`:** minus_state_set
+  heilt sicher auf der Karte (Meldung „ist nicht mehr ..."), plus auch
+  verhaengt (Karte analog zum Inventar-Item, kein Resistenz-Wurf);
+  Meldung faellt ohne Heilwerte auf „setzt <Skill> bei <Ziel> ein."
+  zurueck, MP-Abzug im Text.
+- [x] **Fallback-DB repariert+erweitert:** „Heal" scope 1->3 (ein
+  Verbuendeter) mit positiver Staerke 30; neuer Skill 4 „Erste Hilfe"
+  (minusStates={1}, Staerke 0, 3 MP); Krieger lernt ihn ab Level 1.
+- [x] Doku: Anlass-Tabelle im Editor-Tooltip/TODO.
+
+**Bewusst offen:** „Schweigen"-Restriktion (Zustand sperrt Skills mit
+Magie-Flag — XP trennt physical/magical) ist nicht modelliert; tote
+Ziele im Menue (Wiederbelebung, Scopes 5/6) bleiben der
+Wiederbelebungs-Block; XP `Game_Actor#skill_can_use?` Ruby-seits.
+
+**Akzeptanz:** Krieger (Lv 1) oeffnet Menue -> Fertigkeiten -> „Erste
+Hilfe" (3 MP) ist aktiv; bei vergiftetem Ziel erscheint „ist nicht
+mehr Poison" + „(-3 MP)"; im Kampf-Befehlsfenster ist ein Skill mit
+Anlass „Nur im Menue" ausgegraut; Editor-Anlass ueberlebt Speichern
+und Laden (Skills.json `"occasion"`).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

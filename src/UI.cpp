@@ -689,10 +689,15 @@ void GameUI::OpenSkillListMenu(int memberIndex) {
         const auto* sk = Database::Get().GetSkill(sid);
         const std::string name = sk ? sk->name : ("Fertigkeit #" + std::to_string(sid));
         const int cost = sk ? sk->mpCost : 0;
-        // Aus dem Menue benutzbar: Heil-Skills (Scope auf Gruppe zielend)
-        const bool heal = sk && sk->scope >= 3 && sk->power > 0;
+        // Aus dem Menue benutzbar (XP Game_Actor#skill_can_use?): eigene
+        // Seite zielend, wirksam (Staerke oder Zustands-Sets, PAKET 21),
+        // Anlass 0=immer oder 2=nur Menue, MP vorhanden.
+        const bool menuOk = sk && sk->scope >= 3 &&
+                            sk->occasion != 1 && sk->occasion != 3 &&
+                            (sk->power > 0 || !sk->plusStates.empty() ||
+                             !sk->minusStates.empty());
         items.push_back({name + "   " + std::to_string(cost) + " MP",
-                         heal && actor.mp >= cost});
+                         menuOk && actor.mp >= cost});
         skillIds.push_back(sid);
     }
     if (items.empty()) items.push_back({"(keine Fertigkeiten)", false});
@@ -728,8 +733,31 @@ void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId) {
                     caster.mp -= sk2->mpCost;
                     target.hp = std::min(target.hp + sk2->power, target.MaxHp());
                     EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
-                    ShowMessage(target.name + " erholt sich um " +
-                                std::to_string(sk2->power) + " HP.  (-" +
+                    // PAKET 21: XP minus/plus_state_set wirkt auch aus dem
+                    // Menue (Esuna-Art: heilt auf der Karte, wie bei Items).
+                    std::string stateMsg;
+                    for (int sid : sk2->plusStates) {
+                        if (std::find(target.states.begin(), target.states.end(), sid) != target.states.end())
+                            continue;
+                        target.states.push_back(sid);
+                        if (const StateData* sd = Database::Get().GetState(sid))
+                            stateMsg += "\n" + target.name + " erleidet \"" + sd->name + "\"!";
+                    }
+                    for (int sid : sk2->minusStates) {
+                        const auto pos = std::find(target.states.begin(), target.states.end(), sid);
+                        if (pos == target.states.end()) continue;
+                        target.states.erase(pos);
+                        if (const StateData* sd = Database::Get().GetState(sid))
+                            stateMsg += "\n" + target.name + " ist nicht mehr \"" + sd->name + "\".";
+                    }
+                    std::string msg;
+                    if (sk2->power > 0)
+                        msg = target.name + " erholt sich um " +
+                              std::to_string(sk2->power) + " HP.";
+                    else
+                        msg = caster.name + " setzt " + sk2->name + " bei " +
+                              target.name + " ein.";
+                    ShowMessage(msg + stateMsg + "  (-" +
                                 std::to_string(sk2->mpCost) + " MP)");
                 } else {
                     EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
@@ -1148,8 +1176,11 @@ void GameUI::OpenBattleSkillMenu(int actorIndex) {
             const auto* sk = Database::Get().GetSkill(sid);
             const std::string name = sk ? sk->name : ("Fertigkeit #" + std::to_string(sid));
             const int cost = sk ? sk->mpCost : 0;
+            // PAKET 21: XP occasion — im Kampf nur Anlass 0=immer / 1=nur
+            // Kampf (Eintrag bleibt sichtbar, aber deaktiviert; XP).
+            const bool occOk = sk && sk->occasion != 2 && sk->occasion != 3;
             items.push_back({name + "   " + std::to_string(cost) + " MP",
-                             battler.mp >= cost});
+                             occOk && battler.mp >= cost});
             skillIds.push_back(sid);
         }
     }

@@ -685,8 +685,12 @@ void QtDatabaseDialog::buildSkillsTab() {
     form->addRow(QL("Stärke"), power);
     form->addRow(QL("Animations-ID"), animId);
     form->addRow(QL("Legacy-Animationsname"), anim);
+    // PAKET 21: XP occasion (Anlass) — steuert Benutzbarkeit Kampf/Menue
+    auto* occ = makeCombo(formHost, {QL("Immer"), QL("Nur im Kampf"),
+                                     QL("Nur im Menü"), QL("Nie")}, 0);
     form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
     form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
+    form->addRow(QL("Anlass"), occ);
 
     tp->count = [this]() { return (int)mSkills.size(); };
     tp->nameAt = [this](int i) {
@@ -697,7 +701,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         for (size_t i = 0; i < mSkills.size(); ++i) mSkills[i].id = (int)i + 1;
     };
     tp->loadForm = [this, name, desc, cost, scope, power, anim, animId,
-                    plusEdit, minusEdit](int i) {
+                    plusEdit, minusEdit, occ](int i) {
         auto& s = mSkills[(size_t)i];
         name->setText(QString::fromStdString(s.name));
         desc->setText(QString::fromStdString(s.description));
@@ -708,9 +712,10 @@ void QtDatabaseDialog::buildSkillsTab() {
         animId->setValue(s.animationId);
         plusEdit->setText(JoinIds(s.plusStates));   // PAKET 17
         minusEdit->setText(JoinIds(s.minusStates)); // PAKET 17
+        occ->setCurrentIndex(qBound(0, s.occasion, 3)); // PAKET 21
     };
     tp->storeForm = [this, tp, name, desc, cost, scope, power, anim, animId,
-                     plusEdit, minusEdit](int i) {
+                     plusEdit, minusEdit, occ](int i) {
         if ((size_t)i >= mSkills.size()) return;
         auto& s = mSkills[(size_t)i];
         s.name = name->text().toStdString();
@@ -722,6 +727,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         s.animationId = animId->value();
         s.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 17
         s.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 17
+        s.occasion = occ->currentIndex();               // PAKET 21
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);

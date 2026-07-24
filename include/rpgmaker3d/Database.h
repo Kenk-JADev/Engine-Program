@@ -119,6 +119,11 @@ struct SkillData {
     // bzw. sicher heilt (z. B. Esuna).
     std::vector<int> plusStates;
     std::vector<int> minusStates;
+    // PAKET 21: XP occasion — 0=Immer, 1=Nur im Kampf, 2=Nur im Menue,
+    // 3=Nie. Steuert die Benutzbarkeit in den jeweiligen Skill-Listen
+    // (XP Game_Actor#skill_can_use?): Kampf filtert 2 und 3 heraus,
+    // Menue 1 und 3 (Eintrag bleibt sichtbar, aber deaktiviert).
+    int occasion = 0;
 };
 
 struct EnemyData {

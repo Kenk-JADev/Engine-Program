@@ -52,7 +52,8 @@ void Database::CreateDefaults() {
     // Classes
     if (mClasses.empty()) {
         ClassData warrior; warrior.id=1; warrior.name="Warrior";
-        warrior.learnings = {{2, 2}, {3, 3}}; // Heal ab 2, Giftstich ab 3 (PAKET 17)
+        // Erste Hilfe ab 1 (PAKET 21), Heal ab 2, Giftstich ab 3 (PAKET 17)
+        warrior.learnings = {{1, 4}, {2, 2}, {3, 3}};
         mClasses.push_back(warrior);
         ClassData mage; mage.id=2; mage.name="Mage";
         mage.learnings = {{1, 1}, {4, 2}}; // Fire ab 1, Heal ab 4
@@ -87,12 +88,20 @@ void Database::CreateDefaults() {
     if (mSkills.empty()) {
         SkillData fire; fire.id=1; fire.name="Fire"; fire.mpCost=5; fire.power=50;
         mSkills.push_back(fire);
-        SkillData heal; heal.id=2; heal.name="Heal"; heal.mpCost=8; heal.power=-30;
+        // PAKET 21: Heal hatte scope=1 (Gegner!) — konnte so nie im Menue
+        // wirken und „heilte" im Kampf Gegner. XP-konform: scope 3 = ein
+        // Verbuendeter, positiver Stärke-Wert (Engine nimmt |power|).
+        SkillData heal; heal.id=2; heal.name="Heal"; heal.mpCost=8; heal.scope=3; heal.power=30;
         mSkills.push_back(heal);
         // PAKET 17: Demo-Skill mit XP-Zustands-Effekt (verhaengt „Poison", id 1)
         SkillData toxin; toxin.id=3; toxin.name="Giftstich"; toxin.mpCost=4;
         toxin.power=20; toxin.plusStates={1};
         mSkills.push_back(toxin);
+        // PAKET 21: Zustands-Heilskill a la Esuna (heilt „Poison" sicher,
+        // kein Staerke-Wert) — im Menue UND Kampf benutzbar.
+        SkillData aid; aid.id=4; aid.name="Erste Hilfe"; aid.mpCost=3;
+        aid.scope=3; aid.power=0; aid.minusStates={1};
+        mSkills.push_back(aid);
     }
 
     // Enemies
@@ -473,6 +482,8 @@ rpg::SkillData ParseSkillObject(const std::string& obj) {
     if (TryParseInt(obj, "power", 0, v)) s.power = v;
     if (TryParseInt(obj, "iconIndex", 0, v)) s.iconIndex = v;
     if (TryParseInt(obj, "scope", 0, v)) s.scope = v;
+    // PAKET 21: XP occasion (0=immer 1=nur Kampf 2=nur Menue 3=nie)
+    if (TryParseInt(obj, "occasion", 0, v)) s.occasion = std::clamp(v, 0, 3);
     // PAKET 17: XP plus_state_set / minus_state_set (Zustands-IDs)
     ParseIntArrayInto(obj, "plusStates", s.plusStates);
     ParseIntArrayInto(obj, "minusStates", s.minusStates);
@@ -1233,6 +1244,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"power\":" << s.power
                   << ",\"iconIndex\":" << s.iconIndex
                   << ",\"scope\":" << s.scope
+                  << ",\"occasion\":" << s.occasion // PAKET 21 (XP occasion)
                   << ",\"animation\":\"" << Escape(s.animation) << "\""
                   << ",\"animationId\":" << s.animationId;
                 WriteIntArray(f, "plusStates", s.plusStates);   // PAKET 17
