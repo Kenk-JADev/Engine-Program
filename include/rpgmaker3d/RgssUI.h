@@ -48,10 +48,10 @@ struct RgssFontState {
     int  size = 22;
     bool bold = false;
     bool italic = false;
-    bool shadow = false;             // XP Font#shadow: Zustand vollstaendig;
-                                     // der eingebaute Text-Renderer zeichnet
-                                     // den Schatten Stand heute NICHT mit
-                                     // (ehrliche Grenze, s. TODO_XP_PARITY).
+    bool shadow = false;             // XP Font#shadow: seit PAKET 13 
+                                     // (2026-07-24) im Text-Renderer
+                                     // umgesetzt (1px SE-Offset, schwarz,
+                                     // Alpha = min(128, Text-Alpha)).
     int  colorId = 0;                // -> Color-Registry
 };
 
@@ -162,9 +162,11 @@ struct RgssDrawableState {
     float angle = 0;               // Sprite: Grad, gegen Uhrzeiger
     bool  mirror = false;          // Sprite
     float bushDepth = 0;           // Sprite: untere halbtransparente Zone (px)
-    // XP Sprite-Wave (Zustand XP-vollstaendig inkl. Phasen-Advance in
-    // Sprite#update; der Renderer wendet die Sinusverzerrung Stand heute
-    // NICHT an — ehrliche Grenze, s. TODO_XP_PARITY).
+    // XP Sprite-Wave: Zustand + Phasen-Advance (Sprite#update) + seit
+    // PAKET 13 (2026-07-24) Sinusverzerrung im Renderer (Streifen-Stueckelung
+    // in DrawSprite, nur unrotierte Sprites). waveHeight ist kompatibel
+    // gehalten, wird rendererseitig nicht ausgewertet (wie der Kommentar
+    // in DrawSprite notiert).
     float waveHeight = 0, waveAmp = 0, waveLength = 180.0f, waveSpeed = 360.0f;
     float wavePhase = 0.0f;
     int   opacity = 255;

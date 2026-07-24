@@ -585,6 +585,15 @@ void RgssBmpDrawText(int id, float x, float y, float w, float h,
             size_t before = i;
             const int g = RgssGlyphIndex(utf8, i);
             (void)before;
+            // PAKET 13: XP Font#shadow — 1px versetzte, halbtransparent
+            // schwarze Kopie UNTER dem Zeichen (XP: Color(0,0,0,128)).
+            // Schatten-Alpha deckelt an der Zeichen-Deckkraft (ca).
+            if (font->shadow) {
+                const float sa = ca < 128.0f ? ca : 128.0f;
+                DrawGlyphPx(bmp, (int)std::lround(tx) + 1, (int)std::lround(ty) + 1,
+                            g, scale, font->bold, font->italic,
+                            0.0f, 0.0f, 0.0f, sa);
+            }
             DrawGlyphPx(bmp, (int)std::lround(tx), (int)std::lround(ty), g, scale,
                         font->bold, font->italic, cr, cg, cb, ca);
             tx += 8.0f * scale;
@@ -1127,6 +1136,31 @@ void RgssUI::DrawSprite(RgssDrawableState& s, const RgssViewportState* vp) {
         if (vp) { px -= vp->ox; py -= vp->oy; }
         mRenderer->QuadRot(dx, dy, dw, dh, px, py, s.angle,
                            u0, v0, u1, v1, 1, 1, 1, a, s.bushDepth);
+        mRenderer->Flush();
+        return;
+    }
+
+    // PAKET 13: XP Sprite#wave — horizontale Sinus-Auslenkung pro Zeile.
+    // RGSS-Vorlage: x' = x + wave_amp * sin(2*pi*y/wave_length + wave_phase)
+    // (y = Bitmap-Quellzeile, Phase in Grad; Advance laeuft in Sprite#update
+    // nativ). Umsetzung: horizontale Streifen (max. 4 px hoch, max. 64).
+    // Bewusste Grenzen: rotierte Sprites (angle != 0, s.o.) und der Bush-
+    // Weichzeichner bleiben unverzerrt — die Kombination liegt ausserhalb
+    // der XP-Default-Skripte. wave_height traegt der XP-Renderer ebenfalls
+    // nicht aus (Zustand nur kompatibel gehalten).
+    if (std::fabs(s.waveAmp) > 0.01f) {
+        const float phaseRad = s.wavePhase * (3.14159265f / 180.0f);
+        const float len = s.waveLength > 1.0f ? s.waveLength : 1.0f;
+        const int strips = std::max(1, std::min(64, (int)std::ceil(std::fabs(dh) / 4.0f)));
+        const float stripH = dh / (float)strips;
+        const float dv = (v1 - v0) / (float)strips;
+        for (int k = 0; k < strips; ++k) {
+            const float srcRow = ((float)k + 0.5f) * (sh / (float)strips);
+            const float offX = s.waveAmp *
+                std::sin(phaseRad + 2.0f * 3.14159265f * (srcRow / len));
+            mRenderer->Quad(dx + offX, dy + k * stripH, dw, stripH,
+                            u0, v0 + k * dv, u1, v0 + (k + 1) * dv, 1, 1, 1, a);
+        }
         mRenderer->Flush();
         return;
     }

@@ -353,7 +353,8 @@ am Ziel ab und wartet bis zum Ende.
   Opt-in (Scene_Base/$scene-Tick); (i) Trockenlauf-Evaluation gemacht +
   Rundung Teile 1-2 eingebaut. Verbleibende, bewusst ehrliche Grenzen
   sind unten pro Punkt markiert (Marshal, Interpreter-Übernahme,
-  snap_to_bitmap, Font#shadow-/Wave-Render, events-Hash).**
+  snap_to_bitmap, events-Hash; Font#shadow + Wave-Render inzwischen
+  erledigt, siehe PAKET 13).**
   **Stufe 1 ERLEDIGT — `load_data`-JSON-Bruecke:** RubyRgss.cpp hat neu
   `__engine_db_fetch(kind)` (privater Kernel-Helfer, Release-`Database::Get()`
   als generische Ruby-Hashes; mruby-4.0-Fallen behoben: `mrb_intern` ist
@@ -541,15 +542,15 @@ am Ziel ab und wartet bis zum Ende.
         - ~~Bitmap-Argumentformen~~: ENTFAELLT — fill_rect/draw_text
           akzeptieren bereits beide XP-Formen (4 Int + Rect);
           gradient_fill_rect ebenso verbaut.
-        - **Font#shadow**: Zustand nativ (RgssFontState.shadow +
-          Instanz-/FontDefaults-Bindings + Font.default_shadow im
-          Prelude). **Offen:** der eingebaute Text-Renderer zeichnet
-          den Schatten nicht mit (in XP praktisch ungenutzt —
-          Window_Base setzt es nie, ehrlich vermerkt).
-        - **Sprite wave_*** (height/amp/length/speed): Zustand nativ
-          (RgssDrawableState) + XP-Phasen-Advance in Sprite#update
-          (wave_speed / [2.0*wave_length, 1.0].max, nur wenn amp > 0).
-          **Offen:** keine Sinusverzerrung im Renderer.
+        - **Font#shadow — ERLEDIGT mit PAKET 13 (2026-07-24):** der
+          eingebaute Text-Renderer zeichnet den Schatten jetzt mit
+          (1px Suedost-Offset, schwarz, Alpha = min(128, Text-Alpha),
+          Source-Over wie XP Color(0,0,0,128)).
+        - **Sprite wave_*** (height/amp/length/speed) — ERLEDIGT mit
+          PAKET 13 (2026-07-24): Sinusverzerrung im Renderer
+          (Streifen-Stueckelung, max. 4px/64 Streifen; nur unrotierte
+          Sprites; Bush-Weichzeichner + Rotation unverzerrt — ehrlich
+          vermerkt). wave_height bleibt reiner Kompat-Zustand.
         - **Graphics.wait(duration)**: frame-freundlicher Kompat-No-op
           (Blockieren einfrieren lassen wuerde die UI; dokumentiert).
         - **Arrow_*-Battler-Position — GESCHLOSSEN:** Game_Enemy UND
@@ -903,6 +904,39 @@ am Ziel ab; die Runde wartet sichtbar auf das Ende.
 Schwung-Sequenz am Gegner-Bild; Fertigkeit spielt ihre Animation am
 Ziel; Runde geht erst nach Ende weiter. Ohne hinterlegte Animation
 (ID 0/legacy unbekannt) bleibt alles beim alten Popup/Flash-Verhalten.
+
+## PAKET 13 — RGSS-Renderer-Lücken: Font#shadow + Sprite-Wave ✅ ERLEDIGT 2026-07-24
+
+Die beiden letzten dokumentierten RGSS-Render-Grenzen (Zustand und
+Bindings lagen längst vor, nur der Renderer ignorierte sie) sind jetzt
+geschlossen — damit ist die RGSS-Basisklassen-Oberfläche bis auf die
+bewussten Auslassungen (Marshal, snap_to_bitmap, Interpreter 1-7,
+events-Hash) render-vollständig.
+
+- [x] **Font#shadow im eingebauten Text-Renderer:** `RgssBmpDrawText`
+  zeichnet jetzt bei `font.shadow == true` jedes Zeichen zweimal —
+  erst die Schattenkopie (1px Suedost-Offset, schwarz, Alpha =
+  min(128, Text-Alpha) wie XP `Color(0,0,0,128)`), dann das Zeichen.
+  Mischung laeuft ueber das vorhandene Source-Over-Compositing von
+  `BmpPut`. Gleiche Bold/Italic-Flags in beiden Passes.
+- [x] **Sprite#wave im Renderer:** `DrawSprite` verzerrt unrotierte
+  Sprites bei `waveAmp != 0` jetzt als horizontale Streifen (max.
+  4 px hoch, bis 64 Streifen): x-Offset = `waveAmp * sin(wavePhase*pi/
+  180 + 2*pi*Quellzeile/waveLength)` — derselbe Zusammenhang, den
+  `Sprite#update` (nativ) seit laengerem phasenweise vorantraegt
+  (`wave_speed / [2*wave_length, 1].max`). Ehrlich vermerkte Grenzen:
+  rotierte Sprites bleiben unverzerrt, der Bush-Weichzeichner bleibt
+  im Wave-Pfad ohne Alpha-Fade (Kombination ausserhalb der
+  XP-Default-Skripte), `wave_height` bleibt Kompat-Zustand ohne
+  Render-Wirkung.
+- [x] **Kommentar- und Grenzen-Pflege:** RgssUI.h-Kommentare
+  (shadow/wave) auf den neuen Stand gezogen; XP_Scripts-Grenzenliste
+  (Rundung 2026-07-23 Teil 2) von „Offen" auf „ERLEDIGT" umgestellt.
+
+**Akzeptanz:** `font.shadow = true` zeigt sichtbare 1px-Schatten unter
+RGSS-Text; ein `Sprite` mit `wave_amp > 0` wellt sich sichtbar und
+laeuft phasenverschoben weiter (mit `wave_speed`/`wave_length`
+steuerbar); ohne Nutzung bleibt alles pixelgleich.
 
 ## Arbeitsregeln (für Agenten-Sessions)
 
