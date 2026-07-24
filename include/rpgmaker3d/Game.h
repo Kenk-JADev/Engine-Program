@@ -228,7 +228,9 @@ private:
     Vec3 mPosition{0,0,0};
     Vec3 mDirection{0,0,-1};
     Vec3 mVelocity{0,0,0};
-    float mMoveSpeed = 4.5f;
+    // PAKET 29: 5.0 Kacheln/s = XP-Geschwindigkeitsstufe 4 ("Normal"),
+    // siehe CharacterMotion.h (xp::TilesPerSecondForSpeed).
+    float mMoveSpeed = 5.0f;
     bool mIsMoving = false;
     bool mLocked = false;
     bool mTransparent = false;

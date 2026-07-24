@@ -1135,20 +1135,33 @@ void Engine::Update(float dt) {
     if (mPlayMode && mPlayModeFollowPlayer) {
         Camera& cam = mRenderer->GetCamera();
         Vec3 playerPos = Game::Get().Player().GetPosition();
-        // Simple Follow-Cam: leicht versetzt hinter/über dem Spieler
-        Vec3 targetPos = playerPos + Vec3(0, 3.0f, 5.0f);
+        // Follow-Cam: leicht versetzt hinter/über dem Spieler
+        const Vec3 targetPos = playerPos + Vec3(0, 3.0f, 5.0f);
+        // PAKET 29: weiche Nachfuehrung (exp. Daempfung, framerate-fest).
+        // Grosser Sprung (Map-Transfer/Respawn) -> sofort snappen.
+        {
+            const Vec3 gap = targetPos - mFollowCamPos;
+            if (glm::length(gap) > 6.0f)
+                mFollowCamPos = targetPos;
+            else {
+                const float k = 1.0f - std::exp(-8.0f * dt); // ~0.12s Zeitkonstante
+                mFollowCamPos += gap * k;
+            }
+        }
+        Vec3 camPos = mFollowCamPos;
         // PAKET 11: Bildschirm-Erschuetterung (Befehl 225) als Kamera-Jitter —
         // Amplitude klingt mit dem Shake-Timer ab, Achsen x/y (Bildebene).
+        // (Nach der Daempfung addiert: Shake soll NICHT geglaettet werden.)
         {
             const auto& fx = GetScreenEffects();
             if (fx.shakeTimer > 0.0f && fx.shakeDuration > 0.0f) {
                 const float k = fx.shakeTimer / fx.shakeDuration; // 1 -> 0
                 const float amp = (float)fx.shakePower * 0.10f * k;
-                targetPos.x += (((float)std::rand() / (float)RAND_MAX) * 2.0f - 1.0f) * amp;
-                targetPos.y += (((float)std::rand() / (float)RAND_MAX) * 2.0f - 1.0f) * amp;
+                camPos.x += (((float)std::rand() / (float)RAND_MAX) * 2.0f - 1.0f) * amp;
+                camPos.y += (((float)std::rand() / (float)RAND_MAX) * 2.0f - 1.0f) * amp;
             }
         }
-        cam.SetPosition(targetPos);
+        cam.SetPosition(camPos);
         cam.SetRotation(Vec3(-20.0f, 0.0f, 0.0f));
         allowCamera = false; // keine Free-Fly im PlayMode wenn Follow aktiv
     }

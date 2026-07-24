@@ -18,6 +18,7 @@
 #include <functional>
 #include <memory>
 #include "Types.h"
+#include "CharacterMotion.h"
 
 namespace rpg {
 
@@ -240,13 +241,19 @@ struct EventPage {
     std::vector<EventCommand> list;
 };
 
-// Move Route (NPC-Bewegung wie RPG Maker)
+// Move Route (NPC-Bewegung wie RPG Maker; Codewerte = dokumentierte
+// XP-Belegung der Bewegungsbefehle 1..45, soweit die Engine sie kennt)
 enum class MoveRouteCode {
     End = 0,
     MoveDown = 1,
     MoveLeft = 2,
     MoveRight = 3,
     MoveUp = 4,
+    // PAKET 29: XP-Diagonalen (5..8) — vorher Luecke in der Belegung.
+    MoveLowerLeft = 5,   // unten-links
+    MoveLowerRight = 6,  // unten-rechts
+    MoveUpperLeft = 7,   // oben-links
+    MoveUpperRight = 8,  // oben-rechts
     MoveForward = 12,
     Random = 9,
     Wait = 15,
@@ -307,6 +314,11 @@ struct MapEvent {
     bool routeForcing = false;    // Laufzeit: erzwungene Route laeuft
     int direction = DIR_DOWN;     // Laufzeit: Blickrichtung (2/4/6/8)
     float moveTimer = 0.0f;       // Laufzeit: autonome Bewegung Takt
+
+    // PAKET 29: laufender animierter Kachelschritt / Sprung (Sichtposition).
+    // Solange aktiv, ist worldPos interpoliert; ev.x/ev.z zeigen schon auf
+    // die ZIELZelle (Kollisionslogik bleibt kachelgenau - XP-Stil).
+    CharacterMotion motion;
 
     // Runtime move route (aus Seite oder SetMoveRoute-Befehl)
     MoveRoute moveRoute;
@@ -480,6 +492,7 @@ void EventSystem_SetTransferTransitionHandler(
 /// Rueckwaertskompatible Tokens:
 ///   U D L R F T A X TD TL TR TU W(n)            (bisherige)
 ///   B J(dx,dz) R90 L90 T180 TX TT TA            (Bewegen/Drehen neu)
+///   DL DR UL UR                                 (PAKET 29: XP-Diagonalen)
 ///   S+id S-id V(n) Q(n) H1 H0 P1 P0             (Schalter/Tempo/Flags neu)
 ///   G name[,idx]   E name   SC <rest>           (Grafik/SE/Script neu)
 /// SC frisst den Rest der Zeile (letzter Schritt). End-Marker wird

@@ -149,6 +149,12 @@ Gameover-ME/Grafik und kehrt zum Titel zurueck; Editor: Playtest-Stopp).
 ### Map-Kollision
 Tile-Flag **solid** (Map-Dock: Button „Solid“) → `TilesetData.flags` → `GameMap::IsPassable`.
 
+### Charakterbewegung (PAKET 29)
+XP-Kernmechanik neu als zeitgesteuerte 3D-Bewegung: `CharacterMotion`
+(interpolierte Kachel­schritte, echte Sprung-Parabel auf Y), Tempo-/Häufigkeits-
+Tabellen aus `xp::`, Diagonal-Routen 5–8 + Tokens `DL DR UL UR`, Breitensuche
+für „Annähern“, weiche Follow-Kamera. Details: `docs/XP-3D-CORE.md`.
+
 ### Common Events
 `maps/CommonEvents.json`, Trigger Autorun wenn `switchId` an (oder 0=immer bei Autorun).
 Button **Common+** im Event-Dock.

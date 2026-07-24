@@ -342,8 +342,9 @@ void GamePlayer::Update(float dt, Input& input) {
     }
     Vec3 move{0,0,0};
     float speed = mMoveSpeed * dt;
-    // Sprint
-    if (input.IsKeyDown(Key::LShift)) speed *= 1.75f;
+    // Sprint = XP-Dash-Regel: sieht wie eine GeschwindigkeitsSTUFE hoeher
+    // aus (5 statt 4 -> faktor 2.0). Frueher willkuerlich 1.75x.
+    if (input.IsKeyDown(Key::LShift)) speed *= 2.0f;
 
     if (input.IsKeyDown(Key::W) || input.IsKeyDown(Key::Up))    move.z -= speed;
     if (input.IsKeyDown(Key::S) || input.IsKeyDown(Key::Down))  move.z += speed;

@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cctype>
 #include <cstdlib>
+#include <deque>
 #include <filesystem>
 
 namespace rpg {
@@ -428,6 +429,12 @@ MoveRoute EventSystem_ParseMoveRouteText(const std::string& routeText) {
         else if (up == "L90") st.code = MoveRouteCode::TurnLeft90;
         else if (up == "T180") st.code = MoveRouteCode::Turn180;
         else if (up == "TX") st.code = MoveRouteCode::TurnRandom;
+        // ---- PAKET 29: XP-Diagonalen (Codes 5..8) — vor den 1-Buchstaben-
+        // Matches, damit "DL" nicht als D-Schritt fehlgedeutet wird.
+        else if (up == "DL") st.code = MoveRouteCode::MoveLowerLeft;
+        else if (up == "DR") st.code = MoveRouteCode::MoveLowerRight;
+        else if (up == "UL") st.code = MoveRouteCode::MoveUpperLeft;
+        else if (up == "UR") st.code = MoveRouteCode::MoveUpperRight;
         else if (up == "B") st.code = MoveRouteCode::MoveBackward;
         else if (c == 'U') st.code = MoveRouteCode::MoveUp;
         else if (c == 'D') st.code = MoveRouteCode::MoveDown;
@@ -1220,6 +1227,8 @@ void EventSystem::SetEventLocation(int eventId, int x, int z) {
     if (!ev) return;
     ev->x = x; ev->z = z;
     ev->worldPos = Vec3((float)x, ev->worldPos.y, (float)z);
+    // PAKET 29: Teleport beendet einen evtl. laufenden Schritt/Sprung.
+    ev->motion.Cancel(ev->worldPos);
 }
 
 bool EventSystem::IsAnyRouteForcing() const {
@@ -1487,6 +1496,11 @@ void EventSystem::RefreshEventPage(MapEvent& ev) {
     ev.currentPage = best;
 
     // Seitenwechsel: Bewegung/Grafik anwenden (XP refresh)
+    // PAKET 29: Laufenden Schritt/Sprung sofort beenden und die Sichtposi-
+    // tion auf die logische Zelle snappen (Seitenbild gilt ab sofort).
+    ev.motion.Cancel(Vec3((float)ev.x, (float)ev.y, (float)ev.z));
+    if (glm::length(ev.worldPos) > 0.001f)
+        ev.worldPos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
     ev.hasMoveRoute = false;
     ev.routeForcing = false;
     // PAKET 16: Route-Laufzeit-Overrides (Grafik/Transparenz) verfallen mit
@@ -1713,6 +1727,78 @@ bool EventSystem::IsBlockingEventRunning() const {
 // ---------------------------------------------------------------------------
 // Autonome Bewegung + Move Routes
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// PAKET 29: Pfadfindung fuer "Annaehern" (Autonom-Bewegung).
+// XP-Problem behoben: Das gierige Original liess NPCs an jeder Ecke/Mauer
+// haengen. Hier laeuft eine begrenzte Breitensuche auf dem Kachel-Raster
+// (Radius 8, max. 1024 Felder - Low-Spec-sicher) und liefert den ersten
+// Schritt eines Weges zum Spieler. Findet sie keinen Weg, bleibt die
+// bisherige Greedy-Achsenwahl als Rueckfall.
+// ---------------------------------------------------------------------------
+static Vec3 FindApproachDelta(const Vec3& from, const Vec3& playerPos,
+                              const std::function<bool(const Vec3&)>& cellBlocked) {
+    const Vec3 flatTo(playerPos.x - from.x, 0.0f, playerPos.z - from.z);
+    if (glm::length(flatTo) <= 1.2f) return Vec3(0.0f); // nah genug (bisheriges Verhalten)
+
+    const int sx = (int)std::round(from.x), sz = (int)std::round(from.z);
+    const int px = (int)std::round(playerPos.x), pz = (int)std::round(playerPos.z);
+    if (sx == px && sz == pz) return Vec3(0.0f);
+
+    constexpr int R = 8;                       // Suchradius in Kacheln
+    constexpr int W = 2 * R + 1;               // Lauf-Fenster um den Start
+    auto inWin = [&](int x, int z) {
+        return x >= sx - R && x <= sx + R && z >= sz - R && z <= sz + R;
+    };
+    auto idx = [&](int x, int z) { return (x - (sx - R)) + (z - (sz - R)) * W; };
+
+    std::vector<int> prev(W * W, -1);          // Vorgaenger-Index je Zelle
+    std::vector<char> seen(W * W, 0);
+    std::deque<std::pair<int,int>> q;
+    q.emplace_back(sx, sz);
+    seen[idx(sx, sz)] = 1;
+
+    constexpr int kMaxPops = 1024;
+    int pops = 0;
+    bool found = false;
+    static const int kDirs4[4][2] = {{1,0},{-1,0},{0,1},{0,-1}};
+    while (!q.empty() && pops < kMaxPops && !found) {
+        auto [cx, cz] = q.front(); q.pop_front();
+        ++pops;
+        for (const auto& d : kDirs4) {
+            const int nx = cx + d[0], nz = cz + d[1];
+            if (!inWin(nx, nz) || seen[idx(nx, nz)]) continue;
+            seen[idx(nx, nz)] = 1;
+            prev[idx(nx, nz)] = idx(cx, cz);
+            if (nx == px && nz == pz) { found = true; break; }
+            // Zielzelle des Spielers nie als begehbar einreihen
+            if (cellBlocked(Vec3((float)nx, 0.0f, (float)nz))) continue;
+            q.emplace_back(nx, nz);
+        }
+    }
+
+    Vec3 delta(0.0f);
+    if (found) {
+        // Vom Ziel zur Startzelle zuruecklaufen; der letzte Schritt VOR dem
+        // Start ist der erste Weg-Schritt.
+        int cur = idx(px, pz);
+        const int startI = idx(sx, sz);
+        int stepI = cur;
+        while (cur != -1 && cur != startI) { stepI = cur; cur = prev[cur]; }
+        if (cur == startI && stepI != startI) {
+            const int gx = (stepI % W) + (sx - R);
+            const int gz = (stepI / W) + (sz - R);
+            delta = Vec3((float)(gx - sx), 0.0f, (float)(gz - sz));
+        }
+    }
+    if (glm::length(delta) < 0.001f) {
+        // Rueckfall: gierige Achsenwahl (bisheriges PAKET-27-Verhalten)
+        delta = (std::fabs(flatTo.x) > std::fabs(flatTo.z))
+            ? Vec3(flatTo.x > 0 ? 1.0f : -1.0f, 0.0f, 0.0f)
+            : Vec3(0.0f, 0.0f, flatTo.z > 0 ? 1.0f : -1.0f);
+    }
+    return delta;
+}
+
 void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
     for (auto& ev : mEvents) {
         if (!ev.enabled || ev.erased) continue;
@@ -1723,6 +1809,19 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
         Vec3& pos = ev.worldPos;
         if (glm::length(pos) < 0.001f)
             pos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+
+        // PAKET 29: laufenden Kachelschritt / Sprung fortschreiben. XP-Charak-
+        // tere huepften in der Engine bisher instant von Zelle zu Zelle —
+        // jetzt interpoliert die dt-gesteuerte Motion (Seiten-/Routenlogik
+        // arbeitet weiterhin mit der logischen ZIELZelle, Rueckwirkungsfrei).
+        if (ev.motion.IsActive()) {
+            if (ev.motion.Update(dt, pos)) continue;   // Bewegung laeuft
+            pos = ev.motion.Target();                  // exakt landen
+            pos.y = (float)ev.y;
+            if (ev.hasMoveRoute && ev.motion.PauseAfter() > 0.0f)
+                ev.moveRoute.waitTimer = ev.motion.PauseAfter();
+            continue; // naechster Schritt zum naechsten Frame (XP-Takt)
+        }
 
         // PAKET 27: Kollisionswache fuer Event-Bewegung (autonom + Move
         // Route). Vorher liefen Events in Mauern/Wasser/aus der Karte,
@@ -1739,8 +1838,9 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
 
         // ---- Autonome Bewegung der aktiven Seite (Fixed/Random/Approach) ----
         if (page && !ev.hasMoveRoute && page->moveType != (int)EventMoveType::Custom) {
-            // Frequenz 1..6 -> Intervall 1.5s .. 0.25s
-            float interval = 1.75f - page->moveFrequency * 0.25f;
+            // Takt aus der XP-Haeufigkeitstabelle (1..6 -> 1.5s .. 0.25s);
+            // die TABELLEN-STELLE ersetzt die fruehere Inline-Formel 1:1.
+            const float interval = xp::PauseSecondsForFrequency(page->moveFrequency);
             ev.moveTimer += dt;
             if (ev.moveTimer >= interval) {
                 ev.moveTimer = 0.0f;
@@ -1753,22 +1853,23 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
                         default: delta = Vec3(0, 0, -1); break;
                     }
                 } else if (page->moveType == (int)EventMoveType::Approach) {
-                    Vec3 to = playerPos - pos;
-                    to.y = 0.0f;
-                    if (glm::length(to) > 1.2f) {
-                        delta = (std::fabs(to.x) > std::fabs(to.z))
-                            ? Vec3(to.x > 0 ? 1.f : -1.f, 0, 0)
-                            : Vec3(0, 0, to.z > 0 ? 1.f : -1.f);
-                    }
+                    // PAKET 29: Breitensuche statt Greedy (s.o.) — NPCs
+                    // umgehen Mauern, bleiben aber bei 4-Richtungs-Schritten.
+                    delta = FindApproachDelta(pos, playerPos, blockedAt);
                 }
-                if (glm::length(delta) > 0.001f && !blockedAt(pos + delta)) {
-                    pos += delta; // ganzzellig (XP-Kachel)
-                    ev.x = (int)std::round(pos.x);
-                    ev.z = (int)std::round(pos.z);
+                if (glm::length(delta) > 0.001f) {
+                    // Richtung setzen (XP: auch bei Blockturn bleibt das Turn)
                     if (delta.x > 0) ev.direction = DIR_RIGHT;
                     else if (delta.x < 0) ev.direction = DIR_LEFT;
                     else if (delta.z > 0) ev.direction = DIR_DOWN;
                     else if (delta.z < 0) ev.direction = DIR_UP;
+                    if (!blockedAt(pos + delta)) {
+                        // Zielzelle logisch sofort belegen (ev.x/ev.z), die
+                        // Sichtposition gleitet per Motion hinterher.
+                        ev.x = (int)std::round(pos.x + delta.x);
+                        ev.z = (int)std::round(pos.z + delta.z);
+                        ev.motion.BeginStep(pos, delta, std::clamp(page->moveSpeed, 1, 6));
+                    }
                 }
             }
         }
@@ -1798,6 +1899,11 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
             case MoveRouteCode::MoveDown:  delta = Vec3(0, 0, cell);  dir = DIR_DOWN; break;
             case MoveRouteCode::MoveLeft:  delta = Vec3(-cell, 0, 0); dir = DIR_LEFT; break;
             case MoveRouteCode::MoveRight: delta = Vec3(cell, 0, 0);  dir = DIR_RIGHT; break;
+            // ---- PAKET 29: XP-Diagonalen (Codes 5..8) ----
+            case MoveRouteCode::MoveLowerLeft:  delta = Vec3(-cell, 0,  cell); dir = xp::DiagonalDir(delta, ev.direction); break;
+            case MoveRouteCode::MoveLowerRight: delta = Vec3( cell, 0,  cell); dir = xp::DiagonalDir(delta, ev.direction); break;
+            case MoveRouteCode::MoveUpperLeft:  delta = Vec3(-cell, 0, -cell); dir = xp::DiagonalDir(delta, ev.direction); break;
+            case MoveRouteCode::MoveUpperRight: delta = Vec3( cell, 0, -cell); dir = xp::DiagonalDir(delta, ev.direction); break;
             case MoveRouteCode::MoveForward: {
                 switch (ev.direction) {
                     case DIR_UP: delta = Vec3(0, 0, -cell); break;
@@ -1947,28 +2053,56 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
             else if (delta.z > 0) ev.direction = DIR_DOWN;
             else if (delta.z < 0) ev.direction = DIR_UP;
         }
-        if (glm::length(delta) > 0.001f && blockedAt(pos + delta)) {
+        // PAKET 16 (Schritt 29): Schritt-Pause nach Geschwindigkeit —
+        // hoeheres Tempo = kuerzere Pause; speed 3 entspricht 0,05 s
+        // (Bestandsverhalten). Bei animierten Schritten zaehlt die Pause
+        // ab der LANDUNG (Motion-PauseAfter), nicht ab dem Start.
+        const float postPause = 0.05f * (7.0f / (float)(std::clamp(ev.moveSpeedRt, 1, 6) + 3));
+        bool blocked = false;
+        const bool hasDelta = glm::length(delta) > 0.001f;
+        if (hasDelta) {
+            const bool diagonal = delta.x != 0.0f && delta.z != 0.0f;
+            if (diagonal) {
+                // PAKET 29: XP-"Ecke schneiden"-Regel — beide orthogonalen
+                // Zwischenzellen muessen frei sein (s. xp::DiagonalPassable).
+                blocked = !xp::DiagonalPassable(pos, delta,
+                    [&](const Vec3& t) { return blockedAt(t); });
+            } else {
+                // Sprung (code 14): nur das ZIEL muss frei sein (XP-Regel:
+                // Sprung findet nur statt, wenn die Zielzelle begehbar ist,
+                // ausser Durchlaessig). Gewoehnliche Schritte: Ziel frei.
+                blocked = blockedAt(pos + delta);
+            }
+        }
+        if (blocked) {
             // PAKET 27: Ziel belegt/nicht begehbar (Mauer, Wasser, Rand,
             // anderes Event, Spieler). XP-Semantik:
             if (!mr.skippable) {
                 // nicht skippierbar: Schritt zurueckdrehen, in kurzer
                 // Pause erneut versuchen (Route wartet). continue, damit
-                // die Standard-Schrittpause unten die 0,25 s nicht
-                // ueberschreibt.
+                // die 0,25 s nicht ueberschrieben wird.
                 mr.stepIndex--;
                 mr.waitTimer = 0.25f;
                 continue;
             }
             // skippierbar: Schritt auslassen (stepIndex ist schon weiter)
-        } else {
-            pos += delta;
-            ev.x = (int)std::round(pos.x);
-            ev.z = (int)std::round(pos.z);
+            mr.waitTimer = postPause;
+            continue;
         }
-        // PAKET 16 (Schritt 29): Schritt-Pause nach Geschwindigkeit —
-        // hoehere Tempo = kuerzere Pause; speed 3 entspricht dem
-        // bisherigen festen 0,05 s (Bestandsverhalten unveraendert).
-        mr.waitTimer = 0.05f * (7.0f / (float)(std::clamp(ev.moveSpeedRt, 1, 6) + 3));
+        if (hasDelta) {
+            // PAKET 29: animierter Kachelschritt/Sprung statt Instant-Setzung.
+            // Logische Zielzelle sofort uebernehmen; die Sichtposition
+            // (worldPos) folgt interpoliert durch die Motion.
+            ev.x = (int)std::round(pos.x + delta.x);
+            ev.z = (int)std::round(pos.z + delta.z);
+            if (step.code == MoveRouteCode::Jump)
+                ev.motion.BeginJump(pos, pos + delta, std::clamp(ev.moveSpeedRt, 1, 6));
+            else
+                ev.motion.BeginStep(pos, delta, std::clamp(ev.moveSpeedRt, 1, 6));
+            ev.motion.SetPauseAfter(postPause);
+        } else {
+            mr.waitTimer = postPause;
+        }
     }
 }
 

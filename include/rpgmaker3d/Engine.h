@@ -203,6 +203,10 @@ private:
     bool mEditorMode = true;
     bool mPlayMode = false;
     bool mPlayModeFollowPlayer = true;
+    // PAKET 29: weich nachgefuehrte Playtest-Kamera (XP scrollte hart
+    // kachelzentriert; in 3D liest sich eine gedaempfte Nachfuehrkurve
+    // ruhiger). Bei Map-Transfers (>6 Felder Sprung) wird gesnappt.
+    Vec3 mFollowCamPos{0.0f, 3.0f, 5.0f};
     // ---- XP-Debug-Inspektor (Paket 4) ----
     bool mDbgVisible = false;    // Fensterstatus (F10 toggle)
     int  mDbgSel = 0;            // Kursorteil: Schalter- oder Variablenzeile

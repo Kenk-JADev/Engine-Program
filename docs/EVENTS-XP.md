@@ -79,9 +79,10 @@ Treffer ohne Leerzeichen, Leerzeichen zwischen den Schritten:
 | Token | XP-Code | Wirkung |
 |---|---|---|
 | `D L R U` | 1–4 | Schritt unten/links/rechts/oben |
+| `DL DR UL UR` | 5–8 | **PAKET 29:** Diagonal-Schritt (Ecke-schneiden-Regel s. unten) |
 | `F` / `B` | 12 / 13 | vorwärts / rückwärts (Blick bleibt) |
 | `T` / `A` / `X` | 10 / 11 / 9 | zum/weg vom Spieler / zufällig gehen |
-| `J(dx,dz)` | 14 | Sprung um dx Kacheln rechts, dz unten |
+| `J(dx,dz)` | 14 | Sprung um dx Kacheln rechts, dz unten — **PAKET 29:** animierter Parabelbogen auf echter Y-Achse |
 | `W(n)` | 15 | n Frames warten (40 FPS-Basis) |
 | `TD TL TR TU` | 16–19 | nach unten/links/rechts/oben blicken |
 | `R90` / `L90` / `T180` | 20–22 | 90° rechts/links, 180° drehen |
@@ -93,6 +94,15 @@ Treffer ohne Leerzeichen, Leerzeichen zwischen den Schritten:
 | `G name[,idx]` | 39 | Charaktergrafik wechseln |
 | `E name` | 42 | Soundeffekt abspielen |
 | `SC <rest>` | 43 | Script (frisst den Rest der Route — letzter Schritt) |
+
+**PAKET 29 — Bewegungscharakteristik:** Alle Bewegungsschritte laufen jetzt
+zeitgesteuert (`CharacterMotion`, dt-basiert) statt als Instant-Sprung
+Kachel-zu-Kachel: Dauer pro Kachel folgt der XP-Tempo-Tabelle (Stufe 1–6:
+1,60/0,80/0,40/0,20/0,10/0,05 s), Sprünge bilden einen echten Y-Bogen.
+Diagonale sind nur erlaubt, wenn beide orthogonale Zwischenzellen frei sind
+(XP-„Ecke-schneiden“-Regel); ihre Blickrichtung bevorzugt die horizontale
+Achse. Blockierte Schritte: überspringbar → auslassen, sonst Standard-Retry
+(gilt jetzt auch für Sprünge). Details: `docs/XP-3D-CORE.md`.
 
 Offen: Anime-Flags 31–34, Opacity 40 / Blend 41, Script-Varianten 44/45
 (siehe TODO_XP_PARITY.md, PAKET 16).

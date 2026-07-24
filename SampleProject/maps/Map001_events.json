@@ -121,6 +121,27 @@
           ]
         }
       ]
+    },
+    {
+      "id": 7,
+      "name": "Maschinistin",
+      "x": 15, "z": 13,
+      "worldPos": [5, 0, 3],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "moveType": 3,
+          "moveSpeed": 4,
+          "moveFrequency": 4,
+          "customRoute": "DR UR J(0,-2) DL UL W30",
+          "routeRepeat": true,
+          "list": [
+            {"code": 101, "text": "(Maschinistin) Sieh dir meine Antriebe an - PAKET 29 hat mir Diagonalen UND echte Sprunghoehe beigebracht! Kein XP-Original haette das vermocht."}
+          ]
+        }
+      ]
     }
   ]
 }
