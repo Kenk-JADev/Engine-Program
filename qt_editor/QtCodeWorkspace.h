@@ -1,7 +1,9 @@
 #pragma once
-// Code-Workspace: ersetzt den alten ImGui-"Game Scene"-Schwerpunkt.
+// Skript-Editor im XP-Look (PAKET 28): links Ruby-Skriptliste, rechts grosser
+// Code-Editor. Schlanke Kopfzeile (Ansicht + Suche), Fusszeile mit Snippets
+// und nur zwei Buttons; alle Dateiaktionen im RECHTSKLICK-Menue der Liste.
 // Dient dem Editieren von Ruby-Spiellogik und C++-Engine-API-Referenz/Snippets
-// in nativen Qt-Widgets (QPlainTextEdit + Dateibaum).
+// in nativen Qt-Widgets (QPlainTextEdit + Skriptliste).
 
 #include <QWidget>
 #include <QString>
@@ -14,7 +16,6 @@ class QLabel;
 class QComboBox;
 class QLineEdit;
 class QSplitter;
-class QToolBar;
 class QAction;
 class QTabWidget;
 

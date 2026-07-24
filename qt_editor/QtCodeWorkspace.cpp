@@ -9,11 +9,13 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QListWidget>
+#include <QMenu>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QLabel>
 #include <QComboBox>
 #include <QSplitter>
-#include <QToolBar>
+#include <QToolButton>
 #include <QAction>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -194,55 +196,39 @@ QtCodeWorkspace::QtCodeWorkspace(rpg::Engine* engine, QWidget* parent)
 }
 
 void QtCodeWorkspace::buildUi() {
+    // Neuer XP-Look (PAKET 28): links Skriptliste, rechts grosser Editor,
+    // oben nur eine schlanke Kopfzeile (Ansicht + Suche), unten zwei Buttons.
+    // Alle Dateiaktionen liegen im RECHTSKLICK-Menue der Skriptliste (XP-Stil),
+    // nicht in einer ueberladenen Buttonleiste.
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    auto* tb = new QToolBar(this);
-    tb->setMovable(false);
-
-    mLangCombo = new QComboBox(tb);
-    mLangCombo->addItem("Ruby (Spiellogik)");
-    mLangCombo->addItem("C++ (Engine API)");
+    // ---- Kopfzeile: Ansicht + Suche (mehr nicht) -------------------------
+    auto* top = new QWidget(this);
+    auto* topLay = new QHBoxLayout(top);
+    topLay->setContentsMargins(6, 4, 6, 4);
+    topLay->setSpacing(6);
+    topLay->addWidget(new QLabel(QStringLiteral("Ansicht:"), top));
+    mLangCombo = new QComboBox(top);
+    mLangCombo->addItem(QStringLiteral("Ruby (Spiellogik)"));
+    mLangCombo->addItem(QStringLiteral("C++ (Engine API-Referenz)"));
     connect(mLangCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &QtCodeWorkspace::setLanguage);
-    tb->addWidget(new QLabel("  Sprache: ", tb));
-    tb->addWidget(mLangCombo);
-    tb->addSeparator();
-
-    mNewAction = tb->addAction("Neu", this, &QtCodeWorkspace::onNewRubyScript);
-    mSaveAction = tb->addAction("Speichern", this, [this]() { saveCurrent(); });
-    tb->addAction("Alle speichern", this, [this]() { saveAll(); });
-    mDeleteAction = tb->addAction("Löschen", this, &QtCodeWorkspace::onDeleteRubyScript);
-    auto* renameAction = tb->addAction("Umbenennen", this, &QtCodeWorkspace::onRenameRubyScript);
-    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
-    renameAction->setToolTip(QStringLiteral("Aktuelles Script umbenennen [F2]"));
-    tb->addAction("Neu laden", this, &QtCodeWorkspace::onReloadFromDisk);
-    tb->addSeparator();
-    // XP-Paritaet: KEIN "Script ausfuehren"-Button - Skripte laufen im Spiel,
-    // nicht einzeln aus dem Editor. Nur Hot-Reload bleibt als Dev-Werkzeug.
-    tb->addAction("Hot-Reload", this, &QtCodeWorkspace::onHotReload);
-    tb->addSeparator();
-    tb->addAction("Extern öffnen", this, &QtCodeWorkspace::onOpenExternal);
-    tb->addSeparator();
-    tb->addWidget(new QLabel(" Suchen: ", tb));
-    mFindEdit = new QLineEdit(tb);
-    mFindEdit->setPlaceholderText("Ctrl+F");
-    mFindEdit->setMaximumWidth(180);
-    tb->addWidget(mFindEdit);
-    tb->addAction("Suchen", this, &QtCodeWorkspace::onFind);
-    tb->addAction("Weiter", this, &QtCodeWorkspace::onFindNext);
+    topLay->addWidget(mLangCombo);
+    topLay->addStretch(1);
+    topLay->addWidget(new QLabel(QStringLiteral("Suchen:"), top));
+    mFindEdit = new QLineEdit(top);
+    mFindEdit->setPlaceholderText(QStringLiteral("Suchbegriff [Enter = finden]"));
+    mFindEdit->setMaximumWidth(220);
     connect(mFindEdit, &QLineEdit::returnPressed, this, &QtCodeWorkspace::onFind);
-
-    tb->addSeparator();
-    tb->addWidget(new QLabel(" Snippet: ", tb));
-    mSnippetCombo = new QComboBox(tb);
-    mSnippetCombo->setMinimumWidth(160);
-    connect(mSnippetCombo, QOverload<int>::of(&QComboBox::activated),
-            this, &QtCodeWorkspace::onInsertSnippet);
-    tb->addWidget(mSnippetCombo);
-
-    root->addWidget(tb);
+    topLay->addWidget(mFindEdit);
+    auto* nextBtn = new QToolButton(top);
+    nextBtn->setText(QStringLiteral("Weiter"));
+    nextBtn->setToolTip(QStringLiteral("Nächsten Treffer suchen"));
+    connect(nextBtn, &QToolButton::clicked, this, &QtCodeWorkspace::onFindNext);
+    topLay->addWidget(nextBtn);
+    root->addWidget(top);
 
     auto* split = new QSplitter(Qt::Horizontal, this);
 
@@ -255,6 +241,75 @@ void QtCodeWorkspace::buildUi() {
     // XP: Doppelklick/Enter auf den Listeneintrag benennt das Script um
     connect(mFileList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
         if (mLanguage == CodeLanguage::Ruby) onRenameRubyScript();
+    });
+
+    // ---- Dateiaktionen: Rechtsklick-Kontextmenue + Tasten (statt Buttons) ---
+    mNewAction = new QAction(QStringLiteral("Neues Skript …"), this);
+    mNewAction->setToolTip(QStringLiteral("Leeres Ruby-Skript anlegen"));
+    connect(mNewAction, &QAction::triggered, this, &QtCodeWorkspace::onNewRubyScript);
+
+    auto* renameAction = new QAction(QStringLiteral("Umbenennen"), this);
+    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
+    renameAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(renameAction, &QAction::triggered, this, &QtCodeWorkspace::onRenameRubyScript);
+
+    mDeleteAction = new QAction(QStringLiteral("Löschen"), this);
+    mDeleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
+    mDeleteAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(mDeleteAction, &QAction::triggered, this, &QtCodeWorkspace::onDeleteRubyScript);
+
+    auto* reloadAction = new QAction(QStringLiteral("Von Datenträger neu laden"), this);
+    connect(reloadAction, &QAction::triggered, this, &QtCodeWorkspace::onReloadFromDisk);
+
+    auto* externalAction = new QAction(QStringLiteral("Im externen Editor öffnen"), this);
+    connect(externalAction, &QAction::triggered, this, &QtCodeWorkspace::onOpenExternal);
+
+    mSaveAction = new QAction(QStringLiteral("Speichern"), this);
+    mSaveAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+S")));
+    mSaveAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(mSaveAction, &QAction::triggered, this, [this]() { saveCurrent(); });
+
+    auto* saveAllAction = new QAction(QStringLiteral("Alle speichern"), this);
+    connect(saveAllAction, &QAction::triggered, this, [this]() { saveAll(); });
+
+    // XP-Paritaet: KEIN "Skript ausfuehren" - Skripte laufen im Spiel, nicht
+    // einzeln aus dem Editor. Nur Hot-Reload bleibt als Dev-Werkzeug.
+    auto* hotReloadAction = new QAction(QStringLiteral("Speichern + Hot-Reload"), this);
+    hotReloadAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+R")));
+    hotReloadAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(hotReloadAction, &QAction::triggered, this, &QtCodeWorkspace::onHotReload);
+
+    // Tasten direkt auf der Skriptliste (F2/Entf bleiben listenlokal, damit
+    // Entf im Textfeld normal Zeichen loescht)
+    mFileList->addAction(renameAction);
+    mFileList->addAction(mDeleteAction);
+    addAction(mSaveAction);         // Ctrl+S im ganzen Skriptfenster
+    addAction(hotReloadAction);     // Ctrl+R im ganzen Skriptfenster
+
+    // Rechtsklick auf Skripte (XP: Einfügen/Umbenennen/Löschen …)
+    mFileList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mFileList, &QListWidget::customContextMenuRequested, this,
+            [this, renameAction, reloadAction, externalAction,
+             saveAllAction, hotReloadAction](const QPoint& pos) {
+        const bool ruby = (mLanguage == CodeLanguage::Ruby);
+        QMenu menu(mFileList);
+        menu.addAction(mNewAction);
+        menu.addAction(renameAction);
+        menu.addAction(mDeleteAction);
+        menu.addSeparator();
+        menu.addAction(reloadAction);
+        menu.addAction(externalAction);
+        menu.addSeparator();
+        menu.addAction(mSaveAction);
+        menu.addAction(saveAllAction);
+        menu.addAction(hotReloadAction);
+        mNewAction->setEnabled(ruby);
+        renameAction->setEnabled(ruby);
+        mDeleteAction->setEnabled(ruby);
+        mSaveAction->setEnabled(ruby);
+        saveAllAction->setEnabled(ruby);
+        hotReloadAction->setEnabled(ruby);
+        menu.exec(mFileList->viewport()->mapToGlobal(pos));
     });
 
     auto* right = new QWidget(split);
@@ -294,6 +349,26 @@ void QtCodeWorkspace::buildUi() {
     split->setSizes({240, 800});
 
     root->addWidget(split, 1);
+
+    // ---- Fusszeile: Snippets + nur zwei Buttons (XP-artig schlank) --------
+    auto* bottom = new QWidget(this);
+    auto* botLay = new QHBoxLayout(bottom);
+    botLay->setContentsMargins(6, 2, 6, 4);
+    botLay->setSpacing(6);
+    botLay->addWidget(new QLabel(QStringLiteral("Snippet:"), bottom));
+    mSnippetCombo = new QComboBox(bottom);
+    mSnippetCombo->setMinimumWidth(200);
+    connect(mSnippetCombo, QOverload<int>::of(&QComboBox::activated),
+            this, &QtCodeWorkspace::onInsertSnippet);
+    botLay->addWidget(mSnippetCombo, 1);
+    auto* saveBtn = new QPushButton(QStringLiteral("Speichern"), bottom);
+    saveBtn->setToolTip(QStringLiteral("Aktuelles Skript speichern [Strg+S]"));
+    connect(saveBtn, &QPushButton::clicked, this, [this]() { saveCurrent(); });
+    botLay->addWidget(saveBtn);
+    auto* saveAllBtn = new QPushButton(QStringLiteral("Alle speichern"), bottom);
+    connect(saveAllBtn, &QPushButton::clicked, this, [this]() { saveAll(); });
+    botLay->addWidget(saveAllBtn);
+    root->addWidget(bottom);
 
     // Snippets initial (Ruby)
     mSnippetCombo->clear();

@@ -28,6 +28,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QCoreApplication>
+#include <QActionGroup>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -54,6 +55,7 @@
 #include <QRegularExpression>
 #include <QSettings>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTabWidget>
@@ -83,30 +85,51 @@ QIcon stdIcon(QWidget* w, QStyle::StandardPixmap sp) {
     return w->style()->standardIcon(sp);
 }
 
-/// Automatische Symbol-Zuordnung fuer Ribbon-/Menue-Texte (easy-to-use:
-/// erkennbare Icons statt nur Text). Leerstring sicher, kein Treffer = 0.
-QStyle::StandardPixmap iconForText(const QString& text) {
-    QString t = text;
-    t.remove('\n');
-    t.remove('&');
-    if (t.contains(QStringLiteral("Neues Projekt")))     return QStyle::SP_FileIcon;
-    if (t.contains(QStringLiteral("Projekt öffnen")))    return QStyle::SP_DirOpenIcon;
-    if (t.contains(QStringLiteral("Speichern")))         return QStyle::SP_DialogSaveButton;
-    if (t.contains(QStringLiteral("Rückgängig")))        return QStyle::SP_ArrowBack;
-    if (t.contains(QStringLiteral("Wiederholen")))       return QStyle::SP_ArrowForward;
-    if (t.contains(QStringLiteral("Löschen")))           return QStyle::SP_TrashIcon;
-    if (t.contains(QStringLiteral("Beenden")))           return QStyle::SP_DialogCloseButton;
-    if (t.contains(QStringLiteral("Playtest")))          return QStyle::SP_MediaPlay;
-    if (t.contains(QStringLiteral("Sound-Test")))        return QStyle::SP_MediaVolume;
-    if (t.contains(QStringLiteral("Datenbank")))         return QStyle::SP_FileDialogContentsView;
-    if (t.contains(QStringLiteral("Karteneigenschaften"))) return QStyle::SP_FileDialogInfoView;
-    if (t.contains(QStringLiteral("neu laden")))         return QStyle::SP_BrowserReload;
-    if (t.contains(QStringLiteral("Neu laden")))         return QStyle::SP_BrowserReload;
-    if (t.contains(QStringLiteral("Tastenkürzel")))      return QStyle::SP_FileDialogDetailedView;
-    if (t.contains(QStringLiteral("ber RPG Maker")))     return QStyle::SP_MessageBoxInformation;
-    if (t.contains(QStringLiteral("Willkommens")))       return QStyle::SP_TitleBarMenuButton;
-    if (t.contains(QStringLiteral("exportieren")))       return QStyle::SP_DriveHDIcon;
-    return QStyle::SP_CustomBase; // kein Symbol vorhanden
+/// Kleines selbstgemaltes Text-Glyph als Symbol (fuer Aktionen ohne passendes
+/// Standard-Icon, z. B. Skript-Aufzaehlung). Keine Asset-Dateien noetig.
+QIcon glyphIcon(const QString& txt, const QColor& fg) {
+    QPixmap pm(22, 22);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(fg);
+    QFont f = p.font();
+    f.setBold(true);
+    f.setPixelSize(txt.size() > 1 ? 10 : 13);
+    p.setFont(f);
+    p.drawText(pm.rect(), Qt::AlignCenter, txt);
+    p.end();
+    return QIcon(pm);
+}
+
+/// XP-Ebenen-Symbol: drei gestapelte Leisten, die aktive Ebene ist gefuellt.
+/// which = 0..2 fuer Ebene 1..3, 3 = Ereignis-Modus (Pin-Symbol „EV“).
+QIcon layerIcon(int which) {
+    QPixmap pm(22, 22);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, false);
+    if (which < 3) {
+        for (int bar = 0; bar < 3; ++bar) {
+            const int y = 4 + (2 - bar) * 6; // Ebene 1 unten, 3 oben
+            const bool active = (bar == which);
+            p.setPen(QPen(QColor(active ? 240 : 140, active ? 180 : 140, 60, 255), 1));
+            p.setBrush(active ? QColor(240, 180, 60, 220) : QColor(60, 60, 66, 220));
+            p.drawRect(2, y, 18, 4);
+        }
+    } else {
+        p.setPen(QPen(QColor(120, 200, 255), 1));
+        p.setBrush(QColor(50, 90, 130, 220));
+        p.drawRoundedRect(2, 4, 18, 14, 3, 3);
+        p.setPen(QPen(QColor(200, 230, 255)));
+        QFont f = p.font();
+        f.setBold(true);
+        f.setPixelSize(9);
+        p.setFont(f);
+        p.drawText(QRect(2, 4, 18, 14), Qt::AlignCenter, QStringLiteral("EV"));
+    }
+    p.end();
+    return QIcon(pm);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +207,7 @@ QtEditorWindow::QtEditorWindow(QWidget* parent)
     buildCentral();
     buildDocks();
     buildMenus();
-    buildRibbon(); // Schnellzugriff + Ribbon-Tabs (ersetzt die klassische Toolbar)
+    buildToolBar(); // PAKET 28: kompakte XP-Icon-Zeile (ersetzt das Ribbon)
 
     // Statuszeile: links Hinweistexte, rechts permanent Feld / Karte / FPS-Info
     mStatusTile = new QLabel(QStringLiteral("Feld: -"), this);
@@ -420,14 +443,14 @@ void QtEditorWindow::onCentralTabChanged(int index) {
 
 void QtEditorWindow::buildMenus() {
     QMenu* mFile = menuBar()->addMenu(QStringLiteral("&Datei"));
-    QAction* aNew = mFile->addAction(stdIcon(this, QStyle::SP_FileIcon),
-                                     QStringLiteral("&Neues Projekt …"),
-                                     this, [this]() { actionNewProject(); });
-    aNew->setShortcut(QKeySequence(QStringLiteral("Ctrl+N")));
-    QAction* aOpen = mFile->addAction(stdIcon(this, QStyle::SP_DirOpenIcon),
-                                      QStringLiteral("Projekt ö&ffnen …"),
-                                      this, [this]() { actionOpenProject(); });
-    aOpen->setShortcut(QKeySequence(QStringLiteral("Ctrl+O")));
+    mNewAction = mFile->addAction(stdIcon(this, QStyle::SP_FileIcon),
+                                  QStringLiteral("&Neues Projekt …"),
+                                  this, [this]() { actionNewProject(); });
+    mNewAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+N")));
+    mOpenAction = mFile->addAction(stdIcon(this, QStyle::SP_DirOpenIcon),
+                                   QStringLiteral("Projekt ö&ffnen …"),
+                                   this, [this]() { actionOpenProject(); });
+    mOpenAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+O")));
     mSaveAction = mFile->addAction(stdIcon(this, QStyle::SP_DialogSaveButton),
                                    QStringLiteral("&Speichern"),
                                    this, [this]() { actionSaveProject(); });
@@ -473,6 +496,80 @@ void QtEditorWindow::buildMenus() {
     mCreate->addAction(QStringLiteral("Würfel"), this, [this]() { actionCreateCube(); });
     mCreate->addAction(QStringLiteral("Ebene"), this, [this]() { actionCreatePlane(); });
     mCreate->addAction(QStringLiteral("Licht"), this, [this]() { actionCreateLight(); });
+
+    // PAKET 28: Das alte Ribbon (Datei/Werkzeuge/...)
+    // ist einer kompakten Symbolleiste + diesem Menue gewichen.
+    QMenu* mTools = menuBar()->addMenu(QStringLiteral("&Werkzeuge"));
+    QAction* dbAct = mTools->addAction(stdIcon(this, QStyle::SP_FileDialogContentsView),
+        QStringLiteral("Datenbank …"), this, [this]() {
+        if (!mView || !mView->IsEngineReady()) return;
+        if (QtDatabaseDialog::EditDatabase(this, mEngine.get())) {
+            if (mDbDockWidget) mDbDockWidget->refresh();
+            log(QStringLiteral("Datenbank (XP-Dialog) gespeichert."));
+        }
+    });
+    dbAct->setShortcut(QKeySequence(Qt::Key_F9));
+    dbAct->setShortcutContext(Qt::ApplicationShortcut);
+    mTools->addAction(stdIcon(this, QStyle::SP_MediaVolume),
+        QStringLiteral("Sound-Test …"), this, [this]() {
+        if (!mView || !mView->IsEngineReady()) return;
+        QtSoundTestDialog::ShowSoundTest(this, mEngine.get());
+    });
+    mTools->addAction(stdIcon(this, QStyle::SP_FileDialogInfoView),
+        QStringLiteral("Karteneigenschaften …"), this, [this]() {
+        if (!mView || !mView->IsEngineReady() || !mMapDockWidget) return;
+        const int idx = mMapDockWidget->selectedMapIndex();
+        if (QtMapPropertiesDialog::EditMapProperties(this, mEngine.get(), idx)) {
+            mMapDockWidget->refresh();
+            if (mMapTab) mMapTab->refresh();
+            log(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
+        }
+    });
+    mTools->addSeparator();
+    mGizmoAction = mTools->addAction(QStringLiteral("Gizmo anzeigen"));
+    mGizmoAction->setCheckable(true);
+    mGizmoAction->setChecked(false); // Default: aus (PAKET 26)
+    connect(mGizmoAction, &QAction::toggled, this, [this](bool on) {
+        if (!mView) return;
+        mView->setGizmoMode(on ? 1 : 0);
+        log(on ? QStringLiteral("Gizmo: an") : QStringLiteral("Gizmo: aus"));
+    });
+    mMapPaintAction = mTools->addAction(QStringLiteral("Tile-Malen im 3D-View"));
+    mMapPaintAction->setCheckable(true);
+    mMapPaintAction->setChecked(false);
+    connect(mMapPaintAction, &QAction::toggled, this, [this](bool on) {
+        if (mMapDockWidget) mMapDockWidget->setPaintEnabled(on);
+    });
+    mTools->addSeparator();
+    QMenu* mDebug = mTools->addMenu(QStringLiteral("&Debug"));
+    mDebug->addAction(QStringLiteral("Konsole leeren"), this, [this]() {
+        if (mConsole) mConsole->clear();
+    });
+    mDebug->addAction(QStringLiteral("Events neu laden"), this, [this]() {
+        const int mapId = rpg::Database::Get().System().startMapId;
+        rpg::EventSystem::Get().LoadMapEvents(
+            mapId > 0 ? mapId : 1,
+            mEngine->GetProject().GetProjectPath());
+        if (mEventDockWidget) mEventDockWidget->refresh();
+        log(QStringLiteral("Events neu geladen (Debug)."));
+    });
+    mDebug->addAction(QStringLiteral("Spielzustand zurücksetzen"), this, [this]() {
+        if (!mView || !mView->IsEngineReady()) return;
+        rpg::Game::Get().NewGame();
+        rpg::EventSystem::Get().RefreshAllPages();
+        log(QStringLiteral("Spielzustand zurückgesetzt."));
+    });
+    mDebug->addAction(QStringLiteral("Statistik"), this, [this]() {
+        if (!mView || !mView->IsEngineReady()) return;
+        auto& scene = mEngine->GetScene();
+        const auto& events = rpg::EventSystem::Get().GetEvents();
+        log(QStringLiteral("--- Statistik ---"));
+        log(QStringLiteral("Entities: %1").arg((int)scene.GetEntities().size()));
+        log(QStringLiteral("Events:   %1").arg((int)events.size()));
+        log(QStringLiteral("Map:      %1 x %2")
+                .arg(mEngine->GetMap().GetWidth())
+                .arg(mEngine->GetMap().GetHeight()));
+    });
 
     QMenu* mCodeMenu = menuBar()->addMenu(QStringLiteral("&Skript"));
     QAction* openScriptAction = mCodeMenu->addAction(
@@ -670,7 +767,7 @@ void QtEditorWindow::buildDocks() {
         connect(mMapTab, &QtMapTab::hoverInfo, this, [this](const QString& t) {
             if (mStatusTile) mStatusTile->setText(t);
         });
-        // Rechtsklick auf der Landkarte -> Karteneigenschaften (wie Ribbon/Doppelklick)
+        // Rechtsklick auf der Landkarte -> Karteneigenschaften (wie Doppelklick)
         connect(mMapTab, &QtMapTab::mapPropertiesRequested, this, [this]() {
             if (!mView || !mView->IsEngineReady() || !mMapDockWidget) return;
             const int idx = mMapDockWidget->selectedMapIndex();
@@ -691,243 +788,96 @@ void QtEditorWindow::buildDocks() {
 
     log(QStringLiteral("Qt-Editor gestartet."));
     log(QStringLiteral("  Tabs unten  = Spielansicht (3D) | Landkarte (2D) | Spiel | Skript"));
-    log(QStringLiteral("  Ribbon oben = Datei | Werkzeuge | Ansicht | Fenster | Debug"));
-    log(QStringLiteral("  F5 = Playtest über Player-exe, Umschalt+F5 = eingebettet"));
+    log(QStringLiteral("  Symbolleiste oben (XP-Stil) = Neu/Öffnen/Speichern | Ebenen 1-3/EV | Datenbank, Sound, Skripte | Play"));
+    log(QStringLiteral("  F5 = Playtest über Player-exe, Umschalt+F5 = eingebettet, F9 = Datenbank, F11 = Skripte"));
     log(QStringLiteral("Datei -> Projekt öffnen … um loszulegen."));
 }
 
 // ---------------------------------------------------------------------------
-// Schnellzugriff + Ribbon (Datei / Werkzeuge / Ansicht / Fenster / Debug)
+// Kompakte XP-Symbolleiste (PAKET 28: ersetzt das alte Kategorie-Ribbon)
+// Eine ruhige Icon-Zeile wie im RPG Maker XP:
+//   Neu | Oeffnen | Speichern || Undo/Redo/Loeschen || Ebene 1/2/3 | EV ||
+//   Datenbank | Sound-Test | Skripte || Playtest
+// Die Aktionen sind dieselben QAction-Objekte wie im Menue (ein Zustand!).
 // ---------------------------------------------------------------------------
 
-QWidget* QtEditorWindow::buildQuickAccessBar() {
-    auto* bar = new QWidget(this);
-    bar->setObjectName(QStringLiteral("quickAccessBar"));
-    auto* lay = new QHBoxLayout(bar);
-    lay->setContentsMargins(6, 2, 6, 0);
-    lay->setSpacing(2);
+void QtEditorWindow::buildToolBar() {
+    auto* tb = addToolBar(QStringLiteral("Hauptwerkzeugleiste"));
+    tb->setObjectName(QStringLiteral("mainToolBar"));
+    tb->setMovable(false);
+    tb->setFloatable(false);
+    tb->setAllowedAreas(Qt::TopToolBarArea);
+    tb->setIconSize(QSize(22, 22));
+    tb->setToolButtonStyle(Qt::ToolButtonIconOnly);
 
-    const auto mkBtn = [this, lay](const QString& text, const QString& tip,
-                                   QStyle::StandardPixmap sp,
-                                   std::function<void()> fn) {
-        auto* b = new QToolButton(this);
-        b->setText(text);
-        b->setToolTip(tip);
-        b->setAutoRaise(true);
-        if (sp != QStyle::SP_CustomBase) {
-            b->setIcon(stdIcon(b, sp));
-            b->setIconSize(QSize(18, 18));
-            b->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-        }
-        connect(b, &QToolButton::clicked, this, [fn]() { fn(); });
-        lay->addWidget(b);
-        return b;
+    // Datei- und Bearbeiten-Aktionen wiederverwenden (Menue + Leiste = eins)
+    if (mNewAction)  tb->addAction(mNewAction);
+    if (mOpenAction) tb->addAction(mOpenAction);
+    if (mSaveAction) tb->addAction(mSaveAction);
+    tb->addSeparator();
+    if (mUndoAction)   tb->addAction(mUndoAction);
+    if (mRedoAction)   tb->addAction(mRedoAction);
+    if (mDeleteAction) tb->addAction(mDeleteAction);
+    tb->addSeparator();
+
+    // XP-Ebenen-Buttons 1 / 2 / 3 / EV (exklusiv, schalten die Landkarte um)
+    auto* layerGroup = new QActionGroup(tb);
+    layerGroup->setExclusive(true);
+    const QString layerNames[4] = {
+        QStringLiteral("Ebene 1 malen (Landkarte)"),
+        QStringLiteral("Ebene 2 malen (Landkarte)"),
+        QStringLiteral("Ebene 3 malen (Landkarte)"),
+        QStringLiteral("Ereignis-Modus (EV): Events setzen/bearbeiten")
     };
-
-    mkBtn(QStringLiteral("Speichern"), QStringLiteral("Projekt speichern [Strg+S]"),
-          QStyle::SP_DialogSaveButton, [this]() { actionSaveProject(); });
-    mkBtn(QString(), QStringLiteral("Rückgängig [Strg+Z]"), QStyle::SP_ArrowBack,
-          [this]() { actionUndo(); });
-    mkBtn(QString(), QStringLiteral("Wiederholen [Strg+Y]"), QStyle::SP_ArrowForward,
-          [this]() { actionRedo(); });
-    lay->addSpacing(10);
-    mkBtn(QStringLiteral("Playtest (Player-exe)"),
-          QStringLiteral("Projekt speichern und in der Player-exe testen [F5]"),
-          QStyle::SP_MediaPlay, [this]() { actionPlaytestPlayer(); });
-    lay->addStretch(1);
-    return bar;
-}
-
-void QtEditorWindow::addRibbonPage(const QString& title) {
-    // Seitengerüst wird in ribbonPage angelegt; diese Hilfe existiert der
-    // Lesbarkeit halber (siehe buildRibbon).
-    (void)title;
-}
-
-QWidget* QtEditorWindow::ribbonPage(const QString& title) {
-    auto* page = new QWidget(mRibbonTabs);
-    page->setObjectName(QStringLiteral("ribbonPage"));
-    auto* lay = new QHBoxLayout(page);
-    lay->setContentsMargins(8, 4, 8, 6);
-    lay->setSpacing(4);
-    lay->addStretch(1); // Inhalte links halten; Stretch am Ende
-    mRibbonTabs->addTab(page, title);
-    return page;
-}
-
-void QtEditorWindow::ribbonButton(QWidget* page, const QString& text, const QString& tip,
-                                  std::function<void()> fn, bool checkable, bool checked) {
-    auto* lay = qobject_cast<QHBoxLayout*>(page->layout());
-    if (!lay) return;
-    auto* b = new QToolButton(page);
-    b->setObjectName(QStringLiteral("ribbonButton"));
-    b->setText(text);
-    b->setToolTip(tip);
-    b->setCheckable(checkable);
-    b->setChecked(checked);
-    // Easy-to-use: bekannte Aktionen bekommen ein erkennbares Symbol
-    const QStyle::StandardPixmap sp = iconForText(text);
-    if (sp != QStyle::SP_CustomBase) {
-        b->setIcon(stdIcon(b, sp));
-        b->setIconSize(QSize(26, 26));
-        b->setToolButtonStyle(Qt::ToolButtonTextUnderIcon); // Ribbon-Optik
-        b->setMinimumHeight(56);
-    } else {
-        b->setMinimumHeight(40);
+    for (int i = 0; i < 4; ++i) {
+        auto* a = new QAction(layerIcon(i), layerNames[i], layerGroup);
+        a->setCheckable(true);
+        a->setToolTip(layerNames[i]);
+        layerGroup->addAction(a);
+        tb->addAction(a);
+        mLayerActions[i] = a;
+        connect(a, &QAction::triggered, this, [this, i]() {
+            if (!mMapTab) return;
+            if (mCentralTabs && mCentralTabs->currentWidget() != mMapTab)
+                mCentralTabs->setCurrentWidget(mMapTab); // XP: direkt zur Landkarte
+            mMapTab->setPaintLayer(i);
+            syncToolBarLayers();
+        });
     }
-    if (checkable) {
-        connect(b, &QToolButton::toggled, this, [fn](bool) { fn(); });
-    } else {
-        connect(b, &QToolButton::clicked, this, [fn]() { fn(); });
-    }
-    lay->insertWidget(lay->count() - 1, b);
-}
+    tb->addSeparator();
 
-void QtEditorWindow::buildRibbon() {
-    // Schnellzugriffs-Leiste über den Ribbon-Tabs
-    auto* host = new QWidget(this);
-    host->setObjectName(QStringLiteral("ribbonHost"));
-    auto* hostLay = new QVBoxLayout(host);
-    hostLay->setContentsMargins(0, 0, 0, 0);
-    hostLay->setSpacing(0);
-    hostLay->addWidget(buildQuickAccessBar());
-
-    mRibbonTabs = new QTabWidget(host);
-    mRibbonTabs->setObjectName(QStringLiteral("ribbonTabs"));
-    mRibbonTabs->setDocumentMode(true);
-    mRibbonTabs->setUsesScrollButtons(true);
-    hostLay->addWidget(mRibbonTabs);
-    addToolBarBreak();                     // eigenes Band unter der Menüleiste
-    auto* tbArea = addToolBar(QStringLiteral("Ribbon"));
-    tbArea->setObjectName(QStringLiteral("ribbonToolbar"));
-    tbArea->setMovable(false);
-    tbArea->setFloatable(false);
-    tbArea->setAllowedAreas(Qt::TopToolBarArea);
-    tbArea->addWidget(host);
-
-    // ---- Tab: Datei ---------------------------------------------------------
-    if (QWidget* p = ribbonPage(QStringLiteral("Datei"))) {
-        ribbonButton(p, QStringLiteral("Neues\nProjekt"), QStringLiteral("Neues Projekt anlegen [Strg+N]"),
-                     [this]() { actionNewProject(); });
-        ribbonButton(p, QStringLiteral("Projekt\nöffnen"), QStringLiteral("Projekt öffnen [Strg+O]"),
-                     [this]() { actionOpenProject(); });
-        ribbonButton(p, QStringLiteral("Speichern"), QStringLiteral("Alles speichern [Strg+S]"),
-                     [this]() { actionSaveProject(); });
-        ribbonButton(p, QStringLiteral("Skripte\nspeichern"), QStringLiteral("Nur Skripte speichern"),
-                     [this]() { if (mCode) mCode->saveAll(); });
-        ribbonButton(p, QStringLiteral("Spiel\nexportieren"),
-                     QStringLiteral("Fertiges Spiel exportieren (Game.exe + Projektordner „Game“)"),
-                     [this]() { actionExportGame(); });
-        ribbonButton(p, QStringLiteral("Beenden"), QStringLiteral("Editor schließen"),
-                     [this]() { close(); });
-    }
-    // ---- Tab: Werkzeuge ------------------------------------------------------
-    if (QWidget* p = ribbonPage(QStringLiteral("Werkzeuge"))) {
-        ribbonButton(p, QStringLiteral("Datenbank"), QStringLiteral("XP-Datenbank-Editor öffnen"),
-                     [this]() {
-                         if (!mView || !mView->IsEngineReady()) return;
-                         if (QtDatabaseDialog::EditDatabase(this, mEngine.get())) {
-                             if (mDbDockWidget) mDbDockWidget->refresh();
-                             log(QStringLiteral("Datenbank (XP-Dialog) gespeichert."));
-                         }
-                     });
-        ribbonButton(p, QStringLiteral("Sound-Test"), QStringLiteral("Sound-Test-Fenster öffnen (BGM/BGS/ME/SE durchhören)"),
-                     [this]() {
-                         if (!mView || !mView->IsEngineReady()) return;
-                         QtSoundTestDialog::ShowSoundTest(this, mEngine.get());
-                     });
-        ribbonButton(p, QStringLiteral("Karten-\neigenschaften"), QStringLiteral("Karteneigenschaften öffnen (Name, Tileset, Größe, BGM ...)"),
-                     [this]() {
-                         if (!mView || !mView->IsEngineReady() || !mMapDockWidget) return;
-                         const int idx = mMapDockWidget->selectedMapIndex();
-                         if (QtMapPropertiesDialog::EditMapProperties(this, mEngine.get(), idx)) {
-                             mMapDockWidget->refresh();
-                             if (mMapTab) mMapTab->refresh();
-                             log(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
-                         }
-                     });
-        ribbonButton(p, QStringLiteral("Würfel"), QStringLiteral("Würfel erstellen"),
-                     [this]() { actionCreateCube(); });
-        ribbonButton(p, QStringLiteral("Ebene"), QStringLiteral("Ebene erstellen"),
-                     [this]() { actionCreatePlane(); });
-        ribbonButton(p, QStringLiteral("Licht"), QStringLiteral("Lichtquelle erstellen"),
-                     [this]() { actionCreateLight(); });
-        ribbonButton(p, QStringLiteral("Gizmo"), QStringLiteral("Translate-Gizmo ein/aus"),
-                     [this]() {
-                         const int mode = mView->gizmoMode() == 0 ? 1 : 0;
-                         mView->setGizmoMode(mode);
-                         log(mode ? QStringLiteral("Gizmo: an") : QStringLiteral("Gizmo: aus"));
-                     }, true, true);
-        ribbonButton(p, QStringLiteral("Karten\nmalen"), QStringLiteral("Tile-Malen im 3D-View ein/aus"),
-                     [this]() {
-                         if (mMapDockWidget) mMapDockWidget->setPaintEnabled(
-                             !mMapDockWidget->paintEnabled());
-                     }, true, false);
-        ribbonButton(p, QStringLiteral("Playtest\neingebettet"),
-                     QStringLiteral("Schnelltest direkt im Editor [Umschalt+F5]"),
-                     [this]() {
-                         if (mPlayAction) mPlayAction->setChecked(!mPlayAction->isChecked());
-                     }, true, false);
-    }
-    // ---- Tab: Ansicht ---------------------------------------------------------
-    if (QWidget* p = ribbonPage(QStringLiteral("Ansicht"))) {
-        ribbonButton(p, QStringLiteral("Spiel-\nansicht"), QStringLiteral("Zum 3D-Tab wechseln"),
-                     [this]() { mCentralTabs->setCurrentWidget(mView); });
-        ribbonButton(p, QStringLiteral("Landkarte"), QStringLiteral("Zur 2D-Karte wechseln"),
-                     [this]() { mCentralTabs->setCurrentWidget(mMapTab); });
-        ribbonButton(p, QStringLiteral("Spiel"), QStringLiteral("Zum Playtest-Tab wechseln"),
-                     [this]() { mCentralTabs->setCurrentWidget(mPlayTab); });
-        ribbonButton(p, QStringLiteral("Skript"), QStringLiteral("Skript-Editor öffnen [F11]"),
-                     [this]() { showScriptEditor(); });
-        ribbonButton(p, QStringLiteral("HUD umschalten"), QStringLiteral("Spiel-HUD ein/aus [F9]"),
-                     [this]() {
-                         rpg::GameUI::Get().ToggleHud(); // PAKET 10: ImGui-HUD statt RmlUi
-                     });
-    }
-    // ---- Tab: Fenster -----------------------------------------------------------
-    if (QWidget* p = ribbonPage(QStringLiteral("Fenster"))) {
-        const QDockWidget* docks[] = {mDockHierarchy, mDockProperties, mDockMap,
-                                      mDockDatabase, mDockEvents, mDockAssets, mDockConsole};
-        for (const QDockWidget* d : docks) {
-            if (!d) continue;
-            QAction* toggle = d->toggleViewAction();
-            ribbonButton(p, d->windowTitle(), QStringLiteral("Fenster ein-/ausblenden"),
-                         [toggle]() { toggle->trigger(); });
+    // Werkzeuge (oeffnen Dialoge — dieselben Lambdas wie im Werkzeuge-Menue)
+    // (F9 liegt auf der Menue-Aktion, siehe Werkzeuge-Menue — doppelte
+    //  Kurzbefehle auf zwei QActions waeren fuer Qt uneindeutig)
+    tb->addAction(stdIcon(this, QStyle::SP_FileDialogContentsView),
+        QStringLiteral("Datenbank [F9]"), this, [this]() {
+        if (!mView || !mView->IsEngineReady()) return;
+        if (QtDatabaseDialog::EditDatabase(this, mEngine.get())) {
+            if (mDbDockWidget) mDbDockWidget->refresh();
+            log(QStringLiteral("Datenbank (XP-Dialog) gespeichert."));
         }
-    }
-    // ---- Tab: Debug -------------------------------------------------------------
-    if (QWidget* p = ribbonPage(QStringLiteral("Debug"))) {
-        ribbonButton(p, QStringLiteral("Konsole\nleeren"), QStringLiteral("Konsolenausgabe löschen"),
-                     [this]() { if (mConsole) mConsole->clear(); });
-        ribbonButton(p, QStringLiteral("Events neu\nladen"), QStringLiteral("Events der Karte neu einlesen"),
-                     [this]() {
-                         const int mapId = rpg::Database::Get().System().startMapId;
-                         rpg::EventSystem::Get().LoadMapEvents(
-                             mapId > 0 ? mapId : 1,
-                             mEngine->GetProject().GetProjectPath());
-                         if (mEventDockWidget) mEventDockWidget->refresh();
-                         log(QStringLiteral("Events neu geladen (Debug)."));
-                     });
-        ribbonButton(p, QStringLiteral("Spielzustand\nzurücksetzen"),
-                     QStringLiteral("Schalter/Variablen/Gruppe zurücksetzen (NewGame)"),
-                     [this]() {
-                         if (!mView || !mView->IsEngineReady()) return;
-                         rpg::Game::Get().NewGame();
-                         rpg::EventSystem::Get().RefreshAllPages();
-                         log(QStringLiteral("Spielzustand zurückgesetzt."));
-                     });
-        ribbonButton(p, QStringLiteral("Statistik"), QStringLiteral("Szene/Event-Statistik in die Konsole"),
-                     [this]() {
-                         if (!mView || !mView->IsEngineReady()) return;
-                         auto& scene = mEngine->GetScene();
-                         const auto& events = rpg::EventSystem::Get().GetEvents();
-                         log(QStringLiteral("--- Statistik ---"));
-                         log(QStringLiteral("Entities: %1").arg((int)scene.GetEntities().size()));
-                         log(QStringLiteral("Events:   %1").arg((int)events.size()));
-                         log(QStringLiteral("Map:      %1 x %2")
-                                 .arg(mEngine->GetMap().GetWidth())
-                                 .arg(mEngine->GetMap().GetHeight()));
-                     });
+    });
+    tb->addAction(stdIcon(this, QStyle::SP_MediaVolume),
+        QStringLiteral("Sound-Test (BGM/BGS/ME/SE)"), this, [this]() {
+        if (!mView || !mView->IsEngineReady()) return;
+        QtSoundTestDialog::ShowSoundTest(this, mEngine.get());
+    });
+    tb->addAction(glyphIcon(QStringLiteral("{ }"), QColor(240, 190, 90)),
+        QStringLiteral("Skript-Editor oeffnen [F11]"), this, [this]() {
+        showScriptEditor();
+    });
+    tb->addSeparator();
+    if (mPlayPlayerAction) tb->addAction(mPlayPlayerAction);
+    syncToolBarLayers();
+}
+
+void QtEditorWindow::syncToolBarLayers() {
+    if (!mMapTab) return;
+    const int cur = mMapTab->paintLayer(); // 0..2 = Ebene, 3 = Ereignis
+    for (int i = 0; i < 4; ++i) {
+        if (!mLayerActions[i]) continue;
+        QSignalBlocker blocker(mLayerActions[i]);
+        mLayerActions[i]->setChecked(i == qBound(0, cur, 3));
     }
 }
 
@@ -992,6 +942,17 @@ void QtEditorWindow::onUiTick() {
               .arg(QString::fromStdString(history.GetRedoName()))
         : QStringLiteral("Wiederholen  [Strg+Y]"));
     mDeleteAction->setEnabled(mSelectedEntity >= 0 && selectedEntityExists());
+
+    // XP-Symbolleiste: Ebenen-Anzeige + Gizmo/Malen-Toggles spiegeln (PAKET 28)
+    syncToolBarLayers();
+    if (mGizmoAction && mView && mView->IsEngineReady()) {
+        const QSignalBlocker blocker(mGizmoAction);
+        mGizmoAction->setChecked(mView->gizmoMode() != 0);
+    }
+    if (mMapPaintAction && mMapDockWidget) {
+        const QSignalBlocker blocker(mMapPaintAction);
+        mMapPaintAction->setChecked(mMapDockWidget->paintEnabled());
+    }
 
     if (mSelectedEntity >= 0 && !selectedEntityExists())
         setSelectedEntity(-1);

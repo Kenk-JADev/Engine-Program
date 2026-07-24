@@ -11,8 +11,6 @@
 namespace qt_editor {
 
 namespace {
-// Zellengroesse im Widget (logische Tile-Groesse bleibt 32)
-constexpr int kCell = 40;
 // XP-4-Dir-Rotation fuer Linksklick: alle frei -> nur v -> nur < -> nur > -> nur ^ -> gesperrt
 constexpr int kRotStates[6] = {
     0,                                        // 0 = Default: alle Richtungen frei
@@ -27,7 +25,8 @@ constexpr int kRotCount = 6;
 
 QtTilesetGridWidget::QtTilesetGridWidget(QWidget* parent)
     : QWidget(parent) {
-    setMinimumSize(kCell * 2, kCell * 2);
+    setMouseTracking(true);
+    setMinimumSize(2 * 32, 2 * 32);
 }
 
 void QtTilesetGridWidget::setData(rpg::TilesetData* data) {
@@ -41,67 +40,103 @@ void QtTilesetGridWidget::setMode(Mode m) {
     update();
 }
 
+void QtTilesetGridWidget::setInteraction(Interaction it) {
+    mInteraction = it;
+    update();
+}
+
+void QtTilesetGridWidget::setZoom(int zoom) {
+    mZoom = qBound(1, zoom, 3);
+    relayout();
+}
+
+void QtTilesetGridWidget::setSelectedTile(int tileId) {
+    if (mSelected == tileId) return;
+    mSelected = tileId;
+    update();
+}
+
+void QtTilesetGridWidget::setSolidBits(const std::vector<bool>& solid) {
+    mSolid = solid;
+    update();
+}
+
 void QtTilesetGridWidget::ensureSizesIfPossible() {
     if (!mData) return;
-    if (mTilesY <= 0) {
+    const int count = tileCount();
+    if (count <= 0) {
         // Noch kein Bild geladen: Vektoren mindestens auf 1 laengen,
         // damit die Getter/Setter nicht auf leere Vektoren zeigen.
         mData->EnsureFlagSizes(0);
         return;
     }
-    const int count = (mTilesX > 0 ? mTilesX : 1) * mTilesY;
     mData->EnsureFlagSizes((size_t)count);
 }
 
-void QtTilesetGridWidget::loadImage(const QString& absPath) {
-    mImage = QImage();
-    mTilesY = 0;
-
-    if (!absPath.isEmpty()) {
-        QImage src(absPath);
-        if (!src.isNull()) {
-            // Kachelung wie XP: Tilebreite aus Bildgroesse
-            // (32px-Tiles, Minimal-Schutz gegen kaputte Bilder).
-            int tw = mTileW;
-            if (tw <= 0) tw = 32;
-            int cols = src.width() > 0 ? src.width() / tw : 0;
-            if (cols < 1) cols = 1;
-            mTilesX = 8;              // XP zeigt immer 8 Spalten
-            int rows = src.height() > 0 ? src.height() / tw : 0;
-            if (rows * mTilesX < cols * rows && cols > 0) {
-                // Wenn Bild schmaler als 8 Spalten ist, trotzdem sauber kacheln:
-                // wir mappen Zeilen aus der Original-Spaltenzahl auf 8/ Zeile um.
-            }
-            // gesamte Tileanzahl aus Original-Raster
-            mTilesY = (src.height() / tw);
-            // Umrechnung: unser 8er-Raster zeigt (origCols*origRows) Tiles
-            int total = cols * rows;
-            mTilesY = (total + mTilesX - 1) / mTilesX;
-            if (mTilesY < 1) mTilesY = 1;
-
-            // Bild auf Zellengroesse skalieren (Cropping erfolgt beim Malen)
-            mImage = src.scaled(mTilesX * kCell, mTilesY * kCell,
-                                Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-        }
-    }
-
-    ensureSizesIfPossible();
+void QtTilesetGridWidget::relayout() {
+    const int cell = cellSize();
+    if (mDispCols > 0 && mDispRows > 0)
+        setMinimumSize(mDispCols * cell, mDispRows * cell);
+    updateGeometry();
     update();
 }
 
+void QtTilesetGridWidget::loadImage(const QString& absPath) {
+    QImage src;
+    if (!absPath.isEmpty()) {
+        QImage tmp(absPath);
+        if (!tmp.isNull()) src = tmp;
+    }
+    setImage(src, 0, 0);
+}
+
+void QtTilesetGridWidget::setImage(const QImage& img, int srcCols, int srcRows) {
+    mImage = img;
+    mSrcCols = 0;
+    mSrcRows = 0;
+    mDispRows = 0;
+
+    if (!mImage.isNull()) {
+        const int tw = 32; // logische Kachelgroesse der Quelle (wie XP)
+        mSrcCols = srcCols > 0 ? srcCols : (mImage.width() / tw);
+        mSrcRows = srcRows > 0 ? srcRows : (mImage.height() / tw);
+        if (mSrcCols < 1) mSrcCols = 1;
+        if (mSrcRows < 1) mSrcRows = 1;
+        // Bildzuschnitt auf ganze Kacheln, damit die Ausschnitte sauber sind
+        mImage = img.copy(0, 0, mSrcCols * tw, mSrcRows * tw);
+        mDispCols = 8; // XP zeigt immer 8 Tiles pro Zeile
+        const int total = mSrcCols * mSrcRows;
+        mDispRows = (total + mDispCols - 1) / mDispCols;
+        if (mDispRows < 1) mDispRows = 1;
+    }
+
+    if (mSelected >= tileCount()) mSelected = -1;
+    ensureSizesIfPossible();
+    relayout();
+}
+
+QPoint QtTilesetGridWidget::cellOf(int tileId) const {
+    return QPoint(tileId % mDispCols, tileId / mDispCols);
+}
+
 int QtTilesetGridWidget::tileAt(const QPoint& pos) const {
-    const int col = pos.x() / kCell;
-    const int row = pos.y() / kCell;
-    if (row < 0 || col < 0 || col >= mTilesX || row >= mTilesY) return -1;
-    const int tileId = row * mTilesX + col;
-    if (!mData) return -1;
+    const int cell = cellSize();
+    if (cell <= 0) return -1;
+    const int col = pos.x() / cell;
+    const int row = pos.y() / cell;
+    if (row < 0 || col < 0 || col >= mDispCols || row >= mDispRows) return -1;
+    const int tileId = row * mDispCols + col;
     if (tileId < 0 || tileId >= tileCount()) return -1;
     return tileId;
 }
 
+QSize QtTilesetGridWidget::sizeHint() const {
+    const int cell = cellSize();
+    return QSize(qMax(2, mDispCols) * cell, qMax(2, mDispRows) * cell);
+}
+
 // ---------------------------------------------------------------------
 // Klick-Logik
-// (tileCount() ist inline im Header: mTilesX * mTilesY)
 // ---------------------------------------------------------------------
 
 void QtTilesetGridWidget::applyLeftClick(int tileId) {
@@ -178,18 +213,42 @@ void QtTilesetGridWidget::applyRightClick(int tileId) {
 
 void QtTilesetGridWidget::mousePressEvent(QMouseEvent* e) {
     const int id = tileAt(e->pos());
-    if (id >= 0 && mData) {
-        if (e->button() == Qt::RightButton) {
-            applyRightClick(id);
-        } else {
-            applyLeftClick(id);
+    if (mInteraction == PickTile) {
+        if (e->button() == Qt::LeftButton && id >= 0) {
+            setSelectedTile(id);
+            emit tilePicked(id);
         }
+        QWidget::mousePressEvent(e);
+        return;
+    }
+    if (id >= 0 && mData) {
+        if (e->button() == Qt::RightButton) applyRightClick(id);
+        else applyLeftClick(id);
     }
     QWidget::mousePressEvent(e);
 }
 
+void QtTilesetGridWidget::mouseMoveEvent(QMouseEvent* e) {
+    const int id = tileAt(e->pos());
+    if (id != mHover) {
+        mHover = id;
+        emit hoverTile(id);
+        update();
+    }
+    QWidget::mouseMoveEvent(e);
+}
+
+void QtTilesetGridWidget::leaveEvent(QEvent* e) {
+    if (mHover != -1) {
+        mHover = -1;
+        emit hoverTile(-1);
+        update();
+    }
+    QWidget::leaveEvent(e);
+}
+
 // ---------------------------------------------------------------------
-// Malerei
+// Flag-Overlay-Malerei (EditFlags)
 // ---------------------------------------------------------------------
 
 void QtTilesetGridWidget::paintPassage(QPainter& p, const QRectF& rc, int tileId) {
@@ -230,7 +289,6 @@ void QtTilesetGridWidget::paintPassage4(QPainter& p, const QRectF& rc, int tileI
     const qreal a = w * 0.18; // Pfeillaenge
     auto arrow = [&](const QPointF& from, const QPointF& to) {
         p.drawLine(from, to);
-        // Pfeilspitze
         QPointF d = to - from;
         qreal len = std::sqrt(d.x() * d.x() + d.y() * d.y());
         if (len < 1.0) return;
@@ -247,7 +305,7 @@ void QtTilesetGridWidget::paintPassage4(QPainter& p, const QRectF& rc, int tileI
 
 void QtTilesetGridWidget::paintPriority(QPainter& p, const QRectF& rc, int tileId) {
     const int v = mData ? mData->GetPriority(tileId) : 0;
-    if (v <= 0) return; // 0 wird in XP nicht besonders markiert
+    if (v <= 0) return;
     p.setPen(QPen(QColor(250, 200, 40), 2));
     p.setBrush(QColor(0, 0, 0, 140));
     p.drawRect(QRectF(rc.topRight() + QPointF(-rc.width() * 0.42, 0),
@@ -285,45 +343,71 @@ void QtTilesetGridWidget::paintTerrain(QPainter& p, const QRectF& rc, int tileId
     p.drawText(rc, Qt::AlignBottom | Qt::AlignLeft, QString::number(v));
 }
 
+// ---------------------------------------------------------------------
+// Malerei: EIN Bild, kachelecht aus der Quelle (kein Verzerren!)
+// ---------------------------------------------------------------------
+
 void QtTilesetGridWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    p.fillRect(rect(), QColor(18, 18, 22));
+    p.fillRect(rect(), QColor(26, 26, 30));
 
-    if (mImage.isNull()) {
-        p.setPen(QPen(QColor(140, 140, 140)));
+    if (mImage.isNull() || mSrcCols <= 0 || mSrcRows <= 0) {
+        p.setPen(QPen(QColor(150, 150, 150)));
         p.drawText(rect(), Qt::AlignCenter,
                    QStringLiteral("Keine Tileset-Grafik geladen"));
         return;
     }
 
-    // Kacheln: unser 8er-Raster -> Bildposition wird aus Tile-ID berechnet,
-    // skaliertes Bild wird per Ausschnitt gemalt (Cropping).
-    const int total = mTilesX * mTilesY;
+    const int cell = cellSize();
+    const int total = tileCount();
+    p.setRenderHint(QPainter::SmoothPixmapTransform, false); // kachelscharf wie XP
+
     for (int tid = 0; tid < total; ++tid) {
-        const int col = tid % mTilesX;
-        const int row = tid / mTilesX;
-        const QRectF cell(col * kCell, row * kCell, kCell, kCell);
+        const QPoint dc = cellOf(tid);
+        const QRectF dst(dc.x() * cell, dc.y() * cell, cell, cell);
+        // Quell-Ausschnitt der EXAKT passenden 32x32-Stelle
+        const int sc = tid % mSrcCols;
+        const int sr = tid / mSrcCols;
+        const QRectF src(sc * 32, sr * 32, 32, 32);
+        p.drawImage(dst, mImage, src);
 
-        // Quell-Rect im (skalierten) Bild:
-        // Bild ist auf mTilesX*kCell x mTilesY*kCell gestretcht,
-        // jedes logische Tile = kCell x kCell
-        const QRectF srcRect(col * kCell, row * kCell, kCell, kCell);
-        p.drawImage(cell, mImage, srcRect);
-
-        // dezente Trennlinie
-        p.setPen(QPen(QColor(255, 255, 255, 26), 1));
-        p.setBrush(Qt::NoBrush);
-        p.drawRect(cell);
-
-        // Overlay je Modus
-        switch (mMode) {
-        case ModePassage:  paintPassage(p, cell, tid);  break;
-        case ModePassage4: paintPassage4(p, cell, tid); break;
-        case ModePriority: paintPriority(p, cell, tid); break;
-        case ModeBush:     paintBush(p, cell, tid);     break;
-        case ModeCounter:  paintCounter(p, cell, tid);  break;
-        case ModeTerrain:  paintTerrain(p, cell, tid);  break;
+        if (mInteraction == EditFlags && mData) {
+            switch (mMode) {
+            case ModePassage:  paintPassage(p, dst, tid);  break;
+            case ModePassage4: paintPassage4(p, dst, tid); break;
+            case ModePriority: paintPriority(p, dst, tid); break;
+            case ModeBush:     paintBush(p, dst, tid);     break;
+            case ModeCounter:  paintCounter(p, dst, tid);  break;
+            case ModeTerrain:  paintTerrain(p, dst, tid);  break;
+            }
+        } else if (mInteraction == PickTile) {
+            // Sperr-Marke: kleines rotes Dreieck rechts unten
+            if (tid < (int)mSolid.size() && mSolid[(size_t)tid]) {
+                QPolygonF tri;
+                const qreal s = cell * 0.30;
+                tri << dst.topRight() + QPointF(0, 1)
+                    << dst.topRight() + QPointF(-s, 1)
+                    << dst.topRight() + QPointF(1, s + 1);
+                p.setPen(Qt::NoPen);
+                p.setBrush(QColor(200, 60, 50, 210));
+                p.drawPolygon(tri);
+            }
         }
+    }
+
+    // Hover-Hinweis (dezent)
+    if (mHover >= 0 && mHover < total) {
+        const QPoint dc = cellOf(mHover);
+        p.setPen(QPen(QColor(255, 255, 255, 120), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(dc.x() * cell + 0.5, dc.y() * cell + 0.5, cell - 1, cell - 1));
+    }
+    // Auswahlrahmen (PickTile)
+    if (mInteraction == PickTile && mSelected >= 0 && mSelected < total) {
+        const QPoint dc = cellOf(mSelected);
+        p.setPen(QPen(QColor(240, 190, 40), 2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(dc.x() * cell + 1, dc.y() * cell + 1, cell - 2, cell - 2));
     }
 }
 

@@ -15,7 +15,6 @@ class QSpinBox;
 class QLabel;
 class QToolButton;
 class QButtonGroup;
-class QGridLayout;
 class QPoint;
 
 namespace rpg { class Engine; }
@@ -97,9 +96,11 @@ private:
     int mTileId = 0;
     std::function<int()> mMapIdFn;
 
-    // XP-Palette (links vom Canvas)
+    // XP-Palette (links vom Canvas): EIN Tileset-Bild mit 32x32-Klickstellen
+    // (PAKET 28: QtTilesetGridWidget im PickTile-Modus statt Button-Raster)
     QWidget* mPaletteHost = nullptr;
-    QGridLayout* mPaletteGrid = nullptr;
+    class QtTilesetGridWidget* mPaletteWidget = nullptr;
+    QToolButton* mEraserBtn = nullptr;
     QLabel* mPaletteSel = nullptr;
     void* mLastTileset = nullptr;           // Cache: Palette nur bei Wechsel neu
     void updatePaletteSelection();

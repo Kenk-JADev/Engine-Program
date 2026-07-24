@@ -87,17 +87,16 @@ static void ApplyDarkEngineTheme(QApplication& app) {
         }
         QPushButton#playTabPrimary:hover { background-color: #3a9953; }
         QLabel#playTabTitle { font-size: 20px; font-weight: bold; }
-        /* Ribbon */
-        QWidget#ribbonHost { background: #26282c; border-bottom: 1px solid #444; }
-        QTabWidget#ribbonTabs::pane { border: none; top: -1px; }
-        QTabWidget#ribbonTabs QTabBar::tab {
-            padding: 5px 22px; border: none; border-radius: 0px;
-            background: #26282c; font-weight: bold;
+        /* XP-Symbolleiste (PAKET 28: eine ruhige Icon-Zeile statt Ribbon) */
+        QToolBar#mainToolBar {
+            background: #26282c; border-bottom: 1px solid #444;
+            spacing: 4px; padding: 3px 6px;
         }
-        QTabWidget#ribbonTabs QTabBar::tab:selected { background: #3d6ea5; color: #fff; }
-        QWidget#ribbonPage { background: #2f3237; }
-        QToolButton#ribbonButton { padding: 6px 10px; margin: 2px; }
-        QWidget#quickAccessBar { background: #1f2124; border-bottom: 1px solid #3a3d42; }
+        QToolBar#mainToolBar QToolButton { padding: 3px; margin: 1px; border-radius: 3px; }
+        QToolBar#mainToolBar QToolButton:hover { background: #3a3d42; }
+        QToolBar#mainToolBar QToolButton:checked {
+            background: #3d6ea5; border: 1px solid #5a8ec5;
+        }
         QStatusBar { background: #26282c; border-top: 1px solid #444; }
         QSplitter::handle { background: #2b2d31; }
         QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QListWidget, QTreeWidget {

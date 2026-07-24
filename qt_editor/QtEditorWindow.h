@@ -2,8 +2,8 @@
 // Qt-Editor-Hauptfenster: QMainWindow mit nativen Dock-Fenstern.
 //
 // Oberfläche (Engine-Design, dunkel):
-//  - Menüleiste + Schnellzugriffs-Toolbar + Ribbon mit Tabs
-//    (Datei / Werkzeuge / Ansicht / Fenster / Debug)
+//  - Menüleiste + kompakte XP-Symbolleiste (PAKET 28: eine Icon-Zeile wie im
+//    RPG Maker XP statt Ribbon-Kategorien)
 //  - Zentral: QTabWidget mit Tabs UNTEN (Browser-Stil):
 //    "Spielansicht" (3D), "Landkarte" (2D), "Spiel" (Playtest), "Skript" (Code)
 //  - Docks: Hierarchie, Eigenschaften, Konsole, Map, Database, Events, Assets
@@ -85,14 +85,10 @@ private slots:
 private:
     void buildMenus();
     void buildDocks();
-    void buildRibbon();
+    void buildToolBar();              // kompakte XP-Symbolleiste (ersetzt das Ribbon)
+    void syncToolBarLayers();        // Ebenen-Buttons an mMapTab->paintLayer spiegeln
     void buildCentral();
-    QWidget* buildQuickAccessBar();
     QWidget* buildPlayTab();
-    void addRibbonPage(const QString& title);
-    QWidget* ribbonPage(const QString& title);
-    void ribbonButton(QWidget* page, const QString& text, const QString& tip,
-                      std::function<void()> fn, bool checkable = false, bool checked = false);
     QString findPlayerExecutable() const;
     QWidget* buildPropertiesWidget();
     void log(const QString& msg);
@@ -136,7 +132,6 @@ private:
     QtMapTab* mMapTab = nullptr;
     QWidget* mPlayTab = nullptr;
     QtCodeWorkspace* mCode = nullptr;
-    QTabWidget* mRibbonTabs = nullptr;
 
     QtMapEditorDock* mMapDockWidget = nullptr;
     QtDatabaseEditorDock* mDbDockWidget = nullptr;
@@ -173,7 +168,10 @@ private:
     QCheckBox* mAutoSaveCheck = nullptr;
     QPlainTextEdit* mScriptCheckOutput = nullptr;
 
-    // Menü-Aktionen
+    // Menü-Aktionen (werden auch in die XP-Symbolleiste gehaengt → ein Eintrag
+    // = ein Zustand, kein doppelter Sync)
+    QAction* mNewAction = nullptr;
+    QAction* mOpenAction = nullptr;
     QAction* mUndoAction = nullptr;
     QAction* mRedoAction = nullptr;
     QAction* mDeleteAction = nullptr;
@@ -182,6 +180,9 @@ private:
     QAction* mPlayPlayerAction = nullptr; // externe Player-exe (F5)
     QAction* mShowGameViewAction = nullptr;
     QAction* mShowCodeAction = nullptr;
+    QAction* mLayerActions[4] = {nullptr, nullptr, nullptr, nullptr}; // XP: Ebene 1/2/3/EV
+    QAction* mGizmoAction = nullptr;    // Werkzeuge: Translate-Gizmo an/aus
+    QAction* mMapPaintAction = nullptr; // Werkzeuge: Tile-Malen im 3D-View
 
     QTimer* mTimer = nullptr;
     QTimer* mUiTimer = nullptr;

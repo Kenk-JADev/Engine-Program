@@ -1,4 +1,5 @@
 #include "QtMapTab.h"
+#include "QtTilesetGridWidget.h"
 
 #include "QtEventEditorDialog.h"
 
@@ -477,21 +478,44 @@ QtMapTab::QtMapTab(rpg::Engine* engine, QWidget* parent)
     root->addLayout(tb);
 
     // ---- XP-Hauptbereich: links Tileset-Palette, rechts Karte --------------
+    // (PAKET 28: Palette = EIN Tileset-Bild mit 32x32-Klickstellen wie in XP,
+    //  statt einzelner Tile-Bloecke/Buttons)
     auto* mainLay = new QHBoxLayout();
     auto* palScroll = new QScrollArea(this);
     palScroll->setWidgetResizable(true);
-    palScroll->setMaximumWidth(220);
+    palScroll->setMinimumWidth(276);   // 8 Kacheln a 32 px + Rand
+    palScroll->setMaximumWidth(288);
     mPaletteHost = new QWidget();
     auto* palLay = new QVBoxLayout(mPaletteHost);
     palLay->setContentsMargins(4, 4, 4, 4);
     auto* palTitle = new QLabel(QL("Tileset"), mPaletteHost);
     palTitle->setStyleSheet(QL("font-weight: bold;"));
     palLay->addWidget(palTitle);
+
+    mPaletteWidget = new QtTilesetGridWidget(mPaletteHost);
+    mPaletteWidget->setInteraction(QtTilesetGridWidget::PickTile);
+    mPaletteWidget->setZoom(1); // echte 32x32-Stellen wie in XP
+    palLay->addWidget(mPaletteWidget, 0, Qt::AlignLeft | Qt::AlignTop);
+    connect(mPaletteWidget, &QtTilesetGridWidget::tilePicked,
+            this, [this](int tid) {
+        setPaintTile(tid);
+        emit paintTilePicked(tid); // Dock mitziehen (3D-Pinsel + dortige Palette)
+    });
+
+    auto* palBottom = new QHBoxLayout();
+    palBottom->setContentsMargins(0, 0, 0, 0);
+    mEraserBtn = new QToolButton(mPaletteHost);
+    mEraserBtn->setText(QL("Radierer"));
+    mEraserBtn->setToolTip(QL("Leeres Feld malen (Tile -1 / Rechtsklick-Malen)"));
+    mEraserBtn->setCheckable(true);
+    connect(mEraserBtn, &QToolButton::clicked, this, [this]() {
+        setPaintTile(-1);
+        emit paintTilePicked(-1);
+    });
+    palBottom->addWidget(mEraserBtn);
     mPaletteSel = new QLabel(QL("Tile: -"), mPaletteHost);
-    palLay->addWidget(mPaletteSel);
-    mPaletteGrid = new QGridLayout();
-    mPaletteGrid->setSpacing(2);
-    palLay->addLayout(mPaletteGrid, 1);
+    palBottom->addWidget(mPaletteSel, 1, Qt::AlignRight);
+    palLay->addLayout(palBottom);
     palScroll->setWidget(mPaletteHost);
     mainLay->addWidget(palScroll);
 
@@ -650,21 +674,19 @@ void QtMapTab::deleteSelectedEvent() {
 }
 
 void QtMapTab::rebuildPalette() {
-    if (!mPaletteGrid || !mEngine || !mEngine->IsInitialized()) return;
+    if (!mPaletteWidget || !mEngine || !mEngine->IsInitialized()) return;
     auto tileset = mEngine->GetMap().GetTileset();
     // Cache: nur neu aufbauen, wenn das Tileset wechselt (oder noch leer)
-    if (tileset.get() == mLastTileset && mPaletteGrid->count() > 0) {
+    if (tileset.get() == mLastTileset && mPaletteWidget->tileCount() > 0) {
         updatePaletteSelection();
         return;
     }
     mLastTileset = tileset.get();
 
-    while (QLayoutItem* it = mPaletteGrid->takeAt(0)) {
-        delete it->widget();
-        delete it;
-    }
     if (!tileset) {
-        mPaletteGrid->addWidget(new QLabel(QL("(kein Tileset geladen)"), mPaletteHost), 0, 0);
+        mPaletteWidget->setImage(QImage(), 0, 0); // zeigt Hinweistext
+        mPaletteWidget->setSolidBits({});
+        updatePaletteSelection();
         return;
     }
 
@@ -686,71 +708,28 @@ void QtMapTab::rebuildPalette() {
 
     const int cols = tileset->GetColumns();
     const int rows = tileset->GetRows();
-    const int tw = tileset->GetTileWidth();
-    const int th = tileset->GetTileHeight();
-    const int btnSize = 40;
-    const int colsPerRow = qBound(4, cols > 0 ? cols : 8, 8);
 
-    auto addBtn = [this, btnSize](int tid, int row, int col, const QPixmap& pm, bool solid) {
-        auto* btn = new QToolButton(mPaletteHost);
-        btn->setFixedSize(btnSize, btnSize);
-        btn->setProperty("tileId", tid);
-        btn->setToolTip(tid < 0 ? QL("Radierer") : QL("Tile %1").arg(tid));
-        if (!pm.isNull()) btn->setIcon(QIcon(pm));
-        else btn->setText(tid < 0 ? QL("X") : QString::number(tid));
-        btn->setIconSize(QSize(btnSize - 6, btnSize - 6));
-        if (solid)
-            btn->setStyleSheet(QL("border: 1px solid #a04040; background:#402020;"));
-        connect(btn, &QToolButton::clicked, this, [this, tid]() {
-            setPaintTile(tid);
-            emit paintTilePicked(tid); // Dock mitziehen (3D-Pinsel + dortige Palette)
-        });
-        mPaletteGrid->addWidget(btn, row, col);
-    };
+    // Sperr-Marken (rotes Dreieck) fuer die Palette
+    std::vector<bool> solidBits;
+    const int count = (cols > 0 && rows > 0) ? cols * rows : 0;
+    solidBits.resize((size_t)count, false);
+    for (int i = 0; i < count; ++i)
+        if (const auto* ti = tileset->GetTileInfo(i))
+            if (ti->solid) solidBits[(size_t)i] = true;
+    mPaletteWidget->setSolidBits(solidBits);
 
-    // Erster Eintrag: Radierer (XP-Tools)
-    addBtn(-1, 0, 0, QPixmap(), false);
-
-    const int tileCount = cols * rows;
-    for (int i = 0; i < tileCount; ++i) {
-        const int pos = i + 1; // Platz nach dem Radierer
-        QPixmap pm;
-        if (!atlas.isNull() && cols > 0) {
-            const int tx = i % cols;
-            const int ty = i / cols;
-            const QImage tile = atlas.copy(tx * tw, ty * th, tw, th);
-            if (!tile.isNull())
-                pm = QPixmap::fromImage(tile.scaled(btnSize - 6, btnSize - 6,
-                    Qt::IgnoreAspectRatio, Qt::FastTransformation));
-        }
-        bool solid = false;
-        if (const auto* ti = tileset->GetTileInfo(i)) solid = ti->solid;
-        addBtn(i, 1 + pos / colsPerRow, pos % colsPerRow, pm, solid);
-    }
+    // EIN Bild mit 32x32-Klickstellen (XP-Stil); Quellkachelgroesse 32 px
+    mPaletteWidget->setImage(atlas, cols > 0 ? cols : 0, rows > 0 ? rows : 0);
     updatePaletteSelection();
 }
 
 void QtMapTab::updatePaletteSelection() {
     if (mPaletteSel)
         mPaletteSel->setText(mTileId < 0 ? QL("Tile: Radierer") : QL("Tile: %1").arg(mTileId));
-    if (!mPaletteGrid) return;
-    const int n = mPaletteGrid->count();
-    for (int i = 0; i < n; ++i) {
-        auto* btn = qobject_cast<QToolButton*>(mPaletteGrid->itemAt(i)->widget());
-        if (!btn) continue;
-        const int tid = btn->property("tileId").toInt();
-        if (tid == mTileId)
-            btn->setStyleSheet(QL("border: 2px solid #e0a020; background:#3a3020;"));
-        else if (tid >= 0) {
-            bool solid = false;
-            auto tileset = mEngine && mEngine->IsInitialized() ? mEngine->GetMap().GetTileset() : nullptr;
-            if (tileset) if (const auto* ti = tileset->GetTileInfo(tid)) solid = ti->solid;
-            btn->setStyleSheet(solid ? QL("border: 1px solid #a04040; background:#402020;")
-                                     : QL("border: 1px solid #444;"));
-        } else {
-            btn->setStyleSheet(QString());
-        }
-    }
+    if (mPaletteWidget)
+        mPaletteWidget->setSelectedTile(mTileId >= 0 ? mTileId : -1);
+    if (mEraserBtn)
+        mEraserBtn->setChecked(mTileId < 0);
 }
 
 // ---------------------------------------------------------------------------

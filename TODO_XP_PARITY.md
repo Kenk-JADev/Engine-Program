@@ -1585,6 +1585,57 @@ wiederhergestellt.)
 Database, EventSystem) sauber; Map-Binaerformat nach Regeneration
 verifiziert (Elevation 0.6).
 
+## PAKET 28 — Editor-UI im XP-Stil (Tileset-Bild, Skript-Editor, Symbolleiste)
+
+Ausloeser: Nutzer-Screenshots mit Kritik an vier Stellen — alles wurde auf das
+RPG-Maker-XP-Leitbild zurueckgefuehrt (ein Bild + Symbole statt Bloecke,
+Kategorien und Button-Wände).
+
+1. Tile-Palette / Tileset-Ansicht = EIN Bild (statt ein Button pro Tile)
+   - `QtTilesetGridWidget` neu gebaut: malt die Grafik kachelecht — jede
+     32x32-Stelle einzeln aus der QUELLE (vorher wurde das ganze Bild mit
+     IgnoreAspectRatio aufs Raster gestreckt und verzerrt). Anzeige wie XP
+     immer als 8-Spalten-Raster; Klick auf eine Stelle waehlt genau dieses
+     32x32-Tile. Zoom 1x/2x/3x, Hover-Rahmen, Auswahlrahmen.
+   - Zwei Betriebsarten: `PickTile` (reine Auswahl; blockierte Tiles bekommen
+     ein kleines rotes Eckdreieck) und `EditFlags` (XP-Flag-Overlays
+     Durchgang/4-Dir/Prioritaet/Busch/Tresen/Terrain unveraendert).
+   - `QtMapTab`-Palette nutzt jetzt das EINE Bild (PickTile) + Radierer-
+     Schalter darunter; die einzelnen Tile-Buttons sind entfallen.
+
+2. Datenbank > Tilesets im XP-Layout
+   - Links das Tileset-Bild in einer ScrollArea, rechts die XP-„Darstellung“-
+     Spalte mit Symbol-Optionsfeldern (○ Durchgang, ↕ 4 Richtungen,
+     ★ Prioritaet, ▒ Busch, ▣ Tresen, № Terrain) statt der sechs
+     Text-Kategorie-Buttons; Legende, Zoom-Auswahl und Tile-Anzeige
+     (Mausposition) darunter. Grafik-Zuordnung (Autotiles/Panorama/Nebel/
+     Kampfhintergrund) unveraendert darunter.
+
+3. Skript-Editor im XP-Look
+   - Links Skriptliste, rechts Editor — oben nur noch eine schlanke Zeile
+     (Ansicht Ruby/C++ + Suche), unten Snippets + NUR zwei Buttons
+     (Speichern / Alle speichern). Die alte Toolbar mit 10+ Eintraegen ist weg.
+   - NEU: Rechtsklick-Kontextmenue auf der Skriptliste (Neues Skript,
+     Umbenennen [F2], Loeschen [Entf], Von Datentraeger neu laden, Im externen
+     Editor oeffnen, Speichern [Strg+S], Alle speichern, Hot-Reload [Strg+R]).
+   - Entf/F2 wirken nur listenlokal (Zeichenloeschen im Editor unberuehrt);
+     Doppelklick benennt weiterhin um.
+
+4. Hauptfenster: Ribbon weg, XP-Symbolleiste her
+   - Das Kategorie-Ribbon (Datei|Werkzeuge|Ansicht|Fenster|Debug mit
+     Text-Buttons) ist entfernt. Neu: EINE kompakte Icon-Zeile wie in XP —
+     Neu/Oeffnen/Speichern | Rueckgaengig/Wiederholen/Loeschen |
+     Ebenen 1/2/3 + EV (exklusive Gruppe mit selbstgemalten Stapel-Symbolen,
+     schalten die Landkarte direkt um) | Datenbank [F9], Sound-Test,
+     Skript-Editor [F11] | Playtest.
+   - Menue + Symbolleiste teilen sich DIESELBEN QAction-Objekte (ein Zustand);
+     Ebenen-/Gizmo-/Malen-Anzeige wird im UI-Tick zwecks Rueckwaerts-Sync
+     gespiegelt. Ribbon-Inhalte, die nur dort lebten, liegen jetzt im neuen
+     Menue &Werkzeuge (+ Untermenue &Debug: Konsole leeren, Events neu laden,
+     Spielzustand zuruecksetzen, Statistik); Gizmo/Malen-Toggles sind
+     checkbare Menueeintraege. Stylesheet in QtMain.cpp angepasst.
+
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 

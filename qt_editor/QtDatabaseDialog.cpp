@@ -26,6 +26,7 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QScrollArea>
 #include <QMouseEvent>
 #include <QPainter>
@@ -1901,41 +1902,79 @@ void QtDatabaseDialog::buildTilesetsTab() {
     note->setStyleSheet(QL("color:#9aa;"));
     form->addRow(note);
 
-    // ---- XP-Modus-Leiste (Durchgang | 4-Dir | Prioritaet | Busch | Tresen | Terrain)
-    auto* modeRow = new QHBoxLayout();
-    vbox->addLayout(modeRow);
-    modeRow->addWidget(new QLabel(QL("Modus:"), formHost));
-    QPushButton* modeBtns[6];
-    const char* modeNames[6] = {
-        "Durchgang", "4-Dir", "Priorität", "Busch", "Tresen", "Terrain-Tag"
-    };
+    // ---- XP-Hauptzeile: links das Tileset-BILD, rechts die Darstellung ---
+    // (PAKET 28: wie in RPG Maker XP — EIN Bild, auf dem man die 32x32-Stelle
+    //  anklickt; die Flag-Art waehlt man ueber Symbol-Optionsfelder rechts.)
     auto* grid = new QtTilesetGridWidget(formHost);
-    QPushButton* btnsCopy[6];
+    grid->setInteraction(QtTilesetGridWidget::EditFlags);
+    grid->setZoom(2); // komfortabel; ansichts-Zoom, Kacheln bleiben 32x32-Quelle
+
+    auto* mainRow = new QHBoxLayout();
+    vbox->addLayout(mainRow, 1);
+
+    auto* scroll = new QScrollArea(formHost);
+    scroll->setWidgetResizable(false);
+    scroll->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    scroll->setMinimumSize(272, 300);
+    scroll->setWidget(grid);
+    mainRow->addWidget(scroll, 1);
+
+    // Rechte Spalte: XP-„Darstellung"-Optionsfelder mit Symbolen
+    auto* modeBox = new QGroupBox(QL("Darstellung"), formHost);
+    modeBox->setMaximumWidth(240);
+    auto* modeLay = new QVBoxLayout(modeBox);
+    QRadioButton* radios[6];
+    const char* radioNames[6] = {
+        "\xE2\x97\x8B  Durchgang",              // ○
+        "\xE2\x86\x95  4 Richtungen",           // ↕
+        "\xE2\x98\x85  Priorit\xC3\xA4t",       // ★ Priorität
+        "\xE2\x96\x92  Busch",                  // ▒
+        "\xE2\x96\xA3  Tresen",                 // ▣
+        "\xE2\x84\x96  Terrain"                 // №
+    };
     for (int m = 0; m < 6; ++m) {
-        modeBtns[m] = new QPushButton(QString::fromUtf8(modeNames[m]), formHost);
-        modeBtns[m]->setCheckable(true);
-        btnsCopy[m] = modeBtns[m];
-        modeRow->addWidget(modeBtns[m]);
+        radios[m] = new QRadioButton(QString::fromUtf8(radioNames[m]), modeBox);
+        modeLay->addWidget(radios[m]);
     }
-    modeBtns[0]->setChecked(true);
-    modeRow->addStretch(1);
+    radios[0]->setChecked(true);
+    radios[0]->setToolTip(QL("○ = frei, ✕ = blockiert"));
+    radios[1]->setToolTip(QL("Pfeile = freie Richtungen, ✕ = alle gesperrt"));
+    radios[2]->setToolTip(QL("Zahl 0..5 in der Kachelecke"));
+    radios[3]->setToolTip(QL("B = Busch (Unterkörper verdeckt)"));
+    radios[4]->setToolTip(QL("C = Tresen (Interaktion darüber hinweg)"));
+    radios[5]->setToolTip(QL("Zahl 0..7 (Terrain-Tag, z. B. hohes Gras = 4)"));
     for (int m = 0; m < 6; ++m) {
-        connect(modeBtns[m], &QPushButton::clicked, formHost, [grid, btnsCopy, m]() {
-            for (int k = 0; k < 6; ++k) btnsCopy[k]->setChecked(k == m);
-            grid->setMode((QtTilesetGridWidget::Mode)m);
+        connect(radios[m], &QRadioButton::toggled, formHost, [grid, m](bool on) {
+            if (on) grid->setMode((QtTilesetGridWidget::Mode)m);
         });
     }
 
-    // ---- XP-Flag-Raster (Paket 2)
-    grid->setMinimumHeight(300);
-    vbox->addWidget(grid, 1);
+    auto* legend = new QLabel(QL("Linksklick: Wert weiter\n"
+                                 "Rechtsklick: Standard\n"
+                                 "(○ frei · ✕ blockiert)"), modeBox);
+    legend->setWordWrap(true);
+    legend->setStyleSheet(QL("color:#9aa;"));
+    modeLay->addWidget(legend);
 
-    auto* hint = new QLabel(QL("Linksklick = Flag ändern · Rechtsklick = zurücksetzen\n"
-                               "Durchgang: grüner Kreis = frei, rotes X = blockiert\n"
-                               "Busch = B · Tresen = C · Priorität/Terrain = Zahl"),
-                              formHost);
-    hint->setStyleSheet(QL("color:#9aa;"));
-    vbox->addWidget(hint);
+    auto* zoomRow = new QHBoxLayout();
+    zoomRow->addWidget(new QLabel(QL("Zoom:"), modeBox));
+    auto* zoomCombo = new QComboBox(modeBox);
+    zoomCombo->addItem(QString::fromUtf8("1\xC3\x97")); // 1×
+    zoomCombo->addItem(QString::fromUtf8("2\xC3\x97"));
+    zoomCombo->addItem(QString::fromUtf8("3\xC3\x97"));
+    zoomCombo->setCurrentIndex(1);
+    connect(zoomCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            formHost, [grid](int idx) { grid->setZoom(idx + 1); });
+    zoomRow->addWidget(zoomCombo, 1);
+    modeLay->addLayout(zoomRow);
+
+    auto* tileLbl = new QLabel(QL("Tile: -"), modeBox);
+    modeLay->addWidget(tileLbl);
+    connect(grid, &QtTilesetGridWidget::hoverTile, formHost, [tileLbl](int tid) {
+        tileLbl->setText(tid >= 0 ? QL("Tile: %1").arg(tid) : QL("Tile: -"));
+    });
+    modeLay->addStretch(1);
+    mainRow->addWidget(modeBox);
 
     // ---- Grafik-Zuordnungen (XP)
     auto* grp = new QGroupBox(QL("Grafik-Zuordnung (XP)"), formHost);
