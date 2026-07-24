@@ -721,6 +721,7 @@ std::string Engine::ResolvePicturePathFor(const std::string& filename) const {
         "Graphics/Pictures/", "Graphics/Titles/", "Graphics/Gameovers/",
         "Graphics/Battlers/", // XP-Gegnergrafiken (Kampf)
         "Graphics/Faces/",    // XP-Gesichter (Kampf-Statusfenster, PAKET 9)
+        "Graphics/System/",   // XP-Systemgrafiken (Windowskin, PAKET 33)
         "Pictures/", "pictures/",
         "assets/pictures/", "assets/textures/", "assets/", ""
     };
@@ -1307,6 +1308,14 @@ void Engine::Update(float dt) {
         // Laufzeitkamera. View/Proj kommen von derselben Kamera, mit der
         // gerendert wird (mRenderer->GetCamera(), Aspect wird in Render()
         // jedes Frame gesetzt). false bei Ziel hinter der Kamera.
+        // PAKET 33: Windowskin automatisch aus dem Projekt übernehmen
+        // (Graphics/System/windowskin.*), aber NUR solange kein Script ein
+        // eigenes Skin gesetzt hat (Rui.windowskin = bleibt Chef).
+        if (mProject && rui::Manager::Get().GetSkinSource().empty()) {
+            const std::string skinP = ResolvePicturePathFor("windowskin");
+            if (!skinP.empty()) rui::Manager::Get().SetSkinSource(skinP);
+        }
+
         if (!Game::Get().worldToScreenHook) {
             Game::Get().worldToScreenHook = [this](const Vec3& wp, float& outX, float& outY) {
                 if (!mWindow || !mRenderer) return false;

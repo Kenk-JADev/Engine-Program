@@ -59,6 +59,13 @@ struct Theme {
     float shadow = 4.0f;
     float rowHeight = 22.0f;       // Listenhoehe pro Eintrag
     float blinkHz = 2.5f;          // Cursor-Blinken
+    // PAKET 33: Windowskin (Nine-Patch). skinTex adapter-opak (GL-Handle);
+    // skinSrcFrame = Rahmenquadrat im Sheet (XP: linke obere 96x96 von
+    // 128x128), Rand b innen. Leeres Set (skinTex==nullptr) = Flat-Skin.
+    void* skinTex = nullptr;
+    int   skinW = 0, skinH = 0;    // Quellbild in Pixel
+    float skinSrcFrame = 96.0f;    // Kantenlaenge des Nine-Patch-Quells
+    float skinBorder = 16.0f;      // Randdicke im Quellbild (px)
     static const Theme& Get();
 };
 
@@ -74,6 +81,11 @@ public:
     virtual void Text(float x, float y, const std::string& s, const Color4& c, float scale = 1.0f, int align = 0) = 0; // align: 0 links, 1 zentriert, 2 rechts
     virtual float MeasureText(const std::string& s, float scale = 1.0f) const = 0;
     virtual float LineHeight(float scale = 1.0f) const = 0;
+    /// PAKET 33: texturiertes Quad (Windowskin/Nine-Patch). texture ist
+    /// adapter-opak (ImGui-Adapter: ImTextureID). src/dst in px,
+    /// imgW/imgH = Quellgrosses fuers UV-Mapping.
+    virtual void Image(void* texture, int imgW, int imgH,
+                       const Rect& src, const Rect& dst, const Color4& tint) = 0;
     virtual void ClipPush(const Rect& r) = 0;
     virtual void ClipPop() = 0;
 };
@@ -176,6 +188,13 @@ public:
     void SetTheme(const Theme& t) { mTheme = t; }
     const Theme& GetTheme() const { return mTheme; }
 
+    /// PAKET 33: Windowskin-Quelle (PNG-Pfad). LAZY: geladen wird erst beim
+    /// naechsten Draw (GL-Kontext!). Leerer Pfad = Flat-Skin (Default).
+    /// { } wenn Datei fehlschlaegt (graechen bleibt dann Flat + einmaliges Log).
+    void SetSkinSource(const std::string& pngPath);
+    const std::string& GetSkinSource() const { return mSkinPath; }
+    void ClearSkin();
+
     /// Adapter-Injektion (Engine): zeichnende Schnittstelle pro Frame
     void SetDrawTarget(DrawTarget* t) { mDrawTarget = t; }
 
@@ -206,10 +225,14 @@ public:
 
 private:
     Manager() = default;
+    void EnsureSkinLoaded();       // Lazy-Loader (Draw-Zeitpunkt, GL ok)
     Theme mTheme;
     DrawTarget* mDrawTarget = nullptr;
     std::vector<std::unique_ptr<Window>> mWindows;
     std::string mFocusKey;
+    std::string mSkinPath;
+    bool        mSkinTried = false;   // Ladeversuch fuer mSkinPath gelaufen
+    bool        mSkinReady = false;
     ListView* ResolveFocusList(); // nullptr, wenn Fokusziel verschwunden
 };
 

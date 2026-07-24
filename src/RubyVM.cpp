@@ -2921,6 +2921,33 @@ mrb_value rb_rui_has_focus(mrb_state* mrb, mrb_value) {
     return mrb_bool_value(rui::Manager::Get().HasFocus());
 }
 
+// PAKET 33: Rui.windowskin = "name" (ohne Endung) — aufgeloest ueber die
+// XP-Projektstruktur (Graphics/System/... zuerst). "" oder nil = Flat-Skin.
+mrb_value rb_rui_windowskin_set(mrb_state* mrb, mrb_value) {
+    mrb_value name = mrb_nil_value();
+    mrb_get_args(mrb, "o", &name);
+    if (mrb_nil_p(name) || (mrb_string_p(name) && RSTRING_LEN(name) == 0)) {
+        rui::Manager::Get().ClearSkin();
+        return mrb_nil_value();
+    }
+    if (!mrb_string_p(name)) return mrb_nil_value();
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    std::string nm(RSTRING_PTR(name), (size_t)RSTRING_LEN(name));
+    std::string path = e ? e->ResolvePicturePathFor(nm) : std::string();
+    if (path.empty() && e) {
+        // haertester Fallbacks: explizit Graphics/System suchen
+        path = e->ResolvePicturePathFor(nm);
+    }
+    if (!path.empty()) rui::Manager::Get().SetSkinSource(path);
+    return mrb_nil_value();
+}
+
+mrb_value rb_rui_windowskin_get(mrb_state* mrb, mrb_value) {
+    (void)mrb;
+    const std::string& s = rui::Manager::Get().GetSkinSource();
+    return mrb_str_new(mrb, s.data(), (mrb_int)s.size());
+}
+
 // ---------- Rui::Window-Methoden ----------
 mrb_value rb_rui_win_id(mrb_state* mrb, mrb_value self) {
     const std::string s = RuiIvarStr(mrb, self, "@__wid");
@@ -3243,6 +3270,8 @@ void RubyVM::BindRui() {
     mrb_define_module_function(mMrb, mod, "set_focus_list", rb_rui_set_focus_list, MRB_ARGS_REQ(2));
     mrb_define_module_function(mMrb, mod, "clear_focus", rb_rui_clear_focus, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, mod, "has_focus?", rb_rui_has_focus, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, mod, "windowskin=", rb_rui_windowskin_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, mod, "windowskin", rb_rui_windowskin_get, MRB_ARGS_NONE());
 
     // Rui::Window (Instanz-Methoden; Fenster-Handles, XP-Ergonomie)
     auto W = g_rui.win;

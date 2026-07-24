@@ -1,5 +1,7 @@
-// RPG Maker 3D - RUI (PAKET 31) - siehe include/rpgmaker3d/Rui.h
+// RPG Maker 3D - RUI (PAKET 31/33) - siehe include/rpgmaker3d/Rui.h
 #include "rpgmaker3d/Rui.h"
+#include "rpgmaker3d/Texture.h" // Skin-Lazyloader (stb, GL-Id opak)
+#include "rpgmaker3d/Logger.h"
 #include <algorithm>
 #include <cmath>
 
@@ -61,6 +63,15 @@ public:
         return sz.x;
     }
     float LineHeight(float scale) const override { return ImGui::GetFontSize() * scale; }
+    void Image(void* texture, int imgW, int imgH,
+               const Rect& src, const Rect& dst, const Color4& tint) override {
+        if (!texture || imgW <= 0 || imgH <= 0) return;
+        const float u0 = src.x / (float)imgW, v0 = src.y / (float)imgH;
+        const float u1 = (src.x + src.w) / (float)imgW, v1 = (src.y + src.h) / (float)imgH;
+        mDl->AddImage((ImTextureID)(intptr_t)texture,
+                      ImVec2(dst.x, dst.y), ImVec2(dst.x + dst.w, dst.y + dst.h),
+                      ImVec2(u0, v0), ImVec2(u1, v1), ToIm(tint));
+    }
     void ClipPush(const Rect& r) override {
         mDl->PushClipRect(ImVec2(r.x, r.y), ImVec2(r.x + r.w, r.y + r.h), true);
     }
@@ -116,14 +127,48 @@ void Gauge::Draw(DrawTarget& t) {
     t.FillRect(Rect{rect.x, rect.y, rect.w * frac, rect.h}, color, 2.0f);
 }
 
+// PAKET 33: Nine-Patch-Strecke einer Windowskin-Quelle (xp-artige
+// 96x96-Rahmenflaeche im Sheet; border px Rand). dst-Ecken bleiben 1:1,
+// Kanten/Flaeche strecken.
+static void DrawNinePatch(DrawTarget& t, const Theme& th, const Rect& dst) {
+    const float F = th.skinSrcFrame;   // Quell-Kantenlaenge
+    const float b = std::min(th.skinBorder, F * 0.40f);
+    const Color4 tint(1.0f, 1.0f, 1.0f, th.faceColor.a); // Alpha vom Theme
+    auto* tex = th.skinTex;
+    const int W = th.skinW, H = th.skinH;
+    auto part = [&](float sx, float sy, float sw, float sh,
+                    float dx, float dy, float dw, float dh) {
+        if (sw <= 0.0f || sh <= 0.0f || dw <= 0.0f || dh <= 0.0f) return;
+        t.Image(tex, W, H, Rect{sx, sy, sw, sh}, Rect{dx, dy, dw, dh}, tint);
+    };
+    const float x2 = dst.x + b, x3 = dst.x + dst.w - b;
+    const float y2 = dst.y + b, y3 = dst.y + dst.h - b;
+    // Flaeche (Face)
+    part(b, b, F - 2 * b, F - 2 * b, x2, y2, x3 - x2, y3 - y2);
+    // Kanten
+    part(b, 0, F - 2 * b, b, x2, dst.y, x3 - x2, b);              // oben
+    part(b, F - b, F - 2 * b, b, x2, y3, x3 - x2, b);             // unten
+    part(0, b, b, F - 2 * b, dst.x, y2, b, y3 - y2);              // links
+    part(F - b, b, b, F - 2 * b, x3, y2, b, y3 - y2);             // rechts
+    // Ecken
+    part(0, 0, b, b, dst.x, dst.y, b, b);                         // oben-li
+    part(F - b, 0, b, b, x3, dst.y, b, b);                        // oben-re
+    part(0, F - b, b, b, dst.x, y3, b, b);                        // unten-li
+    part(F - b, F - b, b, b, x3, y3, b, b);                       // unten-re
+}
+
 void Panel::Draw(DrawTarget& t) {
     if (!visible) return;
     const Theme& th = Theme::Get();
     if (skinned) {
         Rect shadow{rect.x + th.shadow, rect.y + th.shadow, rect.w, rect.h};
         t.FillRect(shadow, th.faceShadow, th.rounding);
-        t.FillRect(rect, th.faceColor, th.rounding);
-        t.StrokeRect(rect, th.border, th.borderWidth, th.rounding);
+        if (th.skinTex) {
+            DrawNinePatch(t, th, rect);   // PAKET 33: Skin statt Flat-Box
+        } else {
+            t.FillRect(rect, th.faceColor, th.rounding);
+            t.StrokeRect(rect, th.border, th.borderWidth, th.rounding);
+        }
     }
     for (auto& c : children) c->Draw(t);
 }
@@ -250,6 +295,56 @@ Manager& Manager::Get() {
     return s;
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 33: Windowskin (Lazy-Load; eine Textur fuer den Manager genuckelt)
+// ---------------------------------------------------------------------------
+namespace {
+    std::unique_ptr<rpg::Texture> g_skinTex;
+}
+
+void Manager::SetSkinSource(const std::string& pngPath) {
+    if (mSkinPath == pngPath) return; // keine Doppel-Ladung
+    mSkinPath = pngPath;
+    mSkinTried = false;
+    mSkinReady = false;
+    if (g_skinTex) g_skinTex.reset();
+    Theme th = mTheme;
+    th.skinTex = nullptr;
+    mTheme = th;
+}
+
+void Manager::ClearSkin() {
+    mSkinPath.clear();
+    mSkinTried = true; // kein Auto-Versuch mehr
+    mSkinReady = false;
+    if (g_skinTex) g_skinTex.reset();
+    Theme th = mTheme;
+    th.skinTex = nullptr;
+    mTheme = th;
+}
+
+void Manager::EnsureSkinLoaded() {
+    if (mSkinReady || mSkinTried || mSkinPath.empty()) return;
+    mSkinTried = true;
+    auto tex = std::make_unique<rpg::Texture>();
+    if (!tex->LoadFromFile(mSkinPath) || tex->GetID() == 0) {
+        RPG_LOG_WARN("RUI: Windowskin nicht ladbar (Flat-Skin): " + mSkinPath);
+        return;
+    }
+    g_skinTex = std::move(tex);
+    mSkinReady = true;
+    Theme th = mTheme;
+    th.skinTex = (void*)(intptr_t)g_skinTex->GetID();
+    th.skinW = g_skinTex->GetWidth();
+    th.skinH = g_skinTex->GetHeight();
+    // XP-Layout: Rahmenquadrat links oben (96x96 in 128x128) — kleinere
+    // Sheets skalieren sauber ueber Min-Regel.
+    th.skinSrcFrame = (float)std::min(th.skinW, std::min(th.skinH, 96));
+    th.skinBorder = std::min(16.0f, th.skinSrcFrame * 0.20f);
+    mTheme = th;
+    RPG_LOG_INFO("RUI: Windowskin geladen: " + mSkinPath);
+}
+
 Window& Manager::AddWindow(std::unique_ptr<Window> w) {
     mWindows.push_back(std::move(w));
     return *mWindows.back();
@@ -329,6 +424,7 @@ void Manager::Update(float dt, float mouseX, float mouseY, bool mousePressed,
 }
 
 void Manager::Draw() {
+    EnsureSkinLoaded(); // PAKET 33: Lazy-Laden zum Draw-Zeitpunkt (GL ok)
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     if (!mDrawTarget) {
         ImGui::SetNextWindowPos(ImVec2(0, 0));
