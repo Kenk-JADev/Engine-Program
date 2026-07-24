@@ -517,7 +517,9 @@ public:
     /// XP-Regel: Jedes aktive Event mit aktueller Seite blockiert die
     /// Bewegung, ausser die Seite ist "Durchlaessig" (through).
     /// Geloeschte/deaktivierte Events blockieren nicht.
-    bool IsBlockingAt(const Vec3& worldPos, float radius = 0.35f);
+    /// PAKET 27: excludeEventId (-1 = keins) laesst EIN Event aus -
+    /// noetig, wenn ein Event seine eigene Bewegung prueft.
+    bool IsBlockingAt(const Vec3& worldPos, float radius = 0.35f, int excludeEventId = -1);
 
     void StartEvent(int eventId);
     bool IsEventRunning(int eventId) const;

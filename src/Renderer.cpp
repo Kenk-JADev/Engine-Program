@@ -438,13 +438,23 @@ Mat4 Renderer::CalculateLightSpaceMatrix(float orthoSize, float nearPlane, float
     Mat4 lightProj = glm::ortho(-size, size, -size, size, n, f);
     Mat4 lightSpace = lightProj * lightView;
     mLightSpaceMatrix = lightSpace;
+    mLightSpaceValid = true; // PAKET 27
     if (mShadowMap) mShadowMap->SetLightSpaceMatrix(lightSpace);
     return lightSpace;
 }
 
 void Renderer::BeginShadowPass() {
     if (!mShadowsEnabled || !mShadowMap || !mShadowMap->IsValid() || !mShadowShader) return;
-    CalculateLightSpaceMatrix();
+    // PAKET 27: KEINE eigene CalculateLightSpaceMatrix()-Berechnung mehr!
+    // Die Engine ruft sie direkt zuvor mit karten-adaptiver Ortho-Groesse
+    // (kleinere Karte = dichtere Shadow-Matrix = schaerfer). Der zweite
+    // Aufruf hier hat diese Matrix sofort wieder mit dem fixen Default
+    // (ortho 30) ueberschrieben - die Adaption war wirkungslos.
+    // Fallback fuer andere Aufrufer: nur rechnen, wenn noch nie gerechnet
+    // wurde (Matrix ist noch Identitaet).
+    if (!mLightSpaceValid) {
+        CalculateLightSpaceMatrix();
+    }
     // WICHTIG (Qt-Fix): aktuelles Host-FBO + Viewport merken. QOpenGLWidget
     // rendert in ein eigenes FBO (!= 0); ein spaeteres BindFramebuffer(..., 0)
     // wuerde die Szene unsichtbar in den Fenster-Backbuffer zeichnen.

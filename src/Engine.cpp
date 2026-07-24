@@ -72,6 +72,12 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
     Logger::Get().SetConsoleOutput(true);
     RPG_LOG_INFO(std::string(EngineConfig::NAME) + " v" + EngineConfig::VERSION + " - Init started [" + RPG_PLATFORM_NAME + "]");
 
+    // PAKET 27: Zufallszahlen-Seed! Bisher wurde nirgends std::srand
+    // aufgerufen - rand() lieferte bei JEDEM Start exakt dieselbe Folge
+    // (Zufallskaempfe, Trupp-Wahl, NPC-Routen, Kampf-Ziele reproduzierbar).
+    std::srand(static_cast<unsigned int>(
+        std::chrono::system_clock::now().time_since_epoch().count()));
+
     // Plattform
     // Im Qt-Host setzt Qt die DPI-Awareness (PerMonitorV2). Ein zweiter
     // SetProcessDpiAwarenessContext-Aufruf schlaegt mit "Zugriff verweigert" fehl.

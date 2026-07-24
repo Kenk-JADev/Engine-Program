@@ -1640,9 +1640,10 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
 // unter der Touch-Schwelle (1.1) und Interaktions-Reichweite (1.35), damit
 // PlayerTouch-/ActionButton-Events unveraendert erreichbar bleiben.
 // ---------------------------------------------------------------------------
-bool EventSystem::IsBlockingAt(const Vec3& worldPos, float radius) {
+bool EventSystem::IsBlockingAt(const Vec3& worldPos, float radius, int excludeEventId) {
     constexpr float kEventBody = 0.38f; // halbe Event-Hitbox (Welt-Einheiten)
     for (auto& ev : mEvents) {
+        if (ev.id == excludeEventId) continue; // PAKET 27: sich selbst auslassen
         if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
         RefreshEventPage(ev);
         const EventPage* page = ev.GetCurrentPage();
@@ -1723,6 +1724,19 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
         if (glm::length(pos) < 0.001f)
             pos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
 
+        // PAKET 27: Kollisionswache fuer Event-Bewegung (autonom + Move
+        // Route). Vorher liefen Events in Mauern/Wasser/aus der Karte,
+        // ineinander und IN den Spieler hinein.
+        const bool selfThrough = ev.through || (page && page->through);
+        auto blockedAt = [&](const Vec3& target) {
+            if (selfThrough) return false; // Durchlaessig: keine Kollision
+            if (!Game::Get().Map().IsPassableWorld(target.x, target.z)) return true;
+            if (IsBlockingAt(target, 0.30f, ev.id)) return true;
+            const Vec3 dtp(playerPos.x - target.x, 0.0f, playerPos.z - target.z);
+            if (glm::length(dtp) < 0.45f) return true; // nicht auf den Spieler
+            return false;
+        };
+
         // ---- Autonome Bewegung der aktiven Seite (Fixed/Random/Approach) ----
         if (page && !ev.hasMoveRoute && page->moveType != (int)EventMoveType::Custom) {
             // Frequenz 1..6 -> Intervall 1.5s .. 0.25s
@@ -1747,7 +1761,7 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
                             : Vec3(0, 0, to.z > 0 ? 1.f : -1.f);
                     }
                 }
-                if (glm::length(delta) > 0.001f) {
+                if (glm::length(delta) > 0.001f && !blockedAt(pos + delta)) {
                     pos += delta; // ganzzellig (XP-Kachel)
                     ev.x = (int)std::round(pos.x);
                     ev.z = (int)std::round(pos.z);
@@ -1933,9 +1947,24 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
             else if (delta.z > 0) ev.direction = DIR_DOWN;
             else if (delta.z < 0) ev.direction = DIR_UP;
         }
-        pos += delta;
-        ev.x = (int)std::round(pos.x);
-        ev.z = (int)std::round(pos.z);
+        if (glm::length(delta) > 0.001f && blockedAt(pos + delta)) {
+            // PAKET 27: Ziel belegt/nicht begehbar (Mauer, Wasser, Rand,
+            // anderes Event, Spieler). XP-Semantik:
+            if (!mr.skippable) {
+                // nicht skippierbar: Schritt zurueckdrehen, in kurzer
+                // Pause erneut versuchen (Route wartet). continue, damit
+                // die Standard-Schrittpause unten die 0,25 s nicht
+                // ueberschreibt.
+                mr.stepIndex--;
+                mr.waitTimer = 0.25f;
+                continue;
+            }
+            // skippierbar: Schritt auslassen (stepIndex ist schon weiter)
+        } else {
+            pos += delta;
+            ev.x = (int)std::round(pos.x);
+            ev.z = (int)std::round(pos.z);
+        }
         // PAKET 16 (Schritt 29): Schritt-Pause nach Geschwindigkeit —
         // hoehere Tempo = kuerzere Pause; speed 3 entspricht dem
         // bisherigen festen 0,05 s (Bestandsverhalten unveraendert).

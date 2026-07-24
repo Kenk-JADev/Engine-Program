@@ -1536,6 +1536,55 @@ Ausserdem: „scripts brauchen alle ein Update“.
 **HEAD-Waechter geprueft; Qt-Edits paren-neutral; Engine beide
 ImGui-Varianten sauber.**
 
+## PAKET 27 — Bugjagd & Render-Qualität (Schatten/3D-Blöcke) ✅
+
+**Anlass (Nutzer, 2026-07-24):** „Engine und Game nach Bugs pruefen +
+was man verbessern kann, wie das Schatten.“ (zwischendurch Sandbox-
+Ausfall mit stillem Reset auf `fb39a19`; via Remote-HEAD `bfdfe6a`
+wiederhergestellt.)
+
+### Gefundene & behobene Bugs
+1. **`std::srand` fehlte komplett** — `rand()` lieferte bei jedem Start
+   exakt dieselbe Folge (Zufallskaempfe, Trupp-Wahl, NPC-Routen, Kampf-
+   Ziele vorhersagbar). Seed jetzt in `Engine::InitializeInternal`.
+2. **Schatten-Lichtmatrix doppelt berechnet:** `BeginShadowPass` rief
+   `CalculateLightSpaceMatrix()` mit fixem Default erneut auf und
+   ueberschrieb die soeben karten-adaptiv berechnete Matrix der Engine
+   → Adaption wirkungslos, Schatten grober als noetig. Jetzt
+   `mLightSpaceValid`-Flag (GLM-versionsunabhaengig).
+3. **Encounter-Zaehler funktions-statisch:** Teleport/NewGame erzeugte
+   aus der alten Position einen Distanz-Sprung → zaehlte als Schritte
+   (Sofort-Kampf nach Spawn/Laden). Jetzt Datei-Statik (`g_enc*`) +
+   `Game::ResetEncounterSteps()` aus `NewGameAt` + Sprung-Regel:
+   Distanz > 4 Felder (Transfer/Laden) wird verworfen.
+4. **Event-Bewegung ohne Kollision:** Autonome Zufalls-/Annaeherungs-
+   Bewegungen UND Move-Routen liefen in Mauern/Wasser/aus der Karte,
+   ineinander, in den Spieler. `blockedAt`-Wache: Tile-Passage,
+   Event-Koerper (`IsBlockingAt` mit neuem `excludeEventId`), Spieler;
+   XP-Skippable-Semantik (nicht skippierbar: Schritt wartet & wiederholt,
+   0,25s-Pause vor Speed-Pause geschuetzt).
+5. **Hohes Gras feuerte nie:** Verdopplung der Begegnungsrate nur an
+   Terrain-Tag 4 gehaengt — SampleProject hatte keinerlei terrain-
+   Eintraege. Regel greift jetzt bei Tag 4 ODER Bush-Flag; Tag 4 in
+   CreateDefaults **und** `Tilesets.json` ergaenzt (konsistent).
+6. **`Map::Load` unvalidiert:** defekte/abgeschnittene .map → absurde
+   Groessen → OOB-Crash spaeter. Header-/Layer-Checks; 0-Layer-Datei
+   gilt jetzt als Fehler → Standardkarte-Fallback greift.
+
+### Verbesserung (sichtbar): Objekt-Ebenen als 3D-Bloecke
+- `Map::BuildGeometry`: Ebene 0 bleibt flacher Boden; ab Ebene 1 werden
+  belegte Felder zu **Block-Geometrie** (Deckflaeche + 4 Seiten,
+  innenliegende Seiten weggecullt). Mauern/Felsen sind jetzt echte
+  3D-Hindernisse, **werfen und empfangen Schatten** (Depth-Pass laeuft
+  ueber denselben Mesh). Block-Hoehe = `layer.elevation`
+  (≤ 0.05 = historischer Z-Fighting-Offset → 0.6 Standard).
+- Generatoren angehoben (C++-Fallback + `make_sample_maps.py`),
+  SampleProject-Maps mit Hoehe 0.6 regeneriert.
+
+**Checks:** g++ beide ImGui-Varianten (Renderer, Engine, Map, Game,
+Database, EventSystem) sauber; Map-Binaerformat nach Regeneration
+verifiziert (Elevation 0.6).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 

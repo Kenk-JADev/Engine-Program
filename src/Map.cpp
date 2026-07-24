@@ -118,10 +118,11 @@ void Map::CreateFallback(int width, int height) {
         }
     }
 
-    // --- Layer 1: Hindernisse (knapp ueber dem Boden, kein Z-Fighting) ---
+    // --- Layer 1: Hindernisse (PAKET 27: als 3D-Bloecke, Hoehe =
+    // elevation; 0.6 = huft-hohe Mauern/Felsen, werfen echte Schatten) ---
     AddLayer("Objects");
     MapLayer& objects = mLayers.back();
-    objects.elevation = 0.02f;
+    objects.elevation = 0.6f;
 
     auto oset = [&](int x, int z, int id) {
         if (x >= 0 && x < mWidth && z >= 0 && z < mHeight)
@@ -170,8 +171,21 @@ void Map::BuildGeometry() {
     float tileW = 1.0f;
     float tileH = 1.0f;
 
+    // PAKET 27: Ebene 0 bleibt flacher Boden; ab Ebene 1 werden belegte
+    // Felder zu BLOCK-Geoemtrie (Mauern/Felsen als echte 3D-Hindernisse,
+    // die Schatten werfen und Schatten empfangen). Block-Hoehe =
+    // layer.elevation (<= 0 -> 0.6 Standard), Seiten zwischen zwei
+    // belegten Nachbarzellen werden weggelassen (innenliegend).
+    size_t layerIndex = 0;
     for (const auto& layer : mLayers) {
+        const bool boxLayer = (layerIndex++ > 0);
         if (!layer.visible) continue;
+        // elevation <= 0.05 = historischer Z-Fighting-Offset (0.02),
+        // keine bewusste Block-Hoehe -> Standard 0.6
+        const float boxTop =
+            boxLayer ? (layer.elevation > 0.05f ? layer.elevation : 0.6f)
+                     : layer.elevation;
+
         for (int z = 0; z < mHeight; ++z) {
             for (int x = 0; x < mWidth; ++x) {
                 int tileId = layer.tiles[z * mWidth + x];
@@ -185,8 +199,9 @@ void Map::BuildGeometry() {
 
                 float px = (x - mWidth * 0.5f) * tileW;
                 float pz = (z - mHeight * 0.5f) * tileH;
-                float py = layer.elevation;
+                float py = boxTop;
 
+                // Deckflaeche (wie bisher, CCW von oben)
                 unsigned int base = static_cast<unsigned int>(mMesh->vertices.size());
 
                 mMesh->vertices.push_back({{px, py, pz + tileH}, {0, 1, 0}, {ux, vy + vh}});
@@ -200,6 +215,45 @@ void Map::BuildGeometry() {
                 mMesh->indices.push_back(base + 2);
                 mMesh->indices.push_back(base + 3);
                 mMesh->indices.push_back(base + 0);
+
+                if (!boxLayer) continue;
+
+                // Seitenflaechen (nur zu freien Nachbarzellen derselben
+                // Ebene - innenliegende Flaechen sind unsichtbar und
+                // wuerden sonst im Schatten-Pass Lecks erzeugen)
+                const float y0 = 0.0f, y1 = boxTop;
+                auto occupied = [&](int nx, int nz) {
+                    if (nx < 0 || nx >= layer.width || nz < 0 || nz >= layer.height)
+                        return false;
+                    return layer.tiles[nz * layer.width + nx] >= 0;
+                };
+                auto sideFace = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 n) {
+                    unsigned int sb = static_cast<unsigned int>(mMesh->vertices.size());
+                    // Seiten nutzen denselben Tile-Ausschnitt (flaechen-
+                    // deckende Texturen sehen damit sauber aus)
+                    mMesh->vertices.push_back({a, n, {ux, vy + vh}});
+                    mMesh->vertices.push_back({b, n, {ux + uw, vy + vh}});
+                    mMesh->vertices.push_back({c, n, {ux + uw, vy}});
+                    mMesh->vertices.push_back({d, n, {ux, vy}});
+                    mMesh->indices.push_back(sb + 0);
+                    mMesh->indices.push_back(sb + 1);
+                    mMesh->indices.push_back(sb + 2);
+                    mMesh->indices.push_back(sb + 2);
+                    mMesh->indices.push_back(sb + 3);
+                    mMesh->indices.push_back(sb + 0);
+                };
+                if (!occupied(x, z - 1)) // Nord (-z)
+                    sideFace({px + tileW, y0, pz}, {px, y0, pz},
+                             {px, y1, pz}, {px + tileW, y1, pz}, {0, 0, -1});
+                if (!occupied(x, z + 1)) // Sued (+z)
+                    sideFace({px, y0, pz + tileH}, {px + tileW, y0, pz + tileH},
+                             {px + tileW, y1, pz + tileH}, {px, y1, pz + tileH}, {0, 0, 1});
+                if (!occupied(x - 1, z)) // West (-x)
+                    sideFace({px, y0, pz}, {px, y0, pz + tileH},
+                             {px, y1, pz + tileH}, {px, y1, pz}, {-1, 0, 0});
+                if (!occupied(x + 1, z)) // Ost (+x)
+                    sideFace({px + tileW, y0, pz + tileH}, {px + tileW, y0, pz},
+                             {px + tileW, y1, pz}, {px + tileW, y1, pz + tileH}, {1, 0, 0});
             }
         }
     }
@@ -251,11 +305,25 @@ bool Map::Load(const std::string& path) {
     int layerCount = 0;
     file.read(reinterpret_cast<char*>(&layerCount), sizeof(layerCount));
 
+    // PAKET 27: Header-Validierung - eine defekte/abgeschnittene .map
+    // lieferte bislang absurde Groessen und stuerzte spaeter mit OOB ab.
+    if (!file || mWidth <= 0 || mWidth > 1024 || mHeight <= 0 ||
+        mHeight > 1024 || layerCount <= 0 || layerCount > 64) {
+        std::cerr << "Map::Load: ungueltiger Header in " << path << std::endl;
+        mWidth = 20; mHeight = 20; mLayers.clear();
+        return false;
+    }
+
     mLayers.clear();
     for (int i = 0; i < layerCount; ++i) {
         MapLayer layer;
         int nameLen = 0;
         file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
+        if (!file || nameLen < 0 || nameLen > 255) {
+            std::cerr << "Map::Load: defekter Layer-Header in " << path << std::endl;
+            mLayers.clear();
+            return false;
+        }
         layer.name.resize(nameLen);
         file.read(layer.name.data(), nameLen);
         file.read(reinterpret_cast<char*>(&layer.elevation), sizeof(layer.elevation));
@@ -263,6 +331,11 @@ bool Map::Load(const std::string& path) {
         layer.height = mHeight;
         layer.tiles.resize(mWidth * mHeight);
         file.read(reinterpret_cast<char*>(layer.tiles.data()), layer.tiles.size() * sizeof(int));
+        if (!file) { // abgeschnittene Datei (PAKET 27)
+            std::cerr << "Map::Load: Datei abgeschnitten in " << path << std::endl;
+            mLayers.clear();
+            return false;
+        }
         mLayers.push_back(layer);
     }
 

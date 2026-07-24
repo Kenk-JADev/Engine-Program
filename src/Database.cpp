@@ -196,6 +196,12 @@ void Database::CreateDefaults() {
         td.bushFlags[3 * 8 + 0] = 1;   // hohes Gras (Zeilen 3..5)
         td.bushFlags[4 * 8 + 0] = 1;
         td.bushFlags[5 * 8 + 0] = 1;
+        // Terrain-Tag 4 ("hohes Gras", Paket-6-Belegung) ebenfalls setzen,
+        // damit Schritt-SE-System + Encounter-Regel konsistent greifen.
+        td.terrainTags.assign(48, 0);
+        td.terrainTags[3 * 8 + 0] = 4;
+        td.terrainTags[4 * 8 + 0] = 4;
+        td.terrainTags[5 * 8 + 0] = 4;
         mTilesets.push_back(td);
     }
 

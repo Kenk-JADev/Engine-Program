@@ -94,7 +94,7 @@ def build_map001():
     """Dorfrand: Dorfplatz mit Wegekreuz, Teich, Haus + Truhen-Ecke."""
     w, h = 25, 20
     ground = new_layer("Ground", w, h, 0.0, K_GRASS)
-    objects = new_layer("Objects", w, h, 0.02, -1)
+    objects = new_layer("Objects", w, h, 0.6, -1)
 
     # Wegekreuz (Spawn liegt auf der Kreuzung 12/10)
     for x in range(1, w - 1):
@@ -126,7 +126,7 @@ def build_map002():
     """Waldweg: schmaler Pfad von Sued nach Nord, Seen, viel hohes Gras."""
     w, h = 19, 15
     ground = new_layer("Ground", w, h, 0.0, K_GRASS)
-    objects = new_layer("Objects", w, h, 0.02, -1)
+    objects = new_layer("Objects", w, h, 0.6, -1)
 
     # Weg: Suedeingang (9,13) bis Nord (9,1) + Querweg in der Mitte
     for z in range(1, h - 1):

@@ -734,10 +734,29 @@ void Game::NewGameAt(const Vec3& worldPos, int mapId) {
     mPlayer.SetPosition(clampedPos);
     mPlayer.SetLocked(false);
     mGameStarted = true;
+    ResetEncounterSteps(); // PAKET 27
     RPG_LOG_INFO("New Game at (" + std::to_string(clampedPos.x) + ", " +
                  std::to_string(clampedPos.y) + ", " + std::to_string(clampedPos.z) +
                  ") map=" + std::to_string(mid) + " (requested " +
                  std::to_string(worldPos.x) + "," + std::to_string(worldPos.z) + ")");
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 27: Encounter-Laufzaehler als Datei-Statik mit Reset-Hook.
+// Vorher funktions-lokal statisch in Game::Update: Ein Teleport/NewGame
+// erzeugte aus der alten Restposition einen Distanz-Sprung, der als
+// Schritte zaehlte (Sofort-Kampf direkt nach Spawn/Laden).
+// ---------------------------------------------------------------------------
+namespace {
+Vec3  g_encLastPos(0.0f, 0.0f, 0.0f);
+float g_encStepAccum = 0.0f;
+int   g_encStepsToGo = 0;
+}
+
+void Game::ResetEncounterSteps() {
+    g_encLastPos = mPlayer.GetPosition();
+    g_encStepAccum = 0.0f;
+    g_encStepsToGo = 0;
 }
 
 void Game::SetSaveDirectory(const std::string& dir) {
@@ -1144,18 +1163,20 @@ void Game::Update(float dt) {
     // Random Encounter (RPG Maker Style): Schritte zaehlen wenn Map encounterStep > 0
     // ChangeEncounter (136) deaktiviert Zufallskaempfe komplett
     if (!busy && !BattleSystem::Get().IsInBattle() && mSystem.IsEncounterEnabled()) {
-        static Vec3 s_lastPos(0,0,0);
-        static float s_stepAccum = 0.f;
-        static int s_stepsToEncounter = 0;
+        // PAKET 27: Zaehler sind jetzt Datei-Statik (g_enc*) mit Reset
+        // ueber NewGameAt/Kampfende - kein Distanz-Sprung nach Teleport.
         const Vec3 pos = mPlayer.GetPosition();
-        float moved = glm::length(Vec3(pos.x - s_lastPos.x, 0, pos.z - s_lastPos.z));
-        s_lastPos = pos;
-        if (moved > 0.001f) {
-            s_stepAccum += moved;
+        float moved = glm::length(Vec3(pos.x - g_encLastPos.x, 0, pos.z - g_encLastPos.z));
+        g_encLastPos = pos;
+        // Sicherheitsregel: ein Sprung groesser 4 Felder (Transfer/Load)
+        // wird komplett ignoriert statt als Schritte gezaehlt.
+        if (moved > 4.0f) { g_encStepAccum = 0.0f; }
+        if (moved > 0.001f && moved <= 4.0f) {
+            g_encStepAccum += moved;
             // ~1 "Schritt" pro 1 Welt-Einheit
-            while (s_stepAccum >= 1.0f) {
-                s_stepAccum -= 1.0f;
-                if (s_stepsToEncounter <= 0) {
+            while (g_encStepAccum >= 1.0f) {
+                g_encStepAccum -= 1.0f;
+                if (g_encStepsToGo <= 0) {
                     int step = 30;
                     int mapId = mMap.GetMapId();
                     for (const auto& mi : Database::Get().MapInfos()) {
@@ -1166,13 +1187,19 @@ void Game::Update(float dt) {
                     }
                     if (step <= 0) break; // keine Encounters auf dieser Map
                     // Zufalls-Abstand 50%..150% von encounterStep
-                    s_stepsToEncounter = step / 2 + (int)(step * (0.5f + (float)(rand() % 100) / 100.f));
+                    g_encStepsToGo = step / 2 + (int)(step * (0.5f + (float)(rand() % 100) / 100.f));
                 }
                 // Terrain-Tag 4 („hohes Gras", Paket-6-Belegung): Zaehler
                 // tickt doppelt so schnell -> spuerbar mehr Zufallskaempfe
                 // im hohen Gras. Andere Tags beeinflussen die Rate nicht.
-                s_stepsToEncounter -= (mMap.GetTerrainTagAt(pos) == 4) ? 2 : 1;
-                if (s_stepsToEncounter <= 0) {
+                // PAKET 27: neben Terrain-Tag 4 zaehlt jetzt auch das
+                // Bush-Flag (PAKET 1) - bisher feuerte die Regel NUR mit
+                // Tag 4, d. h. Tilesets ohne terrain-Eintrag (auch das
+                // SampleProject!) verdoppelten die Rate nie.
+                const bool tallGrass =
+                    (mMap.GetTerrainTagAt(pos) == 4) || mMap.IsBushAt(pos);
+                g_encStepsToGo -= tallGrass ? 2 : 1;
+                if (g_encStepsToGo <= 0) {
                     // Troop aus Map encounterList oder Default-Troop 1
                     int troopId = 1;
                     int mapId = mMap.GetMapId();
@@ -1208,7 +1235,7 @@ void Game::Update(float dt) {
                     // Aktionswahl laeuft ueber das XP-Kampfmenue (Engine).
                     GameUI::Get().ShowMessage("Ein Kampf beginnt!");
                     RPG_LOG_INFO("Random encounter troop=" + std::to_string(troopId));
-                    s_stepsToEncounter = 0;
+                    g_encStepsToGo = 0;
                     break;
                 }
             }

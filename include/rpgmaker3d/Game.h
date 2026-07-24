@@ -311,6 +311,10 @@ public:
     void NewGame();
     /// Start playtest at a custom world position (editor "play from here")
     void NewGameAt(const Vec3& worldPos, int mapId = -1);
+    // PAKET 27: Encounter-Laufzaehler (Schritte/Distanz/Ziel) zuruecksetzen
+    // - wird aus NewGameAt und nach Kampfende gerufen, damit kein
+    // Positions-Sprung als Schritte zaehlt (Sofort-Kampf-Bug).
+    void ResetEncounterSteps();
     bool Save(int slot);
     bool Load(int slot);
 

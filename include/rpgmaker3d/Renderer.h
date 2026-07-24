@@ -156,6 +156,10 @@ private:
     Color mClearColor{0.12f, 0.13f, 0.16f, 1.0f};
     bool mWireframeEnabled = false;
     Mat4 mLightSpaceMatrix{1.0f};
+    // PAKET 27: wurde die Light-Space-Matrix schon (karten-adaptiv durch
+    // die Engine) berechnet? Dann darf BeginShadowPass sie nicht mit dem
+    // fixen Default ueberschreiben.
+    bool mLightSpaceValid = false;
     bool mShadowsEnabled = true;
     bool mPointShadowsEnabled = true;
     int mShadowMapSize = 2048;
