@@ -210,14 +210,20 @@ void BattleSystem::Update(float dt) {
                 }
             }
             break;
-        case BattleState::Victory:
-            if (mTimer > 2.0f) {
+        case BattleState::Victory: {
+            // PAKET 15: XP-Ergebnisfluss — warten, bis die Sieg-/EXP-/
+            // Level-Up-Nachricht quittiert ist (Mindest 0,6 s Darstellzeit;
+            // 15 s Sicherheitsnetz falls kein Busy-Hook injiziert/haengt).
+            const bool busy = isMessageBusy && isMessageBusy();
+            const bool confirmed = mTimer > 0.6f && !busy;
+            if (confirmed || mTimer >= 15.0f) {
                 mState = BattleState::End;
                 mLastOutcome = 1;
                 SyncBackToParty();
                 if (onVictory) onVictory();
             }
             break;
+        }
         case BattleState::Defeat:
             if (mTimer > 2.0f) {
                 mState = BattleState::End;
@@ -492,6 +498,8 @@ void BattleSystem::CheckVictory() {
     if (allEnemiesDead && !mEnemies.empty()) {
         mState = BattleState::Victory;
         mTimer = 0;
+        // PAKET 15: XP-Sieg-ME (Scene_Battle battle_end: battle_end_me)
+        if (onVictoryMe) onVictoryMe(Database::Get().System().battleEndMe);
         mLastExp = 0; mLastGold = 0;
         for (auto& e : mEnemies) {
             if (const auto* d = Database::Get().GetEnemy(e.id)) {

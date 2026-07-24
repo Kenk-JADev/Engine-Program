@@ -120,6 +120,16 @@ public:
     /// und startet die Sequenz; der Kampf wartet in BattleState::Action auf
     /// das Ende (IsAnimationPlaying), siehe ProcessTurn.
     std::function<void(const Battler& target, int animId)> onBattleAnimation;
+    /// PAKET 15: XP-Sieg-ME (System.battleEndMe) — eigener zentraler
+    /// Audio-Hook, WEIL die kampfstart-seitigen Setup-Pfade onVictory/
+    /// onMessage regelmaessig neu setzen (Engine injiziert ihn einmal in
+    /// Initialize; feuert in CheckVictory beim Uebergang nach Victory).
+    std::function<void(const std::string& meName)> onVictoryMe;
+    /// PAKET 15: XP-Ergebnisfluss — true, solange die Kampf-Nachricht
+    /// (Sieg/EXP/Level-Ups) sichtbar ist; Victory wartet dann auf die
+    /// Quittierung statt auf die starren 2 s (Engine injiziert:
+    /// GameUI::Message().IsBusy()).
+    std::function<bool()> isMessageBusy;
     std::function<void()> onVictory;
     std::function<void()> onDefeat;
     /// XP "Game Over": bei Niederlage UND !canLose (nach onDefeat).

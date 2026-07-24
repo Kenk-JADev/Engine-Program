@@ -299,6 +299,18 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
                                            (int)std::round(yNorm * 480.0f));
     };
 
+    // PAKET 15: XP-Siegseite — EINMAL zentral (die kampfstart-seitigen
+    // Setup-Pfade ueberschreiben onVictory/onMessage regelmaessig; diese
+    // beiden Hooks bleiben davon unberuehrt):
+    //  a) Sieg-ME aus System.battleEndMe (XP Scene_Battle battle_end)
+    //  b) Victory wartet auf die Quittierung der Ergebnis-Nachricht
+    BattleSystem::Get().onVictoryMe = [this](const std::string& meName) {
+        if (!meName.empty()) PlayEventAudio(meName, 2, false); // 2 = ME
+    };
+    BattleSystem::Get().isMessageBusy = []() {
+        return GameUI::Get().Message().IsBusy();
+    };
+
     // Bild-Pfadaufloeser fuer GameUI (UI.show_picture + Titelgrafik):
     // sucht in den XP-Projektordnern (Graphics/Pictures|Titles) usw.
     GameUI::SetPicturePathResolver([this](const std::string& filename) {
@@ -873,6 +885,8 @@ void Engine::Shutdown() {
     // PAKET 9: Kampf-Feedback-Hook loesen (haelt this)
     BattleSystem::Get().onBattlerHit = nullptr;
     BattleSystem::Get().onBattleAnimation = nullptr; // PAKET 12 (haelt this)
+    BattleSystem::Get().onVictoryMe = nullptr;       // PAKET 15 (haelt this)
+    BattleSystem::Get().isMessageBusy = nullptr;     // PAKET 15
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     ShutdownImGui(); // vor Window/GL-Teardown (Backend loescht GL-Ressourcen)
 #endif
@@ -1417,7 +1431,7 @@ void Engine::Update(float dt) {
 
                 // --- Gegner-Grafiken (Graphics/Battlers/<battlerName>, XP) ---
                 // Max. 4 Stueck; Bilder entstehen einmal und bleiben (kein
-                // Flackern/Reload), tote Gegner verschwinden sofort.
+                // Flackern/Reload), tote Gegner faden weich aus (XP-Collapse).
                 const int enemyCount = (int)bs.Enemies().size();
                 auto removeBattlerPic = [this](const std::string& tag) {
                     auto it2 = std::find(mBattlerPicNames.begin(), mBattlerPicNames.end(), tag);
@@ -1425,6 +1439,11 @@ void Engine::Update(float dt) {
                         GameUI::Get().RemovePicture(*it2);
                         mBattlerPicNames.erase(it2);
                     }
+                    mBattlerPicIds.erase(tag);
+                };
+                auto isDying = [this](const std::string& tag) {
+                    for (const auto& d : mBattlerDying) if (d.tag == tag) return true;
+                    return false;
                 };
                 for (int i = 0; i < enemyCount && i < 4; ++i) {
                     const auto& e = bs.Enemies()[(size_t)i];
@@ -1443,16 +1462,35 @@ void Engine::Update(float dt) {
                             const float x = enemyCount > 1
                                 ? (0.25f + 0.5f * (float)i / (float)(enemyCount - 1))
                                 : 0.5f;
-                            GameUI::Get().ShowPicture(gfx, tag, Vec2(x, 0.30f),
+                            const int picId = GameUI::Get().ShowPicture(gfx, tag, Vec2(x, 0.30f),
                                                       1.5f, 1.0f, 0.0f, hue);
                             mBattlerPicNames.push_back(tag);
+                            mBattlerPicIds[tag] = picId;
                         }
-                    } else {
-                        removeBattlerPic(tag);
+                    } else if (exists && !isDying(tag)) {
+                        // PAKET 15: XP-Collapse — das Bild fadet ueber
+                        // ~0,45 s aus (XP: Battler loest sich beim Sieg auf).
+                        const int picId = mBattlerPicIds.count(tag)
+                                            ? mBattlerPicIds[tag] : 0;
+                        if (picId > 0)
+                            GameUI::Get().TweenPictureOpacity(picId, 0.0f, 0.45f, 2);
+                        mBattlerDying.push_back({picId, tag, 0.5f});
                     }
+                    // Schon im Fade: Nichts mehr tun — der decay unten
+                    // entfernt das Picture nach Ablauf endgueltig.
                 }
                 for (int i = enemyCount; i < 4; ++i)
                     removeBattlerPic("$battler" + std::to_string(i));
+                // PAKET 15: abgelaufene Todes-Fades endgueltig entfernen
+                for (size_t di = 0; di < mBattlerDying.size();) {
+                    mBattlerDying[di].t -= dt;
+                    if (mBattlerDying[di].t <= 0.0f) {
+                        removeBattlerPic(mBattlerDying[di].tag);
+                        mBattlerDying.erase(mBattlerDying.begin() + (ptrdiff_t)di);
+                    } else {
+                        ++di;
+                    }
+                }
             }
         } else if (mBattleStatusEnemiesId >= 0) {
             GameUI::Get().RemoveScreenText(mBattleStatusEnemiesId);
@@ -1465,6 +1503,8 @@ void Engine::Update(float dt) {
             }
             for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
             mBattlerPicNames.clear(); // Gegner-Grafiken weg
+            mBattlerPicIds.clear();
+            mBattlerDying.clear(); // PAKET 15: laufende Todes-Fades weg
         }
         if (mRubyVM) mRubyVM->Update(dt);
     }
@@ -1495,6 +1535,8 @@ void Engine::Update(float dt) {
         }
         for (const auto& tag : mBattlerPicNames) GameUI::Get().RemovePicture(tag);
         mBattlerPicNames.clear(); // Gegner-Grafiken weg
+        mBattlerPicIds.clear();
+        mBattlerDying.clear(); // PAKET 15: laufende Todes-Fades weg
     }
 
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode

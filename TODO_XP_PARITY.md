@@ -980,6 +980,40 @@ Titel↔Spiel sprangen hart um.
 weich von alter zu neuer Karte (≈0,25 s), Titel-Neustart fadet in die
 Startkarte; ohne Assets zusaetzlich noetig (Standard-Crossfade).
 
+## PAKET 15 — Kampfszene: XP-Sieg-Sequenz ✅ ERLEDIGT 2026-07-24
+
+Drei Feinschliff-Luecken der Kampfszene gegenueber XP
+(`Scene_Battle#start_phase5` / Gegner-Collapse): die Datenbank-ME
+`battleEndMe` wurde zwar geladen/gespeichert, aber **nie abgespielt**;
+die Victory-Phase endete starr nach 2 s (unabhaengig davon, ob die
+Sieg-/EXP-/Level-Up-Nachricht noch offen war oder schon bestaetigt);
+tote Gegner verschwanden hart im selben Frame.
+
+- [x] **Sieg-ME:** neuer zentraler Hook `BattleSystem::onVictoryMe` —
+  feuert in `CheckVictory` mit `System().battleEndMe`; Engine injiziert
+  ihn EINMAL in `Initialize` (`PlayEventAudio(name, 2=ME)`). Bewusst
+  nicht ueber `onVictory` geloest: die kampfstart-seitigen Setup-Pfade
+  (Event-Befehl, StartBattleByTroop, RubyVM) ueberschreiben onVictory/
+  onMessage regelmaessig — der Audio-Hook bleibt davon unberuehrt.
+- [x] **Ergebnis-Quittierung statt Starr-Timer:** neuer Hook
+  `BattleSystem::isMessageBusy` (Engine: `GameUI::Message().IsBusy()`).
+  Victory endet jetzt, sobald die Nachricht quittiert ist (Mindest-
+  Darstellzeit 0,6 s; 15 s Sicherheitsnetz ohne/haengenden Hook — statt
+  der starren 2,0 s). XP-Verhalten: Ergebnisfenster wartet auf Eingabe.
+- [x] **XP-Collapse (Todes-Fade):** tote Gegner ($battler-Bilder) werden
+  nicht mehr sofort entfernt, sondern faden ueber ~0,45 s weich aus
+  (`TweenPictureOpacity` auf die neu gemerkten Picture-IDs), erst dann
+  endgueltig weg. Steuerzustand `mBattlerDying`/`mBattlerPicIds` in der
+  Engine; alle drei Cleanup-Pfade (Kampfende, Titel, Geist-Reset)
+  leeren ihn mit.
+- [x] Shutdown nullliert die neuen Hooks (onVictoryMe haelt this).
+
+**Akzeptanz:** Letzter Gegner faellt → Collapse-Fade des Bildes +
+„001-Victory01" (oder Projektwahl) spielt → Sieg-/EXP-/Level-Up-Text
+bleibt stehen, bis der Spieler bestaetigt — dann erst EXP/Gold-Mechaik
+abschliessen (SyncBack/onVictory) und Kampfende. Genau wie XP, nur
+rund.
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

@@ -4,6 +4,8 @@
 #include <string>
 #include <chrono>
 #include <functional>
+#include <vector>
+#include <map>
 #include "Types.h"
 #include "Model.h"
 
@@ -222,6 +224,12 @@ private:
     // Gegner-Grafiken im Kampf (Graphics/Battlers/, XP-Battler-Bilder):
     // Namen der aktiven $battler-Pictures, damit kein Flackern/Reload entsteht
     std::vector<std::string> mBattlerPicNames;
+    // PAKET 15: Picture-IDs zu den Tags (fuer Opacity-Tween beim Todes-Fade)
+    std::map<std::string, int> mBattlerPicIds;
+    // PAKET 15: XP-Collapse — Gegnerbilder faden beim Tod ueber ~0,45 s aus
+    // (statt Sofort-Loeschen). Timer zaehlt abwaerts; bei <=0 wird entfernt.
+    struct DyingBattlerPic { int picId = 0; std::string tag; float t = 0.0f; };
+    std::vector<DyingBattlerPic> mBattlerDying;
     // PAKET 9: Ziel-Blinken — aktuell flackerndes $battler-Picture (oder leer)
     std::string mBattleBlinkTag;
 
