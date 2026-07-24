@@ -2,6 +2,10 @@
 
 #include <memory>
 #include <string>
+#include <chrono>
+#include <functional>
+#include <vector>
+#include <map>
 #include "Types.h"
 #include "Model.h"
 
@@ -19,9 +23,10 @@ class Framebuffer;
 class CommandHistory;
 class RubyVM;
 class ScriptManager;
-class RmlUiSystem;
 
 class MeshFactory;
+struct Battler; // BattleSystem.h — fuer das Kampf-Feedback (PAKET 9)
+enum class BattleHitKind; // BattleSystem.h — Treffer-Art des Feedbacks (PAKET 9)
 
 class Engine {
 public:
@@ -66,11 +71,20 @@ public:
     CommandHistory& GetCommandHistory() { return *mCommandHistory; }
     RubyVM& GetRubyVM() { return *mRubyVM; }
     ScriptManager& GetScriptManager() { return *mScriptManager; }
-    #ifdef RPGMAKER3D_ENABLE_RMLUI
-    RmlUiSystem* GetRmlUi() { return mRmlUi.get(); }
-#else
-    RmlUiSystem* GetRmlUi() { return nullptr; }
-#endif
+
+    /// Audio-Pfadaufloesung (XP-Struktur <Projekt>/Audio/<Art>/ u. a.)
+    /// kind: 0=BGM, 1=BGS, 2=ME, 3=SE. "" wenn nicht gefunden.
+    /// Public fuer die RGSS-Audio-Bindings (XP-Audio.*-API).
+    std::string ResolveAudioPath(const std::string& name, int kind) const;
+    // ---- XP-artiger Debug-Inspektor (Paket 4, TODO_XP_PARITY.md) ----
+    // F10: live Schalter-/Variablen-Fenster ueber die RGSS-Fensterschicht
+    // (funktioniert im Player UND im eingebetteten Qt-Playtest, weil die
+    // Taste direkt im Engine-Update abgefragt wird). F9 toggelt das
+    // Spiel-HUD (GameUI::ToggleHud, PAKET 10).
+    void ToggleDebugWindow();
+    void UpdateDebugWindow(float dt);
+    void RedrawDebugWindowContent();
+    void DestroyDebugWindow();
 
     float GetDeltaTime() const { return mDeltaTime; }
     float GetTime() const { return mTime; }
@@ -90,11 +104,25 @@ public:
 
     bool IsPlaying() const { return mPlayMode; }
     void SetPlaying(bool playing);
+    /// XP-Titelbildschirm (Player): Neues Spiel / Weiterspielen / Beenden.
+    /// Verdrahtet die TitleScreen-Callbacks und zeigt den Titel an.
+    /// Respektiert Game.ini: bei NativeTitle=0 -> Ruby-Hook Game.custom_title
+    /// (eigener Titelbildschirm) bzw. direkter Spielstart.
+    void StartTitleMode();
+    /// "Alles custom": liest <Projekt>/Game.ini und wendet Skins/HUD-Startwert
+    /// an. Laeuft automatisch bei Titel-/Spielstart (idempotent, billig).
+    void LoadCustomConfigForProject();
     bool IsPlayModeFollowPlayer() const { return mPlayModeFollowPlayer; }
     void SetPlayModeFollowPlayer(bool follow) { mPlayModeFollowPlayer = follow; }
 
     void SaveScene(const std::string& path) const;
     bool LoadScene(const std::string& path);
+
+    // PAKET 25: Runtime-Karte laden mit spielbarem Fallback.
+    // Versucht maps/mapN.map zu laden; fehlt die Datei, wird statt einer
+    // leeren 0-Layer-Welt eine prozedurale Standardkarte (Map::CreateFallback,
+    // Groesse aus den Datenbank-MapInfos) erzeugt. Rueckgabe: true = Datei.
+    bool LoadRuntimeMap(int mapId);
 
     void SetActiveCamera(EntityID cameraEntity) {
         mActiveCameraEntity = cameraEntity;
@@ -113,7 +141,48 @@ public:
     int GetSelectedEntity() const { return mSelectedEntity; }
 
 private:
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    // ---- PAKET 10 Fix: ImGui-Frame-Lebenszyklus (GameUI-Overlay) ----
+    // Kontext + OpenGL3-Backend (eingebetteter gl3w-Loader, kein Konflikt
+    // mit glad). SDL-Backend bewusst NICHT: Eingaben laufen nativ ueber
+    // Input/GameUI::UpdateModalInput und der Qt-Host pumpt keine SDL-Events.
+    void InitImGui();               // einmalig in InitializeInternal (GL laeuft)
+    void ImGuiBeginFrame();         // DisplaySize/DeltaTime + NewFrame (Render)
+    void ImGuiEndFrame();           // ImGui::Render + GL-DrawData zeichnen
+    void ShutdownImGui();           // Backend + Kontext (Engine::Shutdown)
+    bool mImGuiReady = false;       // Kontext + Backend initialisiert?
+    bool mImGuiFrameOpen = false;   // NewFrame ohne Render verhindern
+    std::chrono::steady_clock::time_point mImGuiLastTime{}; // DeltaTime-Uhr
+#endif
+
     bool InitializeInternal(const std::string& title, int width, int height, bool editorMode, bool createOsWindow);
+    /// Event-Audio (BGM/BGS/ME/SE) + Karten-Autoplay: loest Dateinamen gegen
+    /// <Projekt>/Audio/<Art>/ (XP-Struktur) und assets/audio/<Art>/ auf und
+    /// spielt ueber den AudioManager ab. kind: 0=BGM,1=BGS,2=ME,3=SE.
+    void PlayEventAudio(const std::string& name, int kind, bool loop);
+    /// Bild-Pfadaufloesung fuer UI.show_picture + Titelgrafik:
+    /// <Projekt>/Graphics/Pictures|Titles/ (XP), Pictures/, assets/…
+    std::string ResolvePicturePathFor(const std::string& filename) const;
+    /// Titelmodus beenden (Titelgrafik entfernen, Titel-BGM ausblenden)
+    void EndTitleMode();
+    /// „Zum Titelbildschirm" aus dem Menue: Spiel sauber stoppen + Titel
+    void ReturnToTitle();
+
+    // ---- PAKET 14: XP-Uebergaenge (Graphics.freeze → Swap → transition) --
+    /// Szenenwechsel mit XP-Crossfade: Freeze anfordern, am naechsten Tick
+    /// (sobald der Snapshot existiert) <swapNow> ausfuehren, dann
+    /// Graphics.transition(<durFrames>) ohne Maskengrafik (= XP-Crossfade).
+    /// Ohne sichtbaren Overlay-Kanal (Editor ohne Playtest) sofort swap.
+    void RequestTransition(std::function<void()> swapNow, int durFrames = 15);
+    /// Arbiter im Update: wartet haveSnapshot ab, dann swap + transition.
+    void UpdateTransitionRequest();
+    struct TransitionRequest {          // eine anstehende Uebergangs-Anfrage
+        std::function<void()> swap;
+        int durationFrames = 15;        // XP 10 Frames @40fps ≈ 15 @60fps
+        int framesWaited = 0;           // Warte-Ticks auf den Snapshot
+        bool active = false;
+    };
+    TransitionRequest mTransitionReq;
     std::unique_ptr<Window> mWindow;
     std::unique_ptr<Renderer> mRenderer;
     std::unique_ptr<Input> mInput;
@@ -126,9 +195,6 @@ private:
     std::unique_ptr<Framebuffer> mSceneFramebuffer;
     std::unique_ptr<CommandHistory> mCommandHistory;
     std::unique_ptr<RubyVM> mRubyVM;
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    std::unique_ptr<RmlUiSystem> mRmlUi;
-#endif
     std::unique_ptr<ScriptManager> mScriptManager;
     Mesh mGridMesh;
 
@@ -137,6 +203,16 @@ private:
     bool mEditorMode = true;
     bool mPlayMode = false;
     bool mPlayModeFollowPlayer = true;
+    // ---- XP-Debug-Inspektor (Paket 4) ----
+    bool mDbgVisible = false;    // Fensterstatus (F10 toggle)
+    int  mDbgSel = 0;            // Kursorteil: Schalter- oder Variablenzeile
+    int  mDbgScroll = 0;         // erster sichtbarer Eintrag
+    bool mDbgEditing = false;    // Zahleneingabe fuer Variable aktiv
+    int  mDbgEditValue = 0;      // gepufferter Eingabewert
+    int  mDbgWindowId = 0;       // RGSS-Fenster (0 = keins)
+    int  mDbgContentsId = 0;     // RGSS-Bitmap des Fensterinhalts (0 = keine)
+    bool mDbgNeedsRedraw = true; // nach Wertwechsel neu zeichnen
+    float mDbgRefresh = 0.0f;    // Zeitscheibe fuer Live-Refresh (s)
     bool mShowGrid = true;
     Vec2 mSceneViewPos{0.0f};
     Vec2 mSceneViewSize{1280.0f, 720.0f};
@@ -147,6 +223,29 @@ private:
     int mFPS = 0;
     float mFPSTimer = 0.0f;
     int mFrameCount = 0;
+
+    // XP-Kampfstatus-Anzeige (Gegnerzeile oben, Screen-Text-Id)
+    int mBattleStatusEnemiesId = -1;
+    float mBattleStatusTimer = 0.0f;
+    // Gegner-Grafiken im Kampf (Graphics/Battlers/, XP-Battler-Bilder):
+    // Namen der aktiven $battler-Pictures, damit kein Flackern/Reload entsteht
+    std::vector<std::string> mBattlerPicNames;
+    // PAKET 15: Picture-IDs zu den Tags (fuer Opacity-Tween beim Todes-Fade)
+    std::map<std::string, int> mBattlerPicIds;
+    // PAKET 15: XP-Collapse — Gegnerbilder faden beim Tod ueber ~0,45 s aus
+    // (statt Sofort-Loeschen). Timer zaehlt abwaerts; bei <=0 wird entfernt.
+    struct DyingBattlerPic { int picId = 0; std::string tag; float t = 0.0f; };
+    std::vector<DyingBattlerPic> mBattlerDying;
+    // PAKET 9: Ziel-Blinken — aktuell flackerndes $battler-Picture (oder leer)
+    std::string mBattleBlinkTag;
+
+    // PAKET 9: XP-fliegende Schadens-/Heilungszahlen (+Crit/Miss) ueber dem
+    // Ziel (Quelle: BattleSystem::onBattlerHit, verdrahtet in Initialize;
+    //  amount > 0 = Schaden, < 0 = Heilung, Miss = 0)
+    void SpawnBattleFeedbackPopup(const Battler& b, BattleHitKind kind, int amount);
+
+    // Game Over: Anzeige laeuft, wartet auf Bestaetigung -> Titel/Stopp
+    bool mGameOverPending = false;
 };
 
 } // namespace rpg

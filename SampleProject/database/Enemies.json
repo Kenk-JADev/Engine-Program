@@ -1,4 +1,10 @@
 [
-  {"id": 1, "name": "Slime", "hp": 40, "atk": 10},
-  {"id": 2, "name": "Bat", "hp": 60, "atk": 15}
+  {"id": 1, "name": "Slime", "hp": 40, "atk": 10, "elementRanks": [3], "actions": [
+    {"kind": 0, "basic": 0, "rating": 5}
+  ]},
+  {"id": 2, "name": "Bat", "hp": 60, "maxMp": 10, "atk": 15, "elementRanks": [0], "actions": [
+    {"kind": 0, "basic": 0, "rating": 5},
+    {"kind": 1, "skillId": 3, "rating": 4, "hpBelow": 80},
+    {"kind": 0, "basic": 1, "rating": 3}
+  ]}
 ]

@@ -1,0 +1,126 @@
+{
+  "formatVersion": 2,
+  "events": [
+    {
+      "id": 1,
+      "name": "Dorfaeltester",
+      "x": 14, "z": 10,
+      "worldPos": [2, 0, 0.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "moveType": 3,
+          "customRoute": "R R W40 L L W40",
+          "routeRepeat": true,
+          "list": [
+            {"code": 101, "text": "Willkommen in Dorfrand! Im Sueden liegt der Waldweg - pass auf dich auf, dort treiben sich Fledermaeuse herum."},
+            {"code": 102, "text": "Brauchst du etwas fuer die Reise?|50 Gold|Nichts", "param1": 2, "param2": 0},
+            {"code": 402, "param1": 0, "indent": 0},
+            {"code": 125, "param1": 50, "indent": 1},
+            {"code": 101, "text": "Hier, nimm 50 Gold. Kauf dir etwas Sinnvolles davon!", "indent": 1},
+            {"code": 402, "param1": 1, "indent": 0},
+            {"code": 101, "text": "Komm bald wieder, junger Freund!", "indent": 1},
+            {"code": 404, "indent": 0}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Wegweiser",
+      "x": 11, "z": 9,
+      "worldPos": [-1, 0, -0.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "list": [
+            {"code": 101, "text": "(Wegweiser)  Mitte: Dorfplatz  |  Sueden: Waldweg  |  Westen: Teich  |  Nordosten: altes Haus"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Truhe am Haus",
+      "x": 22, "z": 5,
+      "worldPos": [10, 0, -4.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "list": [
+            {"code": 101, "text": "Du oeffnest die alte Truhe ..."},
+            {"code": 126, "param1": 3, "param2": 2},
+            {"code": 126, "param1": 1, "param2": 1},
+            {"code": 101, "text": "Gefunden: 2x Gegengift und 1x Potion!"},
+            {"code": 123, "text": "A", "param3": 1}
+          ]
+        },
+        {
+          "id": 1,
+          "trigger": 1,
+          "condition": {"selfSwitchValid": true, "selfSwitchCh": "A"},
+          "list": [
+            {"code": 101, "text": "Die Truhe ist leer."}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Heilkristall",
+      "x": 9, "z": 5,
+      "worldPos": [-3, 0, -4.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "list": [
+            {"code": 101, "text": "Der Kristall am Ufer strahlt waermend ..."},
+            {"code": 314, "param1": 0}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Weg zum Wald",
+      "x": 12, "z": 18,
+      "worldPos": [0, 0, 8.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 2,
+          "through": true,
+          "list": [
+            {"code": 201, "param1": 0, "param2": 4, "param3": 2}
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Arena-Trainer",
+      "x": 15, "z": 11,
+      "worldPos": [3, 0, 1.5],
+      "enabled": true,
+      "pages": [
+        {
+          "id": 0,
+          "trigger": 1,
+          "list": [
+            {"code": 101, "text": "Ich bin der Arena-Trainer. Lust auf einen Uebungskampf? Gleich geht es los - ein Schleim wartet schon!"},
+            {"code": 301, "param1": 1, "param2": 3}
+          ]
+        }
+      ]
+    }
+  ]
+}

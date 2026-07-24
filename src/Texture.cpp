@@ -47,6 +47,28 @@ bool Texture::ReadPixelsRGBA(std::vector<unsigned char>& outPixels) const {
     return true;
 }
 
+bool Texture::CreateFromRGBA(int width, int height, const unsigned char* rgbaPixels) {
+    if (width <= 0 || height <= 0 || !rgbaPixels) return false;
+    if (mTextureID != 0) Delete();
+    mWidth = width;
+    mHeight = height;
+    mChannels = 4;
+
+    glGenTextures(1, &mTextureID);
+    glBindTexture(GL_TEXTURE_2D, mTextureID);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+    mPath.clear(); // CPU-generiert, kein Dateipfad
+    return true;
+}
+
 void Texture::CreateDefault() {
     CreateCheckerboard();
 }

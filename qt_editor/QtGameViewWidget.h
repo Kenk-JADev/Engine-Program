@@ -2,7 +2,7 @@
 // Qt-Editor: eingebettetes OpenGL-Widget - der "Game View" des Editors.
 // Besitzt den GL-Kontext (Qt), laedt glad, initialisiert die Engine im
 // Embedded-Modus und rendert jede paintGL()-Runde den Engine-Frame.
-// Zusaetzlich: Tile-Paint-Modus + RmlUi-Input-Bruecke.
+// Zusaetzlich: Tile-Paint-Modus + Engine-Input-Bruecke (RmlUi entfallen, PAKET 10).
 
 // glad VOR Qt OpenGL, sonst "OpenGL header already included"
 #ifndef GLAD_GL_H_
@@ -76,7 +76,10 @@ private:
     void flushPaintStroke();
 
     // Gizmo translate
-    int mGizmoMode = 1; // 1=translate
+    // PAKET 26: Standard = AUS (0). Sonst liessen sich Entities in der
+    // Spielansicht sofort versehentlich per Maus verschieben. Aktivierung
+    // nur explizit ueber das Ribbon "Gizmo" (Editor-Tab Werkzeuge).
+    int mGizmoMode = 0; // 0=aus, 1=translate
     int mGizmoAxis = -1; // 0=X 1=Y 2=Z
     bool mGizmoDragging = false;
     float mGizmoStartPos[3] = {0,0,0};

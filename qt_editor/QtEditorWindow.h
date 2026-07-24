@@ -1,11 +1,13 @@
 #pragma once
 // Qt-Editor-Hauptfenster: QMainWindow mit nativen Dock-Fenstern.
-// Der ImGui-Editor ist entfernt – Qt ist der einzige Editor-Host.
 //
-// Layout:
-//  - Zentral: QTabWidget mit "Game View" (3D) und "Code" (Ruby/C++)
-//  - Docks: Hierarchie, Eigenschaften, Konsole
-//  - Menues/Toolbars + QTimer-Game-Loop
+// Oberfläche (Engine-Design, dunkel):
+//  - Menüleiste + kompakte XP-Symbolleiste (PAKET 28: eine Icon-Zeile wie im
+//    RPG Maker XP statt Ribbon-Kategorien)
+//  - Zentral: QTabWidget mit Tabs UNTEN (Browser-Stil):
+//    "Spielansicht" (3D), "Landkarte" (2D), "Spiel" (Playtest), "Skript" (Code)
+//  - Docks: Hierarchie, Eigenschaften, Konsole, Map, Database, Events, Assets
+//  - Playtest startet die Player-exe mit dem Projektordner als Argument.
 
 #include <QMainWindow>
 #include <memory>
@@ -22,6 +24,8 @@ class QDoubleSpinBox;
 class QAction;
 class QWidget;
 class QTabWidget;
+class QCheckBox;
+class QPushButton;
 
 namespace rpg { class Engine; }
 
@@ -29,6 +33,7 @@ namespace qt_editor {
 
 class QtGameViewWidget;
 class QtCodeWorkspace;
+class QtMapTab;
 class QtMapEditorDock;
 class QtDatabaseEditorDock;
 class QtEventEditorDock;
@@ -40,12 +45,16 @@ public:
     explicit QtEditorWindow(QWidget* parent = nullptr);
     ~QtEditorWindow() override;
 
+    /// Kampftest aus dem Datenbank-Trupps-Tab: Player mit --battletest=<id>
+    /// (public: wird direkt aus QtDatabaseDialog::EditDatabase aufgerufen)
+    void StartBattleTest(int troopId);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void onTick();               // Game-Loop (QTimer, ~60 Hz)
-    void onUiTick();             // UI-Sync (500 ms): Hierarchie/Properties/Menues
+    void onUiTick();             // UI-Sync (500 ms): Hierarchie/Properties/Menüs
     void onPlaytestToggled(bool on);
     void onAboutToQuit();        // sauberes Engine-Shutdown mit GL-Kontext
     void onCentralTabChanged(int index);
@@ -56,6 +65,14 @@ private slots:
     void actionSaveProject();
     void actionSaveSceneAs();
     void actionLoadSceneFrom();
+    /// „Spiel exportieren": Player-exe (als Game.exe) + Projektordner (als
+    /// Unterordner „Game") + nebenliegende DLLs in einen Zielordner kopieren.
+    void actionExportGame();
+    /// Projekt aus einem konkreten Pfad öffnen (Dialog, Zuletzt-Liste, Willkommen)
+    void openProjectPath(const QString& path);
+
+    // Playtest
+    void actionPlaytestPlayer();     // externe Player-exe (F5)
 
     // Erstellen / Bearbeiten
     void actionCreateCube();
@@ -68,10 +85,32 @@ private slots:
 private:
     void buildMenus();
     void buildDocks();
-    void buildToolbar();
+    void buildToolBar();              // kompakte XP-Symbolleiste (ersetzt das Ribbon)
+    void syncToolBarLayers();        // Ebenen-Buttons an mMapTab->paintLayer spiegeln
     void buildCentral();
+    QWidget* buildPlayTab();
+    QString findPlayerExecutable() const;
     QWidget* buildPropertiesWidget();
     void log(const QString& msg);
+    /// Skript-Editor als eigenes Fenster oeffnen (XP-Stil, F11)
+    void showScriptEditor();
+
+    // Easy-to-use: Zuletzt geöffnete Projekte, Willkommens-Dialog, Hilfe
+    void addRecentProject(const QString& path);
+    void rebuildRecentProjectsMenu();
+    void showWelcomeDialog();
+    void showShortcutsDialog();
+    /// Statuszeile: aktive Karte (Name, ID, Größe) anzeigen
+    void updateMapStatus();
+    /// Spiel-Tab: Projekt-Übersicht/Statusanzeige aktualisieren
+    void updatePlayTabInfo();
+    /// Fragt vor dem Playtest, ob gespeichert werden soll (mit Merk-Option).
+    /// true = fortfahren, false = abgebrochen
+    bool confirmPlaytestSave();
+    /// Skripte + Szene speichern (für den Playtest, Player liest von Disk)
+    void saveAllForPlaytest();
+    /// Spiel-Tab: alle Ruby-Skripte ohne Start prüfen, Ergebnis anzeigen
+    void runScriptCheck();
 
     // Engine-Aktionen
     void loadScenePackage();
@@ -90,7 +129,10 @@ private:
     std::unique_ptr<rpg::Engine> mEngine;
     QTabWidget* mCentralTabs = nullptr;
     QtGameViewWidget* mView = nullptr;
+    QtMapTab* mMapTab = nullptr;
+    QWidget* mPlayTab = nullptr;
     QtCodeWorkspace* mCode = nullptr;
+
     QtMapEditorDock* mMapDockWidget = nullptr;
     QtDatabaseEditorDock* mDbDockWidget = nullptr;
     QtEventEditorDock* mEventDockWidget = nullptr;
@@ -115,15 +157,32 @@ private:
     QDoubleSpinBox* mScale[3] = {nullptr, nullptr, nullptr};
 
     QLabel* mStatusInfo = nullptr;
+    QLabel* mStatusMap = nullptr;   // permanente Statuszeile: aktive Karte
+    QLabel* mStatusTile = nullptr;  // permanente Statuszeile: Maus-Feld (Landkarte)
+    QLabel* mPlayTabStatus = nullptr;
+    class QMenu* mRecentMenu = nullptr;
+    // Spiel-Tab (Playtest-Übersicht)
+    QLabel* mPlayTabInfo = nullptr;
+    QLabel* mPlayTabExeStatus = nullptr;
+    QPushButton* mPlayTabEmbeddedBtn = nullptr;
+    QCheckBox* mAutoSaveCheck = nullptr;
+    QPlainTextEdit* mScriptCheckOutput = nullptr;
 
-    // Menue-Aktionen
+    // Menü-Aktionen (werden auch in die XP-Symbolleiste gehaengt → ein Eintrag
+    // = ein Zustand, kein doppelter Sync)
+    QAction* mNewAction = nullptr;
+    QAction* mOpenAction = nullptr;
     QAction* mUndoAction = nullptr;
     QAction* mRedoAction = nullptr;
     QAction* mDeleteAction = nullptr;
     QAction* mSaveAction = nullptr;
-    QAction* mPlayAction = nullptr;
+    QAction* mPlayAction = nullptr;       // eingebetteter Playtest (Shift+F5)
+    QAction* mPlayPlayerAction = nullptr; // externe Player-exe (F5)
     QAction* mShowGameViewAction = nullptr;
     QAction* mShowCodeAction = nullptr;
+    QAction* mLayerActions[4] = {nullptr, nullptr, nullptr, nullptr}; // XP: Ebene 1/2/3/EV
+    QAction* mGizmoAction = nullptr;    // Werkzeuge: Translate-Gizmo an/aus
+    QAction* mMapPaintAction = nullptr; // Werkzeuge: Tile-Malen im 3D-View
 
     QTimer* mTimer = nullptr;
     QTimer* mUiTimer = nullptr;

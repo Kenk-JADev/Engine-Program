@@ -1,5 +1,7 @@
 #include "QtMapEditorDock.h"
 
+#include "QtMapPropertiesDialog.h"
+
 #include "rpgmaker3d/Engine.h"
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Tileset.h"
@@ -29,6 +31,7 @@
 #include <QGroupBox>
 #include <QSplitter>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPainter>
 #include <QIcon>
 #include <QPixmap>
@@ -54,7 +57,7 @@ void QtMapEditorDock::buildUi() {
     // Toolbar
     auto* tb = new QHBoxLayout();
     auto* btnNew = new QPushButton("Neu", this);
-    auto* btnDel = new QPushButton("Loeschen", this);
+    auto* btnDel = new QPushButton("Löschen", this);
     auto* btnSave = new QPushButton("Speichern", this);
     auto* btnLoad = new QPushButton("Laden", this);
     connect(btnNew, &QPushButton::clicked, this, &QtMapEditorDock::onNewMap);
@@ -74,6 +77,57 @@ void QtMapEditorDock::buildUi() {
     mMapList = new QListWidget(split);
     mMapList->setMaximumHeight(140);
     connect(mMapList, &QListWidget::currentRowChanged, this, [this](int) { onMapSelected(); });
+    // XP: Doppelklick auf einen Karteneintrag öffnet die Karteneigenschaften
+    connect(mMapList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
+        if (QtMapPropertiesDialog::EditMapProperties(this, mEngine, mSelectedMapIndex)) {
+            rebuildMapList();
+            rebuildTilePalette(); // Tileset könnte gewechselt worden sein
+            emit mapLoaded();     // Landkarte + 3D aktualisieren
+            emit logMessage(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
+        }
+    });
+
+    // Easy-to-use: Rechtsklick-Menü auf der Kartenliste (wie bei XP)
+    mMapList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mMapList, &QListWidget::customContextMenuRequested, this, [this](const QPoint& pos) {
+        if (pos.isNull()) return;
+        auto& infos = rpg::Database::Get().MapInfos();
+        const bool hasMap = mSelectedMapIndex >= 0 &&
+                            mSelectedMapIndex < static_cast<int>(infos.size());
+        QMenu menu(this);
+        auto* actProps = menu.addAction(QStringLiteral("Karteneigenschaften …"));
+        actProps->setEnabled(hasMap);
+        auto* actStart = menu.addAction(QStringLiteral("Als Startkarte festlegen"));
+        actStart->setEnabled(hasMap);
+        menu.addSeparator();
+        auto* actNew = menu.addAction(QStringLiteral("Neue Karte"));
+        auto* actDel = menu.addAction(QStringLiteral("Karte löschen"));
+        actDel->setEnabled(hasMap);
+        auto* chosen = menu.exec(mMapList->viewport()->mapToGlobal(pos));
+        if (!chosen) return;
+        if (chosen == actProps) {
+            if (QtMapPropertiesDialog::EditMapProperties(this, mEngine, mSelectedMapIndex)) {
+                rebuildMapList();
+                rebuildTilePalette();
+                emit mapLoaded();
+                emit logMessage(QStringLiteral("Karteneigenschaften übernommen und gespeichert."));
+            }
+        } else if (chosen == actStart && hasMap) {
+            const auto& info = infos[static_cast<size_t>(mSelectedMapIndex)];
+            rpg::Database::Get().System().startMapId = info.id;
+            if (mEngine) {
+                const std::string pp = mEngine->GetProject().GetProjectPath();
+                if (!pp.empty()) rpg::Database::Get().Save(pp);
+            }
+            rebuildMapList(); // ★-Markierung aktualisieren
+            emit logMessage(QStringLiteral("Startkarte festgelegt: %1 (ID %2)")
+                .arg(QString::fromStdString(info.name)).arg(info.id));
+        } else if (chosen == actNew) {
+            onNewMap();
+        } else if (chosen == actDel) {
+            onDeleteMap();
+        }
+    });
 
     // Props
     auto* props = new QGroupBox("Karten-Eigenschaften", split);
@@ -82,13 +136,13 @@ void QtMapEditorDock::buildUi() {
     mWidthSpin = new QSpinBox(props); mWidthSpin->setRange(1, 500); mWidthSpin->setValue(20);
     mHeightSpin = new QSpinBox(props); mHeightSpin->setRange(1, 500); mHeightSpin->setValue(15);
     mTilesetIdSpin = new QSpinBox(props); mTilesetIdSpin->setRange(1, 999); mTilesetIdSpin->setValue(1);
-    auto* applyBtn = new QPushButton("Uebernehmen", props);
-    auto* resizeBtn = new QPushButton("Groesse anwenden", props);
+    auto* applyBtn = new QPushButton("Übernehmen", props);
+    auto* resizeBtn = new QPushButton("Größe anwenden", props);
     connect(applyBtn, &QPushButton::clicked, this, &QtMapEditorDock::onApplyProps);
     connect(resizeBtn, &QPushButton::clicked, this, &QtMapEditorDock::onResizeMap);
     form->addRow("Name", mNameEdit);
     form->addRow("Breite", mWidthSpin);
-    form->addRow("Hoehe", mHeightSpin);
+    form->addRow("Höhe", mHeightSpin);
     form->addRow("Tileset-ID", mTilesetIdSpin);
     auto* propBtns = new QHBoxLayout();
     propBtns->addWidget(applyBtn);
@@ -107,7 +161,7 @@ void QtMapEditorDock::buildUi() {
     mEraserBtn = new QPushButton("Radiergummi", paintBox);
     connect(mEraserBtn, &QPushButton::clicked, this, &QtMapEditorDock::onEraser);
     auto* clearBtn = new QPushButton("Ebene leeren", paintBox);
-    auto* fillBtn = new QPushButton("Ebene fuellen", paintBox);
+    auto* fillBtn = new QPushButton("Ebene füllen", paintBox);
     connect(clearBtn, &QPushButton::clicked, this, &QtMapEditorDock::onClearLayer);
     connect(fillBtn, &QPushButton::clicked, this, &QtMapEditorDock::onFillLayer);
     mTileInfo = new QLabel("Tile: 0", paintBox);
@@ -190,7 +244,9 @@ void QtMapEditorDock::rebuildMapList() {
     mMapList->clear();
     auto& infos = rpg::Database::Get().MapInfos();
     for (const auto& info : infos) {
-        mMapList->addItem(QString("%1: %2 (%3x%4)")
+        const bool isStart = (info.id == rpg::Database::Get().System().startMapId);
+        mMapList->addItem(QString("%1%2: %3 (%4x%5)")
+            .arg(isStart ? QStringLiteral("★ ") : QString())
             .arg(info.id).arg(QString::fromStdString(info.name))
             .arg(info.width).arg(info.height));
     }
@@ -251,7 +307,7 @@ void QtMapEditorDock::onDeleteMap() {
     auto& infos = rpg::Database::Get().MapInfos();
     if (mSelectedMapIndex < 0 || mSelectedMapIndex >= static_cast<int>(infos.size())) return;
     if (infos.size() <= 1) {
-        QMessageBox::information(this, "Loeschen", "Mindestens eine Karte muss bleiben.");
+        QMessageBox::information(this, "Löschen", "Mindestens eine Karte muss bleiben.");
         return;
     }
     infos.erase(infos.begin() + mSelectedMapIndex);
@@ -259,7 +315,7 @@ void QtMapEditorDock::onDeleteMap() {
     mSelectedMapIndex = std::min(mSelectedMapIndex, static_cast<int>(infos.size()) - 1);
     rebuildMapList();
     loadSelectedMap();
-    emit logMessage("Karte geloescht.");
+    emit logMessage("Karte gelöscht.");
 }
 
 void QtMapEditorDock::onSaveMap() {
@@ -310,7 +366,7 @@ void QtMapEditorDock::onApplyProps() {
         }
         rebuildTilePalette();
     }
-    emit logMessage("Karten-Eigenschaften uebernommen.");
+    emit logMessage("Karten-Eigenschaften übernommen.");
 }
 
 void QtMapEditorDock::onResizeMap() {
@@ -323,7 +379,7 @@ void QtMapEditorDock::onResizeMap() {
         mEngine->GetMap().Resize(info.width, info.height);
     }
     rebuildMapList();
-    emit logMessage(QString("Karte resized: %1x%2").arg(info.width).arg(info.height));
+    emit logMessage(QString("Kartengröße geändert: %1x%2 Felder").arg(info.width).arg(info.height));
     emit mapLoaded();
 }
 
@@ -376,7 +432,8 @@ void QtMapEditorDock::loadSelectedMap() {
     if (fs::exists(scenePath)) {
         mEngine->LoadScene(scenePath);
     } else {
-        mEngine->GetMap().Load(mEngine->GetProject().GetMapPath(mapInfo.id));
+        // PAKET 26: bei fehlender Kartendatei Standardkarte statt leerer Welt
+        mEngine->LoadRuntimeMap(mapInfo.id);
     }
 
     refresh();
@@ -414,7 +471,7 @@ void QtMapEditorDock::onClearLayer() {
 
 void QtMapEditorDock::onFillLayer() {
     if (!mEngine || mSelectedTile < 0) {
-        QMessageBox::information(this, "Fuellen", "Bitte erst ein Tile waehlen (nicht Radiergummi).");
+        QMessageBox::information(this, "Füllen", "Bitte zuerst ein Tile wählen (nicht den Radiergummi).");
         return;
     }
     auto& map = mEngine->GetMap();
@@ -434,6 +491,19 @@ void QtMapEditorDock::onTileClicked(int tileId) {
     mSelectedTile = tileId;
     mTileInfo->setText(QString("Tile: %1").arg(tileId));
     mEraserBtn->setStyleSheet("");
+    emit paintStateChanged();
+}
+
+void QtMapEditorDock::setSelectedTile(int tileId) {
+    if (mSelectedTile == tileId) return;
+    mSelectedTile = tileId;
+    if (mTileInfo)
+        mTileInfo->setText(tileId < 0 ? QStringLiteral("Tile: Radierer")
+                                      : QString("Tile: %1").arg(tileId));
+    if (mEraserBtn)
+        mEraserBtn->setStyleSheet(tileId < 0 ? QStringLiteral("border: 2px solid #e0a020;")
+                                             : QString());
+    rebuildTilePalette(); // Auswahlrahmen aktualisieren
     emit paintStateChanged();
 }
 
@@ -514,7 +584,7 @@ void QtMapEditorDock::rebuildTilePalette() {
 
 void QtMapEditorDock::onToggleSolid() {
     if (!mEngine || mSelectedTile < 0) {
-        emit logMessage("Solid: bitte ein Tile waehlen (nicht Radierer).");
+        emit logMessage("Solid: bitte ein Tile wählen (nicht den Radierer).");
         return;
     }
     auto tileset = mEngine->GetMap().GetTileset();

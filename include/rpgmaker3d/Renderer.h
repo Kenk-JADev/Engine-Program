@@ -156,10 +156,19 @@ private:
     Color mClearColor{0.12f, 0.13f, 0.16f, 1.0f};
     bool mWireframeEnabled = false;
     Mat4 mLightSpaceMatrix{1.0f};
+    // PAKET 27: wurde die Light-Space-Matrix schon (karten-adaptiv durch
+    // die Engine) berechnet? Dann darf BeginShadowPass sie nicht mit dem
+    // fixen Default ueberschreiben.
+    bool mLightSpaceValid = false;
     bool mShadowsEnabled = true;
     bool mPointShadowsEnabled = true;
     int mShadowMapSize = 2048;
     int mPointShadowSize = 1024;
+    // Gemerktes Host-FBO: In Qt (QOpenGLWidget) ist der sichtbare Framebuffer
+    // NICHT 0. Shadow-Passes muessen ihn danach wieder binden, sonst bleibt
+    // der Game View schwarz.
+    int mPrevDrawFBO = 0;
+    int mPrevViewport[4] = {0, 0, 0, 0};
     
     FogSettings mFog;
     Skybox mSkybox;

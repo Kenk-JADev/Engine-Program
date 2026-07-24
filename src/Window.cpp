@@ -186,4 +186,31 @@ void Window::SetVSync(bool enabled) {
     }
 }
 
+bool Window::SetFullscreen(bool fullscreen) {
+    if (mForeign) {
+        // Kein eigenes OS-Fenster (Qt-Host): der Host regelt das Widget.
+        return false;
+    }
+    if (!mWindow) return false;
+    if (SDL_SetWindowFullscreen(mWindow,
+            fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) != 0) {
+        RPG_LOG_WARN(std::string("SetFullscreen fehlgeschlagen: ") + SDL_GetError());
+        return false;
+    }
+    mFullscreen = fullscreen;
+    // Groesse nachziehen (im Vollbild = Desktop-Aufloesung, sonst Restore)
+    SDL_GetWindowSize(mWindow, &mWidth, &mHeight);
+    RPG_LOG_INFO(std::string("Vollbild: ") + (mFullscreen ? "AN" : "AUS") +
+                 " (" + std::to_string(mWidth) + "x" + std::to_string(mHeight) + ")");
+    return true;
+}
+
+void Window::SetSize(int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    mWidth = width;
+    mHeight = height;
+    if (!mForeign && mWindow)
+        SDL_SetWindowSize(mWindow, width, height);
+}
+
 } // namespace rpg

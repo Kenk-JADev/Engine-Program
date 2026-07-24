@@ -1,0 +1,4 @@
+[
+  {"id":1,"name":"Dorfrand","width":25,"height":20,"tilesetId":1,"encounterStep":30,"encounterList":[1,2,0,0,0,0,0,0],"bgmName":""},
+  {"id":2,"name":"Waldweg","width":19,"height":15,"tilesetId":1,"encounterStep":25,"encounterList":[2,3,0,0,0,0,0,0],"bgmName":""}
+]

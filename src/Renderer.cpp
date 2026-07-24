@@ -438,13 +438,28 @@ Mat4 Renderer::CalculateLightSpaceMatrix(float orthoSize, float nearPlane, float
     Mat4 lightProj = glm::ortho(-size, size, -size, size, n, f);
     Mat4 lightSpace = lightProj * lightView;
     mLightSpaceMatrix = lightSpace;
+    mLightSpaceValid = true; // PAKET 27
     if (mShadowMap) mShadowMap->SetLightSpaceMatrix(lightSpace);
     return lightSpace;
 }
 
 void Renderer::BeginShadowPass() {
     if (!mShadowsEnabled || !mShadowMap || !mShadowMap->IsValid() || !mShadowShader) return;
-    CalculateLightSpaceMatrix();
+    // PAKET 27: KEINE eigene CalculateLightSpaceMatrix()-Berechnung mehr!
+    // Die Engine ruft sie direkt zuvor mit karten-adaptiver Ortho-Groesse
+    // (kleinere Karte = dichtere Shadow-Matrix = schaerfer). Der zweite
+    // Aufruf hier hat diese Matrix sofort wieder mit dem fixen Default
+    // (ortho 30) ueberschrieben - die Adaption war wirkungslos.
+    // Fallback fuer andere Aufrufer: nur rechnen, wenn noch nie gerechnet
+    // wurde (Matrix ist noch Identitaet).
+    if (!mLightSpaceValid) {
+        CalculateLightSpaceMatrix();
+    }
+    // WICHTIG (Qt-Fix): aktuelles Host-FBO + Viewport merken. QOpenGLWidget
+    // rendert in ein eigenes FBO (!= 0); ein spaeteres BindFramebuffer(..., 0)
+    // wuerde die Szene unsichtbar in den Fenster-Backbuffer zeichnen.
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &mPrevDrawFBO);
+    glGetIntegerv(GL_VIEWPORT, mPrevViewport);
     mShadowMap->Bind();
     mShadowShader->Bind();
     mShadowShader->SetMat4("uLightSpaceMatrix", mLightSpaceMatrix);
@@ -465,6 +480,9 @@ void Renderer::EndShadowPass() {
     glDisable(GL_CULL_FACE);
     mShadowMap->Unbind();
     if (mShadowShader) mShadowShader->Unbind();
+    // Host-FBO + Viewport wiederherstellen (Qt-Fix, siehe BeginShadowPass)
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(mPrevDrawFBO));
+    glViewport(mPrevViewport[0], mPrevViewport[1], mPrevViewport[2], mPrevViewport[3]);
 }
 
 void Renderer::DrawMeshDepth(const Mesh& mesh, const Mat4& transform) {
@@ -495,6 +513,9 @@ unsigned int Renderer::GetPointShadowCubemap(int index) const {
 
 void Renderer::RenderPointShadows(Scene& scene) {
     if (!mPointShadowsEnabled || !mPointShadowShader || mPointShadowMaps.empty()) return;
+    // Host-FBO merken (Qt-Fix): QOpenGLWidget-FBO ist != 0
+    int prevFBO = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFBO);
     Lighting& lighting = Lighting::Get();
     int shadowIdx = 0;
     for (size_t i = 0; i < lighting.GetPointLightCount() && shadowIdx < static_cast<int>(mPointShadowMaps.size()); ++i) {
@@ -545,9 +566,12 @@ void Renderer::RenderPointShadows(Scene& scene) {
             glDisable(GL_CULL_FACE);
             mPointShadowShader->Unbind();
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        // Zurueck zum Host-FBO (Qt-Fix, NICHT hart 0)
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFBO));
         shadowIdx++;
     }
+    // Sicherheit: am Ende nochmals Host-FBO binden
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<unsigned int>(prevFBO));
 }
 
 void Renderer::BeginFrame(const Camera& camera) {

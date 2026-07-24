@@ -10,11 +10,13 @@ option(RPGMAKER3D_ENABLE_RUBY "Enable mruby scripting support" OFF)
 option(RPGMAKER3D_BUILD_EDITOR "Build editor host (Qt)" ON)
 option(RPGMAKER3D_BUILD_PLAYER "Build standalone game player" ON)
 option(RPGMAKER3D_ENABLE_CONSOLE "Keep console window on Windows (for debugging)" ON)
-option(RPGMAKER3D_ENABLE_RMLUI "Enable RmlUi UI system" ON)
 # Default ON: Qt ist der Editor-Host. CI installiert Qt via aqtinstall (siehe .github/workflows/Main.yml).
 # Lokal ohne Qt: -DRPGMAKER3D_EDITOR_QT=OFF
 option(RPGMAKER3D_EDITOR_QT "Build Qt-based editor (native windows, QOpenGLWidget + Code Workspace)" ON)
-option(RPGMAKER3D_ENABLE_IMGUI "Legacy ImGui overlay for GameUI (off by default; ImGui editor removed)" OFF)
+# PAKET 10: Das GameUI-ImGui-Overlay traegt die GESAMTE Spielanzeige
+# (Messages/Menues/HUD/Pictures/Kampfstatus) — RmlUi ist entfernt.
+# Bei OFF sind die Draw-Pfade No-Ops (Logik laeuft, keine Anzeige).
+option(RPGMAKER3D_ENABLE_IMGUI "GameUI-ImGui-Overlay (komplette Spielanzeige)" ON)
 
 if(RPGMAKER3D_EDITOR_QT AND MSVC AND VCPKG_TARGET_TRIPLET MATCHES ".*-static")
     message(WARNING
@@ -23,49 +25,9 @@ if(RPGMAKER3D_EDITOR_QT AND MSVC AND VCPKG_TARGET_TRIPLET MATCHES ".*-static")
         " (siehe docs/QT-EDITOR.md).")
 endif()
 
-# ==================== RmlUi + FreeType (vendored, statisch) ====================
-# Ziel: ImGui langfristig ersetzen. Alles aus third_party, keine neuen System-Deps.
-# WICHTIG: MSVC-Runtime (/MT) wird vor den Subdirectories gesetzt, damit
-# freetype/rmlui mit derselben CRT wie die Engine bauen.
-if(RPGMAKER3D_ENABLE_RMLUI)
-    if(MSVC AND VCPKG_TARGET_TRIPLET MATCHES ".*-static")
-        set(_RPG_PREV_CRT "${CMAKE_MSVC_RUNTIME_LIBRARY}")
-        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    endif()
-
-    # CMake >= 4.0 entfernt Kompatibilitaet mit min-required < 3.5
-    # (RmlUi deklariert 3.10). Auf 3.x-CMake harmlos ignoriert.
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.0)
-        set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
-    endif()
-
-    set(_RPG_PREV_BSL "${BUILD_SHARED_LIBS}")
-    set(BUILD_SHARED_LIBS OFF)
-
-    # FreeType: abgespeckt (keine optionalen Kompression/PNG/Harfbuzz-Deps)
-    set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_PNG ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
-    set(FT_DISABLE_BROTLI ON CACHE BOOL "" FORCE)
-    set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
-    if(NOT TARGET freetype)
-        add_subdirectory(third_party/freetype)
-    endif()
-    if(NOT TARGET Freetype::Freetype)
-        add_library(Freetype::Freetype ALIAS freetype)
-    endif()
-
-    # RmlUi: nur Core als statische Lib (kein Samples/Tests/Lua/Debugger)
-    set(RMLUI_SAMPLES OFF CACHE BOOL "" FORCE)
-    set(RMLUI_FONT_ENGINE "freetype" CACHE STRING "" FORCE)
-    add_subdirectory(third_party/rmlui)
-
-    set(BUILD_SHARED_LIBS "${_RPG_PREV_BSL}")
-    if(MSVC AND VCPKG_TARGET_TRIPLET MATCHES ".*-static")
-        set(CMAKE_MSVC_RUNTIME_LIBRARY "${_RPG_PREV_CRT}")
-    endif()
-endif()
+# PAKET 10 (2026-07-23): RmlUi + FreeType sind entfernt — die gesamte
+# Spielanzeige (Messages, Menues, HUD, Pictures, ScreenTexts, Kampfstatus)
+# laeuft im GameUI-ImGui-Overlay, XP-Fenster im nativen RgssUI-Canvas.
 
 message(STATUS "==== RPG Maker 3D Engine v${PROJECT_VERSION} ====")
 message(STATUS "Editor: ${RPGMAKER3D_BUILD_EDITOR}, Qt: ${RPGMAKER3D_EDITOR_QT}, ImGui: ${RPGMAKER3D_ENABLE_IMGUI}, Ruby: ${RPGMAKER3D_ENABLE_RUBY}")
@@ -119,12 +81,10 @@ set(CORE_LIB_SOURCES
     src/Game.cpp
     src/BattleSystem.cpp
     src/UI.cpp
+    src/Custom.cpp
+    src/RgssUI.cpp
+    src/RubyRgss.cpp
 )
-
-if(RPGMAKER3D_ENABLE_RMLUI)
-    # WICHTIG: muss vor set(CORE_SOURCES ...) stehen (Listen sind Snapshots)
-    list(APPEND CORE_LIB_SOURCES src/RmlUiSystem.cpp)
-endif()
 
 set(CORE_SOURCES
     src/main.cpp
@@ -136,11 +96,7 @@ set(THIRDPARTY_SOURCES
     third_party/miniaudio/miniaudio_impl.c
 )
 
-if(RPGMAKER3D_ENABLE_RMLUI)
-    list(APPEND THIRDPARTY_SOURCES third_party/rmlui_glue/RmlUiRenderGL3.cpp)
-endif()
-
-# ImGui-Editor ist entfernt. Optional nur noch GameUI-Overlay (legacy).
+# GameUI-ImGui-Overlay (PAKET 10: traegt die gesamte Spielanzeige).
 if(RPGMAKER3D_ENABLE_IMGUI)
     list(APPEND CORE_SOURCES
         third_party/imgui/imgui.cpp
@@ -148,7 +104,8 @@ if(RPGMAKER3D_ENABLE_IMGUI)
         third_party/imgui/imgui_draw.cpp
         third_party/imgui/imgui_tables.cpp
         third_party/imgui/imgui_widgets.cpp
-        third_party/imgui/backends/imgui_impl_sdl2.cpp
+        # PAKET 10 Fix: nur das OpenGL3-Backend (eingebetteter gl3w-Loader).
+        # Kein SDL-Backend: Eingaben laufen nativ, der Qt-Host pumpt kein SDL.
         third_party/imgui/backends/imgui_impl_opengl3.cpp
     )
     # AudioPreview war ImGui-Panel – nur mit ImGui bauen
@@ -173,10 +130,36 @@ if(RPGMAKER3D_EDITOR_QT)
             qt_editor/QtGameViewWidget.cpp
             qt_editor/QtCodeWorkspace.cpp
             qt_editor/QtSyntaxHighlighter.cpp
+            qt_editor/QtMapTab.cpp
             qt_editor/QtMapEditorDock.cpp
             qt_editor/QtDatabaseEditorDock.cpp
+            qt_editor/QtDatabaseDialog.cpp
+            qt_editor/QtSoundTestDialog.cpp
+            qt_editor/QtMapPropertiesDialog.cpp
             qt_editor/QtEventEditorDock.cpp
+            qt_editor/QtEventCommandCatalog.cpp
+            qt_editor/QtEventCommandsDialog.cpp
+            qt_editor/QtEventCommandEditDialog.cpp
+            qt_editor/QtEventEditorDialog.cpp
             qt_editor/QtAssetBrowserDock.cpp
+            qt_editor/QtTilesetGridWidget.cpp
+            # Q_OBJECT-Header explizit auflisten, damit AUTOMOC sie findet
+            qt_editor/QtEditorWindow.h
+            qt_editor/QtGameViewWidget.h
+            qt_editor/QtCodeWorkspace.h
+            qt_editor/QtSyntaxHighlighter.h
+            qt_editor/QtMapTab.h
+            qt_editor/QtMapEditorDock.h
+            qt_editor/QtDatabaseEditorDock.h
+            qt_editor/QtDatabaseDialog.h
+            qt_editor/QtSoundTestDialog.h
+            qt_editor/QtMapPropertiesDialog.h
+            qt_editor/QtEventEditorDock.h
+            qt_editor/QtEventCommandCatalog.h
+            qt_editor/QtEventCommandsDialog.h
+            qt_editor/QtEventCommandEditDialog.h
+            qt_editor/QtEventEditorDialog.h
+            qt_editor/QtAssetBrowserDock.h
         )
     else()
         message(WARNING
@@ -337,11 +320,6 @@ find_package(OpenGL REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE
     OpenGL::GL
 )
-
-if(RPGMAKER3D_ENABLE_RMLUI)
-    target_link_libraries(${PROJECT_NAME} PRIVATE rmlui_core)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE RPGMAKER3D_ENABLE_RMLUI)
-endif()
 
 if(RPGMAKER3D_EDITOR_QT)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::OpenGLWidgets)
@@ -556,7 +534,7 @@ if(RPGMAKER3D_BUILD_PLAYER)
             third_party/imgui/imgui_draw.cpp
             third_party/imgui/imgui_tables.cpp
             third_party/imgui/imgui_widgets.cpp
-            third_party/imgui/backends/imgui_impl_sdl2.cpp
+            # siehe oben: nur OpenGL3-Backend, kein SDL-Backend
             third_party/imgui/backends/imgui_impl_opengl3.cpp
         )
     endif()
@@ -669,10 +647,6 @@ if(RPGMAKER3D_BUILD_PLAYER)
         OpenGL::GL
     )
 
-    if(RPGMAKER3D_ENABLE_RMLUI)
-        target_link_libraries(${PROJECT_NAME}_Player PRIVATE rmlui_core)
-        target_compile_definitions(${PROJECT_NAME}_Player PRIVATE RPGMAKER3D_ENABLE_RMLUI)
-    endif()
 
     if(NOT WIN32)
         find_package(Threads REQUIRED)

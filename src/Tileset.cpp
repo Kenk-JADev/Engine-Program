@@ -1,5 +1,6 @@
 #include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/Texture.h"
+#include <algorithm>
 #include <glad/gl.h>
 
 namespace rpg {
@@ -88,6 +89,67 @@ Vec4 Tileset::GetTileUV(int tileId) const {
 const TileInfo* Tileset::GetTileInfo(int tileId) const {
     if (tileId < 0 || tileId >= static_cast<int>(mTiles.size())) return nullptr;
     return &mTiles[tileId];
+}
+
+// ---------------------------------------------------------------------------
+// XP-Tileset-Flags (Paket 1, TODO_XP_PARITY.md)
+// ---------------------------------------------------------------------------
+
+void Tileset::SetTilesetData(const TilesetData& data) {
+    mData = data;
+    mHasData = true;
+    // Legacy: TileInfo::solid aus passage befuellen, damit alte
+    // Abfragen (Renderer, Editor-Vorschau) mitgehen.
+    const int n = (int)mTiles.size();
+    for (int i = 0; i < n; ++i) {
+        mTiles[i].solid = (mData.GetPassage(i) != 0);
+    }
+}
+
+int Tileset::GetPassage(int tileId) const {
+    return mHasData ? mData.GetPassage(tileId) : 0;
+}
+
+int Tileset::GetPassage4Dir(int tileId) const {
+    return mHasData ? mData.GetPassage4Dir(tileId) : 0;
+}
+
+int Tileset::GetPriority(int tileId) const {
+    return mHasData ? mData.GetPriority(tileId) : 0;
+}
+
+int Tileset::GetMaxPriority() const {
+    if (!mHasData) return 0;
+    int mx = 0;
+    for (int v : mData.priority)
+        mx = std::max(mx, v);
+    return mx;
+}
+
+int Tileset::GetBush(int tileId) const {
+    return mHasData ? mData.GetBush(tileId) : 0;
+}
+
+int Tileset::GetCounter(int tileId) const {
+    return mHasData ? mData.GetCounter(tileId) : 0;
+}
+
+int Tileset::GetTerrainTag(int tileId) const {
+    return mHasData ? mData.GetTerrainTag(tileId) : 0;
+}
+
+bool Tileset::IsPassable(int tileId, int dirBit) const {
+    // Ohne DB-Daten: Legacy-Verhalten (TileInfo::solid), sonst XP-Regeln.
+    if (!mHasData) {
+        const TileInfo* info = GetTileInfo(tileId);
+        return !(info && info->solid);
+    }
+    if (mData.GetPassage(tileId) != 0) return false; // komplett blockiert
+    if (dirBit != 0) {
+        int d = mData.GetPassage4Dir(tileId);
+        if (d != 0 && (d & dirBit) == 0) return false; // Richtung gesperrt
+    }
+    return true;
 }
 
 } // namespace rpg

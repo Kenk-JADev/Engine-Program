@@ -14,9 +14,6 @@
 #include "rpgmaker3d/Map.h"
 #include "rpgmaker3d/Command.h"
 #include "rpgmaker3d/CommandHistory.h"
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-#include "rpgmaker3d/RmlUiSystem.h"
-#endif
 
 #include <QOpenGLContext>
 #include <QKeyEvent>
@@ -68,10 +65,6 @@ void QtGameViewWidget::initializeGL() {
         return;
     }
     mEngineReady = true;
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi())
-        rml->NotifyViewport(width(), height());
-#endif
     emit engineReady();
 }
 
@@ -83,61 +76,32 @@ void QtGameViewWidget::paintGL() {
 void QtGameViewWidget::resizeGL(int w, int h) {
     if (mEngineReady) {
         mEngine->GetWindow().SetForeignSize(w, h);
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-        if (auto* rml = mEngine->GetRmlUi())
-            rml->NotifyViewport(w, h);
-#endif
     }
 }
 
 // ---------------------------------------------------------------------------
-// Input-Bruecke: Engine + RmlUi
+// Input-Bruecke: Engine (RmlUi ist mit PAKET 10 entfallen)
 // ---------------------------------------------------------------------------
 void QtGameViewWidget::keyPressEvent(QKeyEvent* event) {
     if (!mEngineReady) return;
     if (event->isAutoRepeat()) return;
 
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi()) {
-        // F9 immer an Rml (Toggle)
-        if (event->key() == Qt::Key_F9) {
-            rml->ProcessKeyQt(event->key(), true, static_cast<int>(event->modifiers()));
-            return;
-        }
-        if (rml->IsVisible()) {
-            rml->ProcessKeyQt(event->key(), true, static_cast<int>(event->modifiers()));
-            // Text fuer Rml (Buchstaben)
-            if (!event->text().isEmpty() && event->text()[0].isPrint()) {
-                rml->ProcessTextInput(event->text().toUtf8().toStdString());
-            }
-        }
-    }
-#endif
+    // PAKET 10: F9 nicht mehr an RmlUi — die Engine fragt F9 selbst im
+    // Update ab (GameUI::ToggleHud im PlayMode); hier laeuft es einfach
+    // ueber die normale Input-Bruecke mit.
     mEngine->GetInput().OnKeyChanged(MapQtKey(event->key()), true);
 }
 
 void QtGameViewWidget::keyReleaseEvent(QKeyEvent* event) {
     if (!mEngineReady) return;
     if (event->isAutoRepeat()) return;
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi()) {
-        if (rml->IsVisible())
-            rml->ProcessKeyQt(event->key(), false, static_cast<int>(event->modifiers()));
-    }
-#endif
     mEngine->GetInput().OnKeyChanged(MapQtKey(event->key()), false);
 }
 
 void QtGameViewWidget::inputMethodEvent(QInputMethodEvent* event) {
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (mEngineReady) {
-        if (auto* rml = mEngine->GetRmlUi()) {
-            if (rml->IsVisible() && !event->commitString().isEmpty()) {
-                rml->ProcessTextInput(event->commitString().toUtf8().toStdString());
-            }
-        }
-    }
-#endif
+    // Texteingabe (z. B. Namenseingabe) laeuft tastenweise ueber die
+    // Engine-Input-Bruecke (GameUI::UpdateModalInput) — kein eigenes
+    // Text-Event mehr noetig.
     QOpenGLWidget::inputMethodEvent(event);
 }
 
@@ -149,13 +113,6 @@ void QtGameViewWidget::mouseMoveEvent(QMouseEvent* event) {
     if (!mEngineReady) return;
     const QPointF p = event->position();
     mEngine->GetInput().OnMouseMoved(static_cast<float>(p.x()), static_cast<float>(p.y()));
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi()) {
-        if (rml->IsVisible())
-            rml->ProcessMouseMove(static_cast<int>(p.x()), static_cast<int>(p.y()),
-                                  static_cast<int>(event->modifiers()));
-    }
-#endif
     // Drag-Paint
     if (mPainting && mPaintMode && !mEngine->IsPlaying()) {
         paintTileAtScreen(static_cast<float>(p.x()), static_cast<float>(p.y()));
@@ -176,18 +133,6 @@ void QtGameViewWidget::mousePressEvent(QMouseEvent* event) {
         mEngine->GetInput().OnMouseChanged(b, true);
 
     const QPointF p = event->position();
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi()) {
-        if (rml->IsVisible()) {
-            int btn = 0;
-            if (event->button() == Qt::LeftButton) btn = 0;
-            else if (event->button() == Qt::MiddleButton) btn = 1;
-            else if (event->button() == Qt::RightButton) btn = 2;
-            rml->ProcessMouseButton(btn, true, static_cast<int>(event->modifiers()));
-        }
-    }
-#endif
-
     if (b == rpg::MouseButton::Left && !mEngine->IsPlaying()) {
         if (mPaintMode) {
             if (mBrushMode == 1) {
@@ -241,18 +186,6 @@ void QtGameViewWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (b != rpg::MouseButton::Count)
         mEngine->GetInput().OnMouseChanged(b, false);
 
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi()) {
-        if (rml->IsVisible()) {
-            int btn = 0;
-            if (event->button() == Qt::LeftButton) btn = 0;
-            else if (event->button() == Qt::MiddleButton) btn = 1;
-            else if (event->button() == Qt::RightButton) btn = 2;
-            rml->ProcessMouseButton(btn, false, static_cast<int>(event->modifiers()));
-        }
-    }
-#endif
-
     if (b == rpg::MouseButton::Left) {
         if (mPainting || mStrokeActive) flushPaintStroke();
         if (mGizmoDragging && mEngine && mEngine->GetSelectedEntity() >= 0) {
@@ -281,12 +214,6 @@ void QtGameViewWidget::wheelEvent(QWheelEvent* event) {
     if (!mEngineReady) return;
     const float delta = static_cast<float>(event->angleDelta().y()) / 120.0f;
     mEngine->GetInput().OnMouseWheel(delta);
-#ifdef RPGMAKER3D_ENABLE_RMLUI
-    if (auto* rml = mEngine->GetRmlUi()) {
-        if (rml->IsVisible())
-            rml->ProcessMouseWheel(delta, static_cast<int>(event->modifiers()));
-    }
-#endif
 }
 
 bool QtGameViewWidget::tryGroundHit(float sx, float sy, int& outX, int& outZ) {

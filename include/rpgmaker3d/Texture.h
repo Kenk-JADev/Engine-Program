@@ -28,6 +28,10 @@ public:
     // CPU-Pixel lesen (RGBA8). Benoetigt current GL-Kontext.
     bool ReadPixelsRGBA(std::vector<unsigned char>& outPixels) const;
 
+    // Textur aus CPU-RGBA8-Daten erstellen (z. B. nach einem CPU-Pixelshift
+    // wie battlerHue). Eine bestehende Textur wird dabei ersetzt.
+    bool CreateFromRGBA(int width, int height, const unsigned char* rgbaPixels);
+
 private:
     GLuint mTextureID = 0;
     int mWidth = 0;

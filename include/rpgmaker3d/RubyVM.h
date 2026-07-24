@@ -23,12 +23,32 @@ public:
     bool ExecuteFile(const std::string& path);
     bool Update(float deltaTime);
 
+    // Prueft Ruby-Code NUR auf Syntaxfehler (Parser), OHNE ihn auszufuehren.
+    // Dient der Start-Pruefung aller .rb-Dateien (Player/Playtest), damit
+    // Tippfehler sofort mit Datei + Zeile gemeldet werden, statt dass das
+    // Spiel mitten im Lauf crasht. true = Syntax ok; bei false steht der
+    // Fehler inkl. Zeile in errorOut.
+    bool CheckSyntax(const std::string& code, const std::string& sourceName,
+                     std::string& errorOut);
+
     // Erzwingt einen vollstaendigen Garbage-Collection-Durchlauf. Nuetzlich
     // vor wiederholtem Script-Reload (Playtest), damit tote Ruby-Objekte
     // (z.B. neu zugewiesene $game/$game_pictures aus vorigen Durchlaeufen)
     // eingesammelt werden und der kleine mruby-Heap nicht ueberlaeuft
     // (NoMemoryError bei vielen Playtest-Durchlaeufen).
     void CollectGarbage();
+
+    // ---------- Custom-Hooks ("alles custom") ----------
+    /// Ruft die (Modul-)Methode Game.<name> auf, falls das Spiel sie definiert
+    /// hat (z. B. "custom_title" fuer einen eigenen Titelbildschirm).
+    /// Rueckgabe: true wenn die Methode existiert und aufgerufen wurde.
+    bool CallGameHook(const std::string& name);
+    /// Interne Bruecke fuer UI.open_list_menu: ruft den per Block
+    /// uebergebenen Ruby-Callback mit dem gewaehlten Index (-1 = Abbruch).
+    void CallListMenuBlock(int index);
+    /// Interne Bruecke fuer UI.open_name_input: ruft den per Block
+    /// uebergebenen Ruby-Callback mit dem eingegebenen Namen auf.
+    void CallNameInputResult(const std::string& name);
 
     mrb_state* GetState() { return mMrb; }
 
@@ -46,6 +66,13 @@ private:
     void BindCamera();
     void BindGame();
     void BindUI();
+    void BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
+    // RGSS-Vollset (RPG Maker XP-Paritaet) - in src/RubyRgss.cpp:
+    void BindRgssObjects();   // Rect/Color/Tone/Font/Table/Bitmap/Viewport
+    void BindRgssDrawables(); // Sprite/Plane/Tilemap (+Autotiles-Proxy)
+    void BindRgssGraphics();  // Graphics/Input(XP)/Audio(XP)
+    void BindRgssWindowEx();  // Window-Vollset (XP)
+    void LoadRgssPrelude();   // Ruby-Prelude (RPG::*-Datenklassen, Cache, ...)
 
     // Schreibt Exception-Text nach mLastError und loggt
     bool CaptureException(const std::string& context);

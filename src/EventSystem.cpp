@@ -1,6 +1,8 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/Map.h"
+#include "rpgmaker3d/Tileset.h"
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/AudioManager.h"
 #include "rpgmaker3d/JsonUtils.h"
@@ -21,303 +23,1153 @@ namespace rpg {
 
 // Optional: Event-Befehl "Script" -> Ruby (von Engine gesetzt)
 static std::function<void(const std::string&)> s_scriptRunner;
+static std::function<int()> s_buttonProvider;
 
 void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn) {
     s_scriptRunner = std::move(fn);
 }
+void EventSystem_SetButtonProvider(std::function<int()> fn) {
+    s_buttonProvider = std::move(fn);
+}
 
+// Audio-Bruecke fuer Event-Befehle + Karten-Autoplay (Engine injiziert in
+// Initialize; PlayAudio ist no-op, wenn nichts injiziert wurde).
+static std::function<void(const std::string&, int, bool)> s_audioPlayer;
+
+void EventSystem_SetAudioPlayer(
+    std::function<void(const std::string&, int, bool)> fn) {
+    s_audioPlayer = std::move(fn);
+}
+
+void EventSystem_PlayAudio(const std::string& name, int kind, bool loop) {
+    if (s_audioPlayer) s_audioPlayer(name, kind, loop);
+}
+
+// Map-Wechsel-Bruecke (Engine injiziert in Initialize).
+static std::function<void(int)> s_mapChangeHandler;
+
+void EventSystem_SetMapChangeHandler(std::function<void(int)> fn) {
+    s_mapChangeHandler = std::move(fn);
+}
+
+void EventSystem_NotifyMapChanged(int mapId) {
+    if (s_mapChangeHandler) s_mapChangeHandler(mapId);
+}
+
+// PAKET 14: Uebergangs-Handler fuer Transfer 201 (Engine injiziert)
+static std::function<void(int, int, int, int)> s_transferTransition;
+void EventSystem_SetTransferTransitionHandler(
+    std::function<void(int, int, int, int)> fn) {
+    s_transferTransition = std::move(fn);
+}
+
+// ============================================================================
+// Screen Effects (223 / 224 / 225)
+// ============================================================================
+void ScreenEffects::Update(float dt) {
+    if (flashTimer > 0.0f) {
+        flashTimer -= dt;
+        if (flashTimer < 0.0f) { flashTimer = 0.0f; flashColor.a = 0.0f; }
+    }
+    if (shakeTimer > 0.0f) {
+        shakeTimer -= dt;
+        if (shakeTimer < 0.0f) shakeTimer = 0.0f;
+    }
+    if (toneElapsed < toneDuration && toneDuration > 0.0f) {
+        toneElapsed += dt;
+        float t = toneElapsed / toneDuration;
+        if (t > 1.0f) t = 1.0f;
+        toneCurrent.r = toneCurrent.r + (toneTarget.r - toneCurrent.r) * t;
+        toneCurrent.g = toneCurrent.g + (toneTarget.g - toneCurrent.g) * t;
+        toneCurrent.b = toneCurrent.b + (toneTarget.b - toneCurrent.b) * t;
+        toneCurrent.a = toneCurrent.a + (toneTarget.a - toneCurrent.a) * t;
+    }
+    // PAKET 11: Wetter-Staerke sanft auf das Ziel rampen (XP aendert die
+    // Staerke ueber eine Dauer — bei uns fest weatherRamp Sekunden).
+    {
+        const float target = (weatherType > 0) ? (float)weatherPowerTarget : 0.0f;
+        const float rate = (weatherRamp > 0.01f) ? (9.0f / weatherRamp) : 1000.0f;
+        if (weatherPower < target)
+            weatherPower = std::min(target, weatherPower + rate * dt);
+        else if (weatherPower > target)
+            weatherPower = std::max(target, weatherPower - rate * dt);
+    }
+}
+ScreenEffects& GetScreenEffects() {
+    static ScreenEffects fx;
+    return fx;
+}
+
+// ============================================================================
+// MapEvent
+// ============================================================================
 const EventPage* MapEvent::GetCurrentPage() const {
     if (pages.empty()) return nullptr;
     if (currentPage < 0 || currentPage >= (int)pages.size()) return nullptr;
     return &pages[currentPage];
 }
+EventPage* MapEvent::GetCurrentPage() {
+    if (pages.empty()) return nullptr;
+    if (currentPage < 0 || currentPage >= (int)pages.size()) return nullptr;
+    return &pages[currentPage];
+}
 
+// ============================================================================
+// EventInterpreter - XP-kompatible Abarbeitung (siehe XP_Scripts/Interpreter)
+// ============================================================================
 EventInterpreter::EventInterpreter() = default;
+EventInterpreter::~EventInterpreter() = default;
 
-void EventInterpreter::Setup(const std::vector<EventCommand>& list, int eventId) {
+void EventInterpreter::Setup(const std::vector<EventCommand>& list, int eventId, int mapId) {
     mList = list;
     mIndex = 0;
     mEventId = eventId;
-    mRunning = !list.empty();
+    mMapId = mapId;
     mWaitTime = 0.0f;
-    mPausedForMessage = false;
-    mBranchDepth = 0;
-    mBranchResult = true;
+    mMessageWaiting = false;
+    mChoiceWaiting = false;
+    mNumberWaiting = false;
+    mNameWaiting = false;
+    mShopWaiting = false;
+    mSaveWaiting = false;
+    mMoveRouteWaiting = false;
+    mButtonInputVariableId = 0;
+    mBranch.clear();
+    mChild.reset();
 }
 
 void EventInterpreter::Clear() {
     mList.clear();
     mIndex = 0;
-    mRunning = false;
     mWaitTime = 0.0f;
-    mPausedForMessage = false;
+    mMessageWaiting = false;
+    mChoiceWaiting = false;
+    mChild.reset();
+}
+
+int EventInterpreter::CurrentIndent() const {
+    if (mIndex < mList.size()) return mList[mIndex].indent;
+    return 0;
+}
+
+void EventInterpreter::SetChoiceResult(int index) {
+    if (!mChoiceWaiting) return;
+    mBranch[mChoiceIndent] = index;
+    mChoiceWaiting = false;
+}
+
+void EventInterpreter::SetNumberResult(int value) {
+    (void)value;
+    mNumberWaiting = false;
+}
+
+// XP command_skip: ueberspringe Befehle, bis einer mit gleichem Indent kommt
+bool EventInterpreter::CommandSkip() {
+    const int indent = CurrentIndent();
+    for (;;) {
+        if (mIndex + 1 >= mList.size()) return true;
+        if (mList[mIndex + 1].indent == indent) return true;
+        mIndex++;
+    }
+}
+
+int EventInterpreter::FindLabel(const std::string& name) const {
+    for (size_t i = 0; i < mList.size(); ++i) {
+        if (mList[i].code == EventCommandCode::Label && mList[i].text == name)
+            return static_cast<int>(i);
+    }
+    return -1;
 }
 
 void EventInterpreter::Update(float dt) {
-    if (!mRunning) return;
-    if (mPausedForMessage) return;
+    mLoopSafety = 0;
+    for (;;) {
+        mLoopSafety++;
+        if (mLoopSafety > 100) return; // Freeze-Schutz wie XP
 
-    if (mWaitTime > 0.0f) {
-        mWaitTime -= dt;
-        if (mWaitTime > 0) return;
-        mWaitTime = 0.0f;
+        // Child-Interpreter (Call Common Event)
+        if (mChild) {
+            mChild->Update(dt);
+            if (!mChild->IsRunning()) mChild.reset();
+            if (mChild) return;
+        }
+
+        // Warte auf Nachrichten-Fenster (Show Text / Choices block-Fenster)
+        if (mMessageWaiting) {
+            if (GameUI::Get().Message().IsBusy()) return;
+            mMessageWaiting = false;
+        }
+        // Warte auf Auswahl-Ergebnis
+        if (mChoiceWaiting) return;
+        // Warte auf Zahleneingabe / Namenseingabe
+        if (mNumberWaiting || mNameWaiting) return;
+        // Warte auf Shop- / Speicherbildschirm (302 / 352)
+        if (mShopWaiting || mSaveWaiting) return;
+        // Warte auf Move-Completion
+        if (mMoveRouteWaiting) {
+            if (isAnyRouteForcing && isAnyRouteForcing()) return;
+            mMoveRouteWaiting = false;
+        }
+        // Warte auf Tasteneingabe (105)
+        if (mButtonInputVariableId > 0) {
+            int code = pollButtonCode ? pollButtonCode() : 0;
+            if (code > 0) {
+                Game::Get().Variables().Set(mButtonInputVariableId, code);
+                mButtonInputVariableId = 0;
+            } else {
+                return;
+            }
+        }
+        // Wartezaehler
+        if (mWaitTime > 0.0f) {
+            mWaitTime -= dt;
+            if (mWaitTime > 0.0f) return;
+            mWaitTime = 0.0f;
+        }
+        // Liste fertig?
+        if (mList.empty() || mIndex >= mList.size()) {
+            mList.clear();
+            return;
+        }
+        // Befehl ausfuehren; false = Pause (nächster Frame gleiche Stelle)
+        if (!ExecuteCommand()) return;
+        mIndex++;
+        if (mIndex >= mList.size()) {
+            mList.clear();
+            return;
+        }
     }
+}
 
-    int executed = 0;
-    while (mRunning && mIndex < mList.size() && executed < 12) {
-        if (mPausedForMessage) return;
-        const auto& cmd = mList[mIndex];
-        // Wenn Branch false: bis EndBranch ueberspringen
-        if (!mBranchResult && mBranchDepth > 0 &&
-            cmd.code != EventCommandCode::EndBranch &&
-            cmd.code != EventCommandCode::ConditionalBranch) {
-            mIndex++;
-            executed++;
+void EventInterpreter::ApplyToActors(int actorIdOrAll, const std::function<void(int)>& fn) {
+    if (actorIdOrAll == 0) {
+        for (auto& a : Game::Get().Party().Members()) fn(a.actorId);
+    } else {
+        fn(actorIdOrAll);
+    }
+}
+
+int EventInterpreter::ResolveOperand(const EventCommand& cmd, int index0) const {
+    // parameters[index0+0] = art ("0"=Konstante, "1"=Variable, "2"=Zufall a..b)
+    // parameters[index0+1] = wert / variablenId / min
+    // parameters[index0+2] = (nur Zufall) max
+    try {
+        const std::string& kind = cmd.parameters.at(index0);
+        const std::string& v = cmd.parameters.at(index0 + 1);
+        if (kind == "1") {
+            return Game::Get().Variables().Get(std::stoi(v));
+        } else if (kind == "2") {
+            int lo = std::stoi(v);
+            int hi = cmd.parameters.size() > (size_t)(index0 + 2)
+                     ? std::stoi(cmd.parameters[index0 + 2]) : lo;
+            if (hi < lo) std::swap(hi, lo);
+            return lo + (hi > lo ? (std::rand() % (hi - lo + 1)) : 0);
+        }
+        return std::stoi(v);
+    } catch (...) {
+        return 0;
+    }
+}
+
+bool EventInterpreter::EvalCondition(const EventCommand& cmd) {
+    // Kodiert wie im Qt-Editor-Katalog (docs/EVENTS-XP.md):
+    // param1 = Bedingungstyp
+    switch (cmd.param1) {
+        case 0: { // Schalter: param2=id, param3=0(ON)/1(OFF)
+            bool on = Game::Get().Switches().Get(cmd.param2);
+            return cmd.param3 == 0 ? on : !on;
+        }
+        case 1: { // Variable: param2=id, param3=Vergleich(0==,1>=,2<=,3>,4<,5!=),
+                  // parameters[0]=Operandart, [1]=Wert/VarId
+            int cur = Game::Get().Variables().Get(cmd.param2);
+            int val = ResolveOperand(cmd, 0);
+            switch (cmd.param3) {
+                case 0: return cur == val;
+                case 1: return cur >= val;
+                case 2: return cur <= val;
+                case 3: return cur > val;
+                case 4: return cur < val;
+                case 5: return cur != val;
+            }
+            return false;
+        }
+        case 2: { // Selbstschalter: text=Buchstabe, param3=0(ON)/1(OFF)
+            char ch = cmd.text.empty() ? 'A' : cmd.text[0];
+            bool on = Game::Get().SelfSwitches().Get(mMapId, mEventId, ch);
+            return cmd.param3 == 0 ? on : !on;
+        }
+        case 3: { // Timer: param2=Sekunden, param3=0(>=)/1(<=)
+            int sec = Game::Get().System().GetTimerSeconds();
+            return cmd.param3 == 0 ? (sec >= cmd.param2) : (sec <= cmd.param2);
+        }
+        case 4: { // Akteur: param2=actorId, param3=Art (0 Party,1 Name,2 Fertigkeit,
+                  //                          3 Waffe,4 Ruestung,5 Status)
+            auto& party = Game::Get().Party();
+            switch (cmd.param3) {
+                case 0: return party.HasActor(cmd.param2);
+                case 1: {
+                    if (auto* a = party.GetActor(cmd.param2))
+                        return !cmd.parameters.empty() && a->name == cmd.parameters[0];
+                    return false;
+                }
+                case 2: {
+                    if (auto* a = party.GetActor(cmd.param2)) {
+                        int sid = cmd.parameters.empty() ? 0 : atoi(cmd.parameters[0].c_str());
+                        for (int s : a->skills) if (s == sid) return true;
+                    }
+                    return false;
+                }
+                case 3: {
+                    if (auto* a = party.GetActor(cmd.param2))
+                        return a->weaponId == (cmd.parameters.empty() ? 0 : atoi(cmd.parameters[0].c_str()));
+                    return false;
+                }
+                case 4: {
+                    if (auto* a = party.GetActor(cmd.param2)) {
+                        int id = cmd.parameters.empty() ? 0 : atoi(cmd.parameters[0].c_str());
+                        for (int ar : a->armors) if (ar == id) return true;
+                    }
+                    return false;
+                }
+                case 5: {
+                    if (auto* a = party.GetActor(cmd.param2)) {
+                        int sid = cmd.parameters.empty() ? 0 : atoi(cmd.parameters[0].c_str());
+                        for (int st : a->states) if (st == sid) return true;
+                    }
+                    return false;
+                }
+            }
+            return false;
+        }
+        case 5: { // Gegner: param2=Index, param3=0(erschienen)/1(Status)
+            if (cmd.param3 == 0) {
+                if (isEnemyAppeared) return isEnemyAppeared(cmd.param2);
+                return false;
+            }
+            return false; // Status der Gegner: Kampfsystem-Erweiterung (siehe Doku)
+        }
+        case 6: { // Event-Richtung: param2=eventId(0=dieses), param3=2/4/6/8
+            int dir = -1;
+            if (getEventDirection) dir = getEventDirection(cmd.param2 > 0 ? cmd.param2 : mEventId);
+            return dir == cmd.param3;
+        }
+        case 7: { // Gold: param2=Betrag, param3=0(>=)/1(<=)
+            int gold = Game::Get().Party().GetGold();
+            return cmd.param3 == 0 ? (gold >= cmd.param2) : (gold <= cmd.param2);
+        }
+        case 8: { // Gegenstand: param2=itemId
+            return Game::Get().Party().GetItemCount(cmd.param2) > 0;
+        }
+        case 9:  // Waffe: param2=waffeId
+            return Game::Get().Party().GetWeaponCount(cmd.param2) > 0;
+        case 10: // Ruestung: param2=ruestungId
+            return Game::Get().Party().GetArmorCount(cmd.param2) > 0;
+        case 11: { // Taste: param2=XP-Tastencode
+            int code = s_buttonProvider ? s_buttonProvider() : 0;
+            return code == cmd.param2;
+        }
+        case 12: { // Script: text = Ruby-Ausdruck -> jeder nicht-leere/"true"-Rueckgabewert zaehlt
+            // Script-Bedingungen laufen ueber den Script-Runner; Ergebnis landet in Variable 0
+            if (s_scriptRunner && !cmd.text.empty()) {
+                s_scriptRunner("$__cond = (" + cmd.text + ")\nGame.set_variable(0, $__cond ? 1 : 0)");
+                return Game::Get().Variables().Get(0) != 0;
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 16: Gemeinsamer XP-Routen-Text-Parser (Event-Befehl 209 + Custom-
+// Seitenroute). Rueckwaertskompatible Tokens — siehe EventSystem.h.
+// ---------------------------------------------------------------------------
+MoveRoute EventSystem_ParseMoveRouteText(const std::string& routeText) {
+    MoveRoute route;
+    std::stringstream ss(routeText);
+    std::string tok;
+    while (ss >> tok) {
+        if (tok.empty()) continue;
+        MoveRouteStep st;
+        const std::string up = [&]() {
+            std::string t = tok;
+            for (auto& ch : t) ch = (char)std::toupper((unsigned char)ch);
+            return t;
+        }();
+        // Volltoken-Matches zuerst (rueckwaertskompatible Sonderzeichen)
+        if (up == "SC") {
+            // Script-Rest der Zeile (letzter erlaubter Schritt)
+            std::string rest;
+            std::getline(ss, rest);
+            // fuehrende Blanks abschneiden
+            const size_t p = rest.find_first_not_of(" \t");
+            st.code = MoveRouteCode::Script;
+            st.text = (p == std::string::npos) ? std::string() : rest.substr(p);
+            route.list.push_back(std::move(st));
+            break;
+        }
+        if (up == "G" || up == "E") {
+            // Grafik/SE-Argument = naechstes Token (namen ohne Leerzeichen)
+            std::string arg;
+            if (!(ss >> arg)) continue;
+            st.code = (up[0] == 'G') ? MoveRouteCode::ChangeGraphic : MoveRouteCode::PlaySE;
+            st.text = arg;
+            route.list.push_back(std::move(st));
             continue;
         }
-        bool cont = ExecuteCommand(cmd);
-        mIndex++;
-        executed++;
-        if (!cont) return; // wait / pause
-        if (mIndex >= mList.size()) mRunning = false;
+        const char c = up[0];
+        if (up == "TD") st.code = MoveRouteCode::TurnDown;
+        else if (up == "TL") st.code = MoveRouteCode::TurnLeft;
+        else if (up == "TR") st.code = MoveRouteCode::TurnRight;
+        else if (up == "TU") st.code = MoveRouteCode::TurnUp;
+        else if (up == "TT") st.code = MoveRouteCode::TurnTowardPlayer;
+        else if (up == "TA") st.code = MoveRouteCode::TurnAwayPlayer;
+        else if (up == "R90") st.code = MoveRouteCode::TurnRight90;
+        else if (up == "L90") st.code = MoveRouteCode::TurnLeft90;
+        else if (up == "T180") st.code = MoveRouteCode::Turn180;
+        else if (up == "TX") st.code = MoveRouteCode::TurnRandom;
+        else if (up == "B") st.code = MoveRouteCode::MoveBackward;
+        else if (c == 'U') st.code = MoveRouteCode::MoveUp;
+        else if (c == 'D') st.code = MoveRouteCode::MoveDown;
+        else if (c == 'L') st.code = MoveRouteCode::MoveLeft;
+        else if (c == 'R') st.code = MoveRouteCode::MoveRight;
+        else if (c == 'F') st.code = MoveRouteCode::MoveForward;
+        else if (c == 'T') st.code = MoveRouteCode::TowardPlayer;
+        else if (c == 'A') st.code = MoveRouteCode::AwayFromPlayer;
+        else if (c == 'X') st.code = MoveRouteCode::Random;
+        else if (c == 'W') {
+            st.code = MoveRouteCode::Wait;
+            st.param = tok.size() > 1 ? atoi(tok.c_str() + 1) : 20;
+        }
+        // ---- PAKET 16: Argument-Schritte ----
+        else if (c == 'J') {
+            // Sprung: J(dx,dz) oder Jdx,dz — XP code 14
+            st.code = MoveRouteCode::Jump;
+            std::string arg = tok.substr(1);        // z. B. "2,-1"/"(2,-1)"
+            arg.erase(std::remove(arg.begin(), arg.end(), '('), arg.end());
+            arg.erase(std::remove(arg.begin(), arg.end(), ')'), arg.end());
+            const size_t comma = arg.find(',');
+            try {
+                st.param = comma == std::string::npos ? 0 : std::stoi(arg.substr(0, comma));
+                st.param2 = comma == std::string::npos
+                                ? std::stoi(arg)
+                                : std::stoi(arg.substr(comma + 1));
+            } catch (...) { st.param = st.param2 = 0; }
+            // Ohne Komma gilt "Jn = dz-Sprung" (param=0/param2=n) — die
+            // Zuweisung oben steuert das bereits korrekt.
+        }
+        else if (up.rfind("S+", 0) == 0 || up.rfind("S-", 0) == 0) {
+            st.code = (up[1] == '+') ? MoveRouteCode::SwitchOn : MoveRouteCode::SwitchOff;
+            st.param = atoi(up.c_str() + 2); // Schalter-ID
+            if (st.param <= 0) continue;
+        }
+        else if (c == 'V' && tok.size() > 1) {
+            st.code = MoveRouteCode::ChangeSpeed;
+            st.param = std::clamp(atoi(tok.c_str() + 1), 1, 6);
+        }
+        else if (c == 'Q' && tok.size() > 1) {
+            st.code = MoveRouteCode::ChangeFrequency;
+            st.param = std::clamp(atoi(tok.c_str() + 1), 1, 6);
+        }
+        else if (up == "H1") st.code = MoveRouteCode::ThroughOn;
+        else if (up == "H0") st.code = MoveRouteCode::ThroughOff;
+        else if (up == "P1") st.code = MoveRouteCode::TransparentOn;
+        else if (up == "P0") st.code = MoveRouteCode::TransparentOff;
+        else continue; // unbekanntes Token: ueberspringen (wie bisher)
+        route.list.push_back(std::move(st));
     }
+    route.list.push_back({MoveRouteCode::End, 0, 0, std::string()});
+    return route;
 }
 
-bool EventInterpreter::ExecuteCommand(const EventCommand& cmd) {
+bool EventInterpreter::ExecuteCommand() {
+    const EventCommand& cmd = mList[mIndex];
+    using CC = EventCommandCode;
+
     switch (cmd.code) {
-        case EventCommandCode::ShowText: {
-            if (onShowText) onShowText(cmd.text.empty() ? "..." : cmd.text);
-            mPausedForMessage = true;
-            return false;
-        }
-        case EventCommandCode::ShowChoices: {
-            if (onShowChoices) onShowChoices(cmd.text, cmd.param1);
-            mPausedForMessage = true;
-            return false;
-        }
-        case EventCommandCode::ShowScreenText: {
-            // text = message, param1 = x*100, param2 = y*100, param3 = duration*10
-            // Also support parameters array for color etc.
-            if (onShowScreenText) {
-                float x = cmd.param1 / 100.0f;
-                float y = cmd.param2 / 100.0f;
-                float dur = cmd.param3 > 0 ? cmd.param3 / 10.0f : 3.0f;
-                // Default centered yellowish
-                onShowScreenText(cmd.text, x, y, 1.0f, 1.0f, 0.8f, dur);
-            }
-            return true;
-        }
-        case EventCommandCode::ShowWorldText: {
-            if (onShowWorldText) {
-                float x = (float)cmd.param1;
-                float y = (float)cmd.param2;
-                float z = (float)cmd.param3;
-                // If text contains comma separated coords, try parse
-                if (!cmd.text.empty() && cmd.text.find(',') != std::string::npos) {
-                    // text format: "Hello" but we use separate, so just use text as is
+    // ------------------------------------------------------------------
+    // Seite 1
+    // ------------------------------------------------------------------
+    case CC::ShowText: {
+        // Wenn noch eine Nachricht offen ist: spaeter erneut versuchen (XP)
+        if (GameUI::Get().Message().IsBusy()) return false;
+        mMessageWaiting = true;
+        std::string msg = cmd.text;
+        int lineCount = msg.empty() ? 0 : 1;
+        // Folgezeilen (401) + evtl. anschliessende Choices (102) einsammeln
+        for (;;) {
+            if (mIndex + 1 < mList.size() && mList[mIndex + 1].code == CC::TextLine) {
+                mIndex++;
+                if (!msg.empty()) msg += "\n";
+                msg += mList[mIndex].text;
+                lineCount++;
+            } else {
+                if (mIndex + 1 < mList.size() && mList[mIndex + 1].code == CC::ShowChoices
+                    && lineCount < 4) {
+                    // Choices werden direkt im selben Fenster gezeigt:
+                    // 102 einmalig vorspulen, sein Handler sammelt sie ein.
+                    // (Der 102 darunter wartet nicht erneut auf busy.)
                 }
-                onShowWorldText(cmd.text, x, y, z, 1.0f, 1.0f, 0.2f, 2.5f);
+                break;
             }
+        }
+        if (onShowText) onShowText(msg);
+        return true;
+    }
+    case CC::TextLine:
+        return true; // wurde schon von ShowText konsumiert
+
+    case CC::ShowChoices: {
+        if (GameUI::Get().Message().IsBusy()) return false;
+        // Optionen aus parameters[0..3], Argument: param2 = Abbruchverhalten
+        if (onShowChoices) onShowChoices(cmd.text, cmd.param2);
+        mMessageWaiting = true;
+        mChoiceWaiting = true;
+        mChoiceIndent = cmd.indent;
+        return true;
+    }
+    case CC::WhenChoice: { // "Wenn [x]"
+        int idx = cmd.param1; // 0-basierter Optionsindex
+        auto it = mBranch.find(cmd.indent);
+        if (it != mBranch.end() && it->second == idx) {
+            mBranch.erase(it);
             return true;
         }
-        case EventCommandCode::ClearScreenTexts: {
-            if (onClearScreenTexts) onClearScreenTexts();
+        return CommandSkip();
+    }
+    case CC::WhenCancel: { // "Wenn Abbruch"
+        auto it = mBranch.find(cmd.indent);
+        if (it != mBranch.end() && it->second == 4) {
+            mBranch.erase(it);
             return true;
         }
-        case EventCommandCode::ShowFloatingDamage: {
-            if (onShowWorldText) {
-                onShowWorldText(cmd.text.empty() ? std::to_string(cmd.param1) : cmd.text,
-                    (float)cmd.param1, (float)cmd.param2 + 1.0f, (float)cmd.param3,
-                    1.0f, 0.2f, 0.2f, 1.5f);
+        return CommandSkip();
+    }
+    case CC::ChoicesEnd:
+        return true;
+
+    case CC::InputNumber: {
+        if (GameUI::Get().Message().IsBusy()) return false;
+        int varId = cmd.param1;
+        int digits = cmd.param2 > 0 ? cmd.param2 : 4;
+        if (showNumberInput) {
+            mNumberWaiting = true;
+            showNumberInput(digits, Game::Get().Variables().Get(varId),
+                [this, varId](int value) {
+                    Game::Get().Variables().Set(varId, value);
+                    mNumberWaiting = false;
+                });
+        } else {
+            RPG_LOG_WARN("[Event] Zahleneingabe ohne UI-Provider (Variable " +
+                         std::to_string(varId) + " bleibt)");
+        }
+        return true;
+    }
+
+    case CC::ChangeTextOptions:
+        // Position/Hintergrund des Nachrichtenfensters (kosmetisch)
+        return true;
+
+    case CC::ButtonInputProcessing: {
+        mButtonInputVariableId = cmd.param1;
+        return true;
+    }
+
+    case CC::Wait: {
+        // XP: Frames @ 40 fps. Editor-Katalog erlaubt auch Sekundenangaben.
+        SetWait(cmd.param1 > 0 ? cmd.param1 / 40.0f : 0.1f);
+        return true;
+    }
+
+    case CC::Comment:
+    case CC::CommentLine:
+        return true;
+
+    case CC::ConditionalBranch: {
+        bool result = EvalCondition(cmd);
+        mBranch[cmd.indent] = result ? 1 : 0;
+        if (!result) return CommandSkip();
+        return true;
+    }
+    case CC::Else: {
+        auto it = mBranch.find(cmd.indent);
+        if (it != mBranch.end() && it->second == 0) {
+            mBranch.erase(it);
+            return true; // Bedingung war falsch -> Else-Zweig ausfuehren
+        }
+        return CommandSkip();
+    }
+    case CC::BranchEnd: {
+        mBranch.erase(cmd.indent);
+        return true;
+    }
+    case CC::Loop:
+        return true;
+    case CC::RepeatAbove: {
+        // Rueckwaerts zum passenden Loop gleicher Einrückung
+        const int indent = cmd.indent;
+        for (;;) {
+            if (mIndex == 0) return true;
+            if (mList[mIndex].indent == indent && mList[mIndex].code == CC::Loop)
+                return true;
+            mIndex--;
+        }
+    }
+    case CC::BreakLoop: {
+        const int indent = cmd.indent;
+        size_t i = mIndex;
+        for (;;) {
+            i++;
+            if (i >= mList.size()) { mIndex = mList.size(); return true; }
+            if (mList[i].code == CC::RepeatAbove && mList[i].indent < indent) {
+                mIndex = i;
+                return true;
             }
+        }
+    }
+    case CC::ExitEventProcessing:
+        mList.clear();
+        return false;
+    case CC::EraseEvent:
+        if (eraseEvent) eraseEvent(mEventId);
+        return true;
+    case CC::CallCommonEvent: {
+        // Sync wichtig: keine Rekursion ueber 100 Ebenen
+        static thread_local int s_depth = 0;
+        if (s_depth >= 100) {
+            RPG_LOG_ERROR("[Event] Common-Event-Aufruf ueberschreitet Maximal-Tiefe!");
             return true;
         }
-        case EventCommandCode::Wait: {
-            float secs = cmd.param1 > 0 ? (cmd.param1 / 60.0f) : 0.5f;
-            if (!cmd.text.empty()) {
-                try { secs = std::stof(cmd.text); } catch (...) {}
+        const CommonEvent* ce = nullptr;
+        for (auto& c : EventSystem::Get().GetCommonEvents())
+            if (c.id == cmd.param1) { ce = &c; break; }
+        if (!ce) {
+            RPG_LOG_WARN("[Event] Common Event " + std::to_string(cmd.param1) + " nicht gefunden");
+            return true;
+        }
+        s_depth++;
+        mChild = std::make_unique<EventInterpreter>();
+        // Child bekommt dieselbe Verdrahtung
+        EventSystem::Get().WireInterpreter(*mChild);
+        mChild->Setup(ce->list, 0, mMapId);
+        s_depth--;
+        return true;
+    }
+    case CC::Label:
+        return true;
+    case CC::JumpToLabel: {
+        int pos = FindLabel(cmd.text);
+        if (pos >= 0) mIndex = (size_t)pos;
+        return true;
+    }
+
+    case CC::ControlSwitches: {
+        int from = cmd.param1, to = cmd.param2;
+        if (to < from) std::swap(from, to);
+        bool val = cmd.param3 != 0;
+        for (int id = from; id <= to; ++id)
+            if (onChangeSwitch) onChangeSwitch(id, val); else Game::Get().Switches().Set(id, val);
+        EventSystem::Get().RefreshAllPages();
+        return true;
+    }
+    case CC::ControlVariables: {
+        int from = cmd.param1, to = cmd.param2;
+        if (to < from) std::swap(from, to);
+        int value = ResolveOperand(cmd, 0);
+        for (int id = from; id <= to; ++id) {
+            // Bei Bereich+Zufall: pro Variable neu wuerfeln
+            if (!cmd.parameters.empty() && cmd.parameters[0] == "2" && to > from)
+                value = ResolveOperand(cmd, 0);
+            int cur = Game::Get().Variables().Get(id);
+            int nv = cur;
+            switch (cmd.param3) {
+                case 0: nv = value; break;
+                case 1: nv = cur + value; break;
+                case 2: nv = cur - value; break;
+                case 3: nv = cur * value; break;
+                case 4: nv = value != 0 ? cur / value : 0; break;
+                case 5: nv = value != 0 ? cur % value : 0; break;
             }
-            SetWait(secs);
-            return false;
+            if (onChangeVariable) onChangeVariable(id, nv); else Game::Get().Variables().Set(id, nv);
         }
-        case EventCommandCode::PlayBGM: {
-            if (onPlayBGM) onPlayBGM(cmd.text.empty() ? "bgm" : cmd.text, true);
-            return true;
+        EventSystem::Get().RefreshAllPages();
+        return true;
+    }
+    case CC::ControlSelfSwitch: {
+        char ch = cmd.text.empty() ? 'A' : cmd.text[0];
+        bool val = cmd.param3 != 0;
+        if (onChangeSelfSwitch) onChangeSelfSwitch(mEventId, ch, val);
+        EventSystem::Get().RefreshAllPages();
+        return true;
+    }
+    case CC::ControlTimer: {
+        if (cmd.param1 == 0) Game::Get().System().StartTimer(std::max(0, cmd.param2));
+        else Game::Get().System().StopTimer();
+        return true;
+    }
+    case CC::ChangeGold:
+        if (onChangeGold) onChangeGold(cmd.param1);
+        else Game::Get().Party().GainGold(cmd.param1);
+        EventSystem::Get().RefreshAllPages();
+        return true;
+    case CC::ChangeItems:
+        if (onChangeItems) onChangeItems(cmd.param1, cmd.param2);
+        else Game::Get().Party().GainItem(cmd.param1, cmd.param2);
+        EventSystem::Get().RefreshAllPages();
+        return true;
+    case CC::ChangeWeapons:
+        Game::Get().Party().GainWeapon(cmd.param1, cmd.param2);
+        return true;
+    case CC::ChangeArmor:
+        Game::Get().Party().GainArmor(cmd.param1, cmd.param2);
+        return true;
+    case CC::ChangePartyMember: {
+        if (cmd.param3 == 0) Game::Get().Party().AddActor(cmd.param1);
+        else Game::Get().Party().RemoveActor(cmd.param1);
+        EventSystem::Get().RefreshAllPages();
+        return true;
+    }
+    case CC::ChangeWindowskin:
+        Game::Get().System().SetWindowskin(cmd.text);
+        return true;
+    case CC::ChangeBattleBGM:
+        Game::Get().System().SetBattleBgm(cmd.text);
+        return true;
+    case CC::ChangeBattleEndME:
+        Game::Get().System().SetBattleEndMe(cmd.text);
+        return true;
+    case CC::ChangeSaveAccess:
+        Game::Get().System().SetSaveAccess(cmd.param1 != 0);
+        return true;
+    case CC::ChangeMenuAccess:
+        Game::Get().System().SetMenuAccess(cmd.param1 != 0);
+        return true;
+    case CC::ChangeEncounter:
+        Game::Get().System().SetEncounterEnabled(cmd.param1 != 0);
+        return true;
+
+    // ------------------------------------------------------------------
+    // Seite 2
+    // ------------------------------------------------------------------
+    case CC::TransferPlayer:
+        if (onTransferPlayer) onTransferPlayer(cmd.param1, 0, cmd.param2, cmd.param3);
+        return true;
+    case CC::SetEventLocation:
+        if (setEventLocation) setEventLocation(cmd.param1, cmd.param2, cmd.param3);
+        return true;
+    case CC::ScrollMap:
+        return true; // 2D-spezifisch (Kamera folgt in 3D dem Spieler)
+    case CC::ChangeMapSettings:
+        return true;
+    case CC::ChangeFogColorTone:
+    case CC::ChangeFogOpacity:
+        // Nebel-Farbton/Deckkraft: Renderer-Fog-Uniforms (Engine-Hook vorhanden)
+        return true;
+    case CC::ShowAnimation:
+    case CC::ShowBattleAnimation:
+    case CC::PlayAnimation: {
+        // XP-Animations-Playback (Paket 5): Sequenz aus Data/Animations.json
+        // als RGSS-Sprite-Gruppe. Ziel (Paket 6): param1 -> -1 Spieler,
+        // 0 dieses Event, >0 Event-ID; Weltposition wird von der Engine als
+        // Canvas-Position projiziert (Fallback: Canvas-Mitte).
+        int animId = cmd.param2 > 0 ? cmd.param2 : 0;
+        if (animId == 0 && !cmd.text.empty()) {
+            // Hilfsweg: Animation per NAME finden (Editor-Textfeld)
+            for (const auto& a : Database::Get().AnimationSet())
+                if (a.name == cmd.text) { animId = a.id > 0 ? a.id : 1; break; }
         }
-        case EventCommandCode::PlaySE: {
-            if (onPlaySE) onPlaySE(cmd.text.empty() ? "se" : cmd.text);
-            return true;
-        }
-        case EventCommandCode::Script: {
-            if (onScript) onScript(cmd.text);
-            return true;
-        }
-        case EventCommandCode::ChangeGold: {
-            if (onChangeGold) onChangeGold(cmd.param1);
-            return true;
-        }
-        case EventCommandCode::ChangeSwitch: {
-            if (onChangeSwitch) onChangeSwitch(cmd.param1, cmd.param2 != 0);
-            return true;
-        }
-        case EventCommandCode::ChangeVariable: {
-            if (onChangeVariable) onChangeVariable(cmd.param1, cmd.param2);
-            return true;
-        }
-        case EventCommandCode::ChangeItems: {
-            if (onChangeItems) onChangeItems(cmd.param1, cmd.param2);
-            return true;
-        }
-        case EventCommandCode::ChangeActorHP: {
-            if (onChangeActorHP) onChangeActorHP(cmd.param1, cmd.param2);
-            return true;
-        }
-        case EventCommandCode::ChangeSelfSwitch: {
-            char ch = 'A';
-            if (!cmd.text.empty()) ch = (char)std::toupper((unsigned char)cmd.text[0]);
-            else if (cmd.param2 >= 0 && cmd.param2 <= 3) ch = (char)('A' + cmd.param2);
-            bool val = cmd.param1 != 0;
-            if (onChangeSelfSwitch) onChangeSelfSwitch(mEventId, ch, val);
-            return true;
-        }
-        case EventCommandCode::SetMoveRoute: {
-            // text: "UULDRW10"  U/D/L/R/F=forward/T=toward/A=away/X=random/W=wait frames in digits
-            MoveRoute route;
-            route.repeat = cmd.param1 != 0;
-            route.skippable = cmd.param2 != 0;
-            std::string s = cmd.text;
-            for (size_t i = 0; i < s.size(); ++i) {
-                char c = (char)std::toupper((unsigned char)s[i]);
-                MoveRouteStep st;
-                if (c == 'U') st.code = MoveRouteCode::MoveUp;
-                else if (c == 'D') st.code = MoveRouteCode::MoveDown;
-                else if (c == 'L') st.code = MoveRouteCode::MoveLeft;
-                else if (c == 'R') st.code = MoveRouteCode::MoveRight;
-                else if (c == 'F') st.code = MoveRouteCode::MoveForward;
-                else if (c == 'T') st.code = MoveRouteCode::TowardPlayer;
-                else if (c == 'A') st.code = MoveRouteCode::AwayFromPlayer;
-                else if (c == 'X') st.code = MoveRouteCode::Random;
-                else if (c == 'W') {
-                    st.code = MoveRouteCode::Wait;
-                    int frames = 20;
-                    if (i+1 < s.size() && std::isdigit((unsigned char)s[i+1])) {
-                        frames = 0;
-                        while (i+1 < s.size() && std::isdigit((unsigned char)s[i+1])) {
-                            frames = frames*10 + (s[++i]-'0');
-                        }
-                    }
-                    st.param = frames;
-                } else continue;
-                route.list.push_back(st);
+        if (animId <= 0) animId = 1;
+        Vec3 target = Game::Get().Player().GetPosition();
+        const int targetId = (cmd.param1 == 0) ? mEventId : cmd.param1;
+        if (targetId > 0) {
+            if (MapEvent* ev = EventSystem::Get().GetEvent(targetId)) {
+                Vec3 ep = ev->worldPos;
+                if (glm::length(ep) < 0.001f)
+                    ep = Vec3((float)ev->x, (float)ev->y, (float)ev->z);
+                target = ep;
             }
-            if (route.list.empty()) {
-                // default patrol
-                route.list.push_back({MoveRouteCode::MoveRight,0});
-                route.list.push_back({MoveRouteCode::Wait,30});
-                route.list.push_back({MoveRouteCode::MoveLeft,0});
-                route.list.push_back({MoveRouteCode::Wait,30});
-            }
-            if (onSetMoveRoute) onSetMoveRoute(mEventId > 0 ? mEventId : cmd.param3, route);
+        }
+        Game::Get().StartMapAnimationAt(animId, target);
+        return true;
+    }
+    case CC::ChangeTransparentFlag:
+        Game::Get().Player().SetTransparent(cmd.param1 != 0);
+        return true;
+    case CC::SetMoveRoute: {
+        // PAKET 16: zentraler XP-Routen-Parser (Tokens s. EventSystem.h)
+        MoveRoute route = EventSystem_ParseMoveRouteText(cmd.text);
+        route.repeat = (cmd.param2 & 1) != 0;
+        route.skippable = (cmd.param2 & 2) != 0;
+        const bool wait = (cmd.param2 & 4) != 0;
+        int target = cmd.param1; // 0=dieses Event, >0 Event-Id
+        if (target < 0) target = mEventId;
+        if (onSetMoveRoute) onSetMoveRoute(target, route);
+        if (wait && !route.list.empty()) mMoveRouteWaiting = true;
+        return true;
+    }
+    case CC::WaitForMoveCompletion:
+        mMoveRouteWaiting = true;
+        return true;
+    case CC::PrepareTransition:
+    case CC::ExecuteTransition:
+        return true;
+    case CC::ChangeScreenColorTone: {
+        auto& fx = GetScreenEffects();
+        float r = (float)(cmd.param1), g = (float)(cmd.param2), b = (float)(cmd.param3);
+        float grey = cmd.parameters.empty() ? 0.f : (float)atof(cmd.parameters[0].c_str());
+        float secs = cmd.parameters.size() > 1 ? (float)atof(cmd.parameters[1].c_str()) : 0.5f;
+        fx.toneTarget = Color(r / 255.0f, g / 255.0f, b / 255.0f, grey / 255.0f);
+        fx.toneElapsed = 0.0f;
+        fx.toneDuration = std::max(0.01f, secs);
+        return true;
+    }
+    case CC::ScreenFlash: {
+        auto& fx = GetScreenEffects();
+        float r = (float)(cmd.param1), g = (float)(cmd.param2), b = (float)(cmd.param3);
+        float pwr = cmd.parameters.empty() ? 160.f : (float)atof(cmd.parameters[0].c_str());
+        float secs = cmd.parameters.size() > 1 ? (float)atof(cmd.parameters[1].c_str()) : 0.3f;
+        fx.flashColor = Color(r / 255.0f, g / 255.0f, b / 255.0f, pwr / 255.0f);
+        fx.flashDuration = secs;
+        fx.flashTimer = secs;
+        return true;
+    }
+    case CC::ScreenShake: {
+        auto& fx = GetScreenEffects();
+        fx.shakePower = cmd.param1 > 0 ? cmd.param1 : 5;
+        fx.shakeSpeed = cmd.param2 > 0 ? cmd.param2 : 10;
+        float secs = cmd.parameters.empty() ? 0.5f : (float)atof(cmd.parameters[0].c_str());
+        fx.shakeDuration = secs;
+        fx.shakeTimer = secs;
+        if (cmd.param3 != 0) SetWait(secs); // "Warten bis fertig"
+        return true;
+    }
+    case CC::ShowPicture: {
+        if (!cmd.text.empty()) {
+            float x = (float)cmd.param1, y = (float)cmd.param2;
+            float normX = x > 1.0f ? x / 640.0f : x;
+            float normY = y > 1.0f ? y / 480.0f : y;
+            GameUI::Get().ShowPicture(cmd.text, Vec2(normX, normY));
+        }
+        return true;
+    }
+    case CC::MovePicture:
+        GameUI::Get().MovePicture(cmd.param1 > 0 ? cmd.param1 : 1,
+            Vec2((float)cmd.param2 / 640.0f, (float)cmd.param3 / 480.0f));
+        return true;
+    case CC::RotatePicture:
+        GameUI::Get().SetPictureRotation(cmd.param1 > 0 ? cmd.param1 : 1, (float)cmd.param2);
+        return true;
+    case CC::ChangePictureColorTone:
+        if (cmd.parameters.size() >= 1)
+            GameUI::Get().SetPictureOpacity(cmd.param1 > 0 ? cmd.param1 : 1,
+                (float)atof(cmd.parameters[0].c_str()));
+        return true;
+    case CC::ErasePicture:
+        GameUI::Get().RemovePicture(cmd.param1 > 0 ? cmd.param1 : 1);
+        return true;
+    case CC::SetWeatherEffects:
+    case CC::SetWeather: {
+        // PAKET 11: XP-Wetter (Typ 0 Keins / 1 Regen / 2 Sturm / 3 Schnee,
+        // Staerke 1-9). Zustand hier; die Anzeige liegt bei
+        // GameUI::DrawWeather (ImGui-Overlay, Karte UND Kampf).
+        auto& fx = GetScreenEffects();
+        fx.weatherType = cmd.param1;
+        fx.weatherPowerTarget = std::clamp(cmd.param2, 0, 9);
+        if (fx.weatherType <= 0 || fx.weatherType > 3) {
+            fx.weatherType = 0;
+            fx.weatherPowerTarget = 0; // „Keins" faehrt sanft herunter
+        }
+        return true;
+    }
+    case CC::SetTimeOfDay:
+        return true; // Tageszeit: Renderer-Hook (bleibt reserviert)
+    case CC::PlayBGM:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 0, true); return true; }
+        if (onPlayBGM) onPlayBGM(cmd.text, true);
+        return true;
+    case CC::FadeOutBGM:
+        EventSystem_PlayAudio("", 0, false);
+        if (!s_audioPlayer && onPlayBGM) onPlayBGM("", false);
+        return true;
+    case CC::PlayBGS:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 1, true); return true; }
+        if (onPlaySE) onPlaySE(cmd.text);
+        return true;
+    case CC::PlayME:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 2, false); return true; }
+        if (onPlaySE) onPlaySE(cmd.text);
+        return true;
+    case CC::FadeOutBGS:
+        EventSystem_PlayAudio("", 1, false);
+        if (!s_audioPlayer && onPlaySE) onPlaySE("");
+        return true;
+    case CC::StopSE:
+        EventSystem_PlayAudio("", 3, false);
+        if (!s_audioPlayer && onPlaySE) onPlaySE("");
+        return true;
+    case CC::MemorizeBGM:
+    case CC::RestoreBGM:
+        Game::Get().System().MemorizeBgm(cmd.code == CC::MemorizeBGM);
+        return true;
+    case CC::PlaySE:
+        if (!cmd.text.empty()) { EventSystem_PlayAudio(cmd.text, 3, false); return true; }
+        if (onPlaySE) onPlaySE(cmd.text);
+        return true;
+
+    // ------------------------------------------------------------------
+    // Seite 3
+    // ------------------------------------------------------------------
+    case CC::BattleProcessing: {
+        int troopId = cmd.param1 > 0 ? cmd.param1 : 1;
+        if (!cmd.text.empty()) { try { troopId = std::stoi(cmd.text); } catch (...) {} }
+        if (onBattleProcessing) onBattleProcessing(troopId, (cmd.param2 & 1) != 0, (cmd.param2 & 2) != 0);
+        return true;
+    }
+    case CC::IfWin:
+    case CC::IfEscape:
+    case CC::IfLose: {
+        int outcome = BattleSystem::Get().GetLastOutcome(); // 0=keiner,1=Sieg,2=Flucht,3=Niederlage
+        int expected = cmd.code == CC::IfWin ? 1 : (cmd.code == CC::IfEscape ? 2 : 3);
+        if (outcome == expected) {
+            mBranch.erase(cmd.indent);
             return true;
         }
-        case EventCommandCode::TransferPlayer: {
-            if (onTransferPlayer)
-                onTransferPlayer(cmd.param1, cmd.param2, cmd.param3,
-                    cmd.parameters.empty() ? 0 : 0);
-            if (!cmd.text.empty() && onTransferPlayer) {
-                std::stringstream ss(cmd.text);
-                int mapId = 1, x = 0, y = 0, z = 0;
-                char sep;
-                if (ss >> mapId >> sep >> x >> sep >> y) {
-                    if (!(ss >> sep >> z)) z = 0;
-                    onTransferPlayer(x, y, z, mapId);
-                }
-            } else if (onTransferPlayer) {
-                onTransferPlayer(cmd.param1, cmd.param2, cmd.param3, 0);
+        return CommandSkip();
+    }
+    case CC::ShopProcessing: {
+        // Waren-Text: "1,2,w3,a1" - Zahl = Item, w<ID> = Waffe, a<ID> = Ruestung
+        std::vector<ShopGood> goods;
+        if (!cmd.text.empty()) {
+            std::stringstream ss(cmd.text);
+            std::string tok;
+            while (std::getline(ss, tok, ',')) {
+                // Leerzeichen trimmen
+                while (!tok.empty() && tok.front() == ' ') tok.erase(tok.begin());
+                while (!tok.empty() && tok.back() == ' ') tok.pop_back();
+                if (tok.empty()) continue;
+                try {
+                    if (tok[0] == 'w' || tok[0] == 'W')
+                        goods.push_back({ShopGood::Kind::Weapon, std::stoi(tok.substr(1))});
+                    else if (tok[0] == 'a' || tok[0] == 'A')
+                        goods.push_back({ShopGood::Kind::Armor, std::stoi(tok.substr(1))});
+                    else
+                        goods.push_back({ShopGood::Kind::Item, std::stoi(tok)});
+                } catch (...) {}
             }
-            return true;
         }
-        case EventCommandCode::BattleProcessing: {
-            // param1 = troopId (0 = text parse / random troop 1)
-            int troopId = cmd.param1 > 0 ? cmd.param1 : 1;
-            if (!cmd.text.empty()) {
-                try { troopId = std::stoi(cmd.text); } catch (...) {}
-            }
-            if (onBattleProcessing) onBattleProcessing(troopId);
-            return true;
+        if (goods.empty()) {
+            if (cmd.param1 > 0) goods.push_back({ShopGood::Kind::Item, cmd.param1});
+            if (cmd.param2 > 0) goods.push_back({ShopGood::Kind::Item, cmd.param2});
+            if (cmd.param3 > 0) goods.push_back({ShopGood::Kind::Item, cmd.param3});
         }
-        case EventCommandCode::ShopProcessing: {
+        if (goods.empty()) goods = {{ShopGood::Kind::Item, 1}, {ShopGood::Kind::Item, 2}};
+        if (onShopProcessing) {
+            // Externer Override bekommt weiterhin nur die Item-IDs (Kompat.)
             std::vector<int> items;
-            if (!cmd.text.empty()) {
-                std::stringstream ss(cmd.text);
-                std::string item;
-                while (std::getline(ss, item, ',')) {
-                    try { items.push_back(std::stoi(item)); } catch (...) {}
+            for (const auto& g : goods)
+                if (g.kind == ShopGood::Kind::Item) items.push_back(g.id);
+            onShopProcessing(items);
+        } else {
+            // XP-Shopfenster (RmlUi): Interpreter wartet bis zum Schliessen
+            mShopWaiting = true;
+            GameUI::Get().ShowShopGoods(goods, [this]() { mShopWaiting = false; });
+        }
+        return true;
+    }
+    case CC::NameInputProcessing: {
+        int actorId = cmd.param1 > 0 ? cmd.param1 : 1;
+        int maxChars = cmd.param2 > 0 ? cmd.param2 : 8;
+        if (showNameInput) {
+            mNameWaiting = true;
+            showNameInput(actorId, maxChars, [this](const std::string&) { mNameWaiting = false; });
+        }
+        return true;
+    }
+    case CC::ChangeHP:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (onChangeActorHP) onChangeActorHP(actorId, cmd.param2);
+        });
+        return true;
+    case CC::ChangeSP:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) {
+                a->mp += cmd.param2;
+                if (a->mp < 0) a->mp = 0;
+            }
+        });
+        return true;
+    case CC::ChangeState:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) {
+                if (cmd.param3 == 0) { // hinzufuegen
+                    bool has = false;
+                    for (int s : a->states) if (s == cmd.param2) has = true;
+                    if (!has) a->states.push_back(cmd.param2);
+                } else {
+                    a->states.erase(std::remove(a->states.begin(), a->states.end(), cmd.param2), a->states.end());
                 }
             }
-            if (items.empty()) {
-                if (cmd.param1 > 0) items.push_back(cmd.param1);
-                if (cmd.param2 > 0) items.push_back(cmd.param2);
-                if (cmd.param3 > 0) items.push_back(cmd.param3);
+        });
+        return true;
+    case CC::RecoverAll:
+        if (onRecoverAll) onRecoverAll(cmd.param1);
+        return true;
+    case CC::ChangeEXP:
+        if (onChangeExp) onChangeExp(cmd.param1, cmd.param2);
+        return true;
+    case CC::ChangeLevel:
+        if (onChangeLevel) onChangeLevel(cmd.param1, cmd.param2);
+        return true;
+    case CC::ChangeParameters:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) {
+                // param2 = Stat (0 MaxHP,1 MaxSP,2 ATK...), param3 = Delta (nur Basiswert-Notiz)
+                (void)a; // Stats werden primär über Level/EXP skaliert
+                RPG_LOG_INFO("[Event] ChangeParameters actor " + std::to_string(actorId));
             }
-            if (items.empty()) items = {1, 2}; // default potions
-            if (onShopProcessing) onShopProcessing(items);
-            return true;
-        }
-        case EventCommandCode::RecoverAll: {
-            if (onRecoverAll) onRecoverAll(cmd.param1 > 0 ? cmd.param1 : 1);
-            return true;
-        }
-        case EventCommandCode::ChangeExp: {
-            if (onChangeExp) onChangeExp(cmd.param1 > 0 ? cmd.param1 : 1, cmd.param2);
-            return true;
-        }
-        case EventCommandCode::ChangeLevel: {
-            if (onChangeLevel) onChangeLevel(cmd.param1 > 0 ? cmd.param1 : 1, cmd.param2);
-            return true;
-        }
-        case EventCommandCode::Comment:
-            return true;
-        case EventCommandCode::ConditionalBranch: {
-            // param1=switchId, param2=expected (0/1). text="var:ID:OP:VAL" optional
-            mBranchDepth++;
-            mBranchResult = true;
-            if (cmd.param1 > 0) {
-                bool sw = Game::Get().Switches().Get(cmd.param1);
-                mBranchResult = (cmd.param2 != 0) ? sw : !sw;
-            }
-            if (!cmd.text.empty() && cmd.text.rfind("var:", 0) == 0) {
-                // var:ID:>=:VAL
-                int vid = 0, val = 0;
-                char op[4] = {0};
-                if (sscanf(cmd.text.c_str(), "var:%d:%2[^:]:%d", &vid, op, &val) >= 3) {
-                    int cur = Game::Get().Variables().Get(vid);
-                    if (std::string(op) == ">=") mBranchResult = cur >= val;
-                    else if (std::string(op) == "<=") mBranchResult = cur <= val;
-                    else if (std::string(op) == "==") mBranchResult = cur == val;
-                    else if (std::string(op) == "!=") mBranchResult = cur != val;
-                    else if (std::string(op) == ">") mBranchResult = cur > val;
-                    else if (std::string(op) == "<") mBranchResult = cur < val;
+        });
+        return true;
+    case CC::ChangeSkills:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) {
+                if (cmd.param3 == 0) {
+                    bool has = false;
+                    for (int s : a->skills) if (s == cmd.param2) has = true;
+                    if (!has) a->skills.push_back(cmd.param2);
+                } else {
+                    a->skills.erase(std::remove(a->skills.begin(), a->skills.end(), cmd.param2), a->skills.end());
                 }
             }
-            return true;
+        });
+        return true;
+    case CC::ChangeEquipment:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) {
+                if (cmd.param2 == 0) a->weaponId = cmd.param3;
+                else {
+                    bool has = false;
+                    for (int ar : a->armors) if (ar == cmd.param3) has = true;
+                    if (!has && cmd.param3 > 0) a->armors.push_back(cmd.param3);
+                }
+            }
+        });
+        return true;
+    case CC::ChangeActorName:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) a->name = cmd.text;
+        });
+        return true;
+    case CC::ChangeActorClass:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) a->classId = cmd.param2;
+        });
+        return true;
+    case CC::ChangeActorGraphic:
+        ApplyToActors(cmd.param1, [&](int actorId) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) a->graphicName = cmd.text;
+        });
+        return true;
+    case CC::ChangeEnemyHP:
+    case CC::ChangeEnemySP:
+    case CC::ChangeEnemyState:
+    case CC::EnemyRecoverAll:
+    case CC::EnemyAppearance:
+    case CC::EnemyTransform:
+    case CC::DealDamage:
+    case CC::ForceAction:
+        BattleSystem::Get().ApplyEventCommand(cmd);
+        return true;
+    case CC::AbortBattle:
+        BattleSystem::Get().Abort();
+        return true;
+    case CC::OpenMenuScreen:
+        GameUI::Get().Pause().Show();
+        return true;
+    case CC::OpenSaveScreen:
+        if (onOpenSave) {
+            onOpenSave(1); // externer Override
+        } else {
+            // XP-Speicherbildschirm (4 Slots): Interpreter wartet bis zum Ende
+            mSaveWaiting = true;
+            GameUI::Get().ShowSaveScreen(true, [this]() { mSaveWaiting = false; });
         }
-        case EventCommandCode::EndBranch: {
-            if (mBranchDepth > 0) mBranchDepth--;
-            return true;
+        return true;
+    case CC::GameOver:
+        if (onGameOver) onGameOver();
+        return true;
+    case CC::ReturnToTitle:
+        if (onReturnToTitle) onReturnToTitle();
+        return true;
+    case CC::Script: {
+        std::string code = cmd.text;
+        while (mIndex + 1 < mList.size() && mList[mIndex + 1].code == CC::ScriptLine) {
+            mIndex++;
+            code += "\n";
+            code += mList[mIndex].text;
         }
-        default:
-            return true;
+        if (onScript) onScript(code);
+        return true;
+    }
+    case CC::ScriptLine:
+        return true;
+
+    // ------------------------------------------------------------------
+    // Engine-3D-Befehle
+    // ------------------------------------------------------------------
+    case CC::ShowScreenText: {
+        if (onShowScreenText) {
+            float x = cmd.param1 / 100.0f;
+            float y = cmd.param2 / 100.0f;
+            float dur = cmd.param3 > 0 ? cmd.param3 / 10.0f : 3.0f;
+            onShowScreenText(cmd.text, x, y, 1.0f, 1.0f, 0.8f, dur);
+        }
+        return true;
+    }
+    case CC::ShowWorldText: {
+        if (onShowWorldText) {
+            onShowWorldText(cmd.text, (float)cmd.param1, (float)cmd.param2, (float)cmd.param3,
+                            1.0f, 1.0f, 0.2f, 2.5f);
+        }
+        return true;
+    }
+    case CC::ClearScreenTexts:
+        if (onClearScreenTexts) onClearScreenTexts();
+        return true;
+    case CC::ShowFloatingDamage:
+        if (onShowWorldText) {
+            onShowWorldText(cmd.text.empty() ? std::to_string(cmd.param1) : cmd.text,
+                Game::Get().Player().GetPosition().x,
+                Game::Get().Player().GetPosition().y + 1.0f,
+                Game::Get().Player().GetPosition().z,
+                1.0f, 0.3f, 0.3f, 1.5f);
+        }
+        return true;
+    case CC::SpawnEntity:
+    case CC::MoveEntity:
+    case CC::RotateEntity:
+    case CC::PlayParticle:
+        // 3D-Szenerie-Befehle: ueber Script-Kanal (Ruby: Engine.spawn etc.)
+        if (onScript && !cmd.text.empty()) onScript(cmd.text);
+        return true;
+    default:
+        RPG_LOG_WARN("[Event] Unbekannter Befehlscode: " + std::to_string((int)cmd.code));
+        return true;
     }
 }
 
-// --- EventSystem ---
+// ============================================================================
+// EventSystem
+// ============================================================================
 EventSystem& EventSystem::Get() {
     static EventSystem instance;
     return instance;
 }
 
-void EventSystem::SetChoiceResult(int index) { mLastChoice = index; }
+void EventSystem::SetChoiceResult(int index) {
+    mLastChoice = index;
+    for (auto& it : mInterpreters)
+        if (it->IsWaitingForChoice()) it->SetChoiceResult(index);
+}
 int EventSystem::ConsumeChoiceResult() {
     int v = mLastChoice;
     mLastChoice = -1;
@@ -356,24 +1208,92 @@ CommonEvent* EventSystem::GetCommonEvent(int id) {
     return nullptr;
 }
 
+void EventSystem::EraseEvent(int eventId) {
+    if (auto* ev = GetEvent(eventId)) {
+        ev->erased = true;
+        RPG_LOG_INFO("[Event] Event " + std::to_string(eventId) + " geloescht (bis Map-Reload)");
+    }
+}
+
+void EventSystem::SetEventLocation(int eventId, int x, int z) {
+    MapEvent* ev = GetEvent(eventId > 0 ? eventId : 0);
+    if (!ev) return;
+    ev->x = x; ev->z = z;
+    ev->worldPos = Vec3((float)x, ev->worldPos.y, (float)z);
+}
+
+bool EventSystem::IsAnyRouteForcing() const {
+    for (const auto& ev : mEvents)
+        if (ev.routeForcing) return true;
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Callback-Verdrahtung
+// ---------------------------------------------------------------------------
 void EventSystem::WireInterpreter(EventInterpreter& interp) {
     interp.onShowText = [](const std::string& txt) {
         GameUI::Get().ShowMessage(txt);
         RPG_LOG_INFO(std::string("[Event] ") + txt);
     };
+    interp.onShowChoices = [this](const std::string& txt, int cancel) {
+        // text: "Frage|OptionA|OptionB|OptionC|OptionD"
+        std::vector<std::string> opts;
+        std::string prompt = txt;
+        size_t p = txt.find('|');
+        if (p != std::string::npos) {
+            prompt = txt.substr(0, p);
+            std::string rest = txt.substr(p + 1);
+            size_t start = 0;
+            while (start <= rest.size()) {
+                size_t n = rest.find('|', start);
+                if (n == std::string::npos) { opts.push_back(rest.substr(start)); break; }
+                opts.push_back(rest.substr(start, n - start));
+                start = n + 1;
+            }
+        }
+        if (opts.empty()) opts = {"Ja", "Nein"};
+        // Abbruchverhalten: 0=nicht erlaubt, 1..4=Index waehlen, 5=Abbruchzweig
+        GameUI::Get().ShowChoices(prompt, opts, [this, cancel, opts](int idx) {
+            if (idx < 0) { // Abbrechen gedrueckt
+                if (cancel >= 1 && cancel <= 4 && cancel <= (int)opts.size()) idx = cancel - 1;
+                else if (cancel == 5) idx = 4; // Abbruch-Zweig
+                else idx = 0;
+            }
+            EventSystem::Get().SetChoiceResult(idx);
+        }, cancel != 0); // cancel==0 -> Escape gesperrt (XP)
+    };
     interp.onPlayBGM = [](const std::string& p, bool loop) {
         RPG_LOG_INFO("[Event] BGM: " + p + (loop ? " (loop)" : ""));
     };
     interp.onPlaySE = [](const std::string& p) {
-        RPG_LOG_INFO("[Event] SE: " + p);
+        if (!p.empty()) RPG_LOG_INFO("[Event] SE: " + p);
+    };
+    interp.onTransferPlayer = [](int x, int y, int z, int mapId) {
+        // PAKET 14: XP-Uebergang — mit injiziertem Handler laeuft der
+        // komplette Wechsel ueber den Engine-Arbiter (Freeze → 1 Frame
+        // alte Ansicht → Swap → Crossfade, wie XP Scene_Map#transfer_player:
+        // Graphics.freeze + transfer + Graphics.transition(10)).
+        if (s_transferTransition) {
+            s_transferTransition(x, y, z, mapId);
+        } else {
+            Game::Get().Player().SetPosition(Vec3((float)x, (float)y + 0.05f, (float)z));
+            // XP: Karte wirklich wechseln (Visual + Events + BGM via Engine-Hook)
+            if (mapId > 0) EventSystem_NotifyMapChanged(mapId);
+        }
+        RPG_LOG_INFO("[Event] Transfer: Map " + std::to_string(mapId) +
+                     " (" + std::to_string(x) + "," + std::to_string(z) + ")");
+    };
+    interp.onScript = [](const std::string& code) {
+        RPG_LOG_INFO("[Event] Script: " + code);
+        if (s_scriptRunner) s_scriptRunner(code);
     };
     interp.onChangeGold = [](int gold) {
         Game::Get().Party().GainGold(gold);
-        RPG_LOG_INFO("[Event] Gold += " + std::to_string(gold) +
-                     " (now " + std::to_string(Game::Get().Party().GetGold()) + ")");
-        // Gold popup as world text
         Vec3 pp = Game::Get().Player().GetPosition();
-        GameUI::Get().AddWorldText("Gold +" + std::to_string(gold), pp + Vec3(0,1.2f,0), Color(1.0f, 0.9f, 0.2f, 1.0f), 2.0f);
+        GameUI::Get().AddWorldText("Gold " + std::string(gold >= 0 ? "+" : "") + std::to_string(gold),
+                                   pp + Vec3(0, 1.2f, 0), Color(1.0f, 0.9f, 0.2f, 1.0f), 2.0f);
+        RPG_LOG_INFO("[Event] Gold += " + std::to_string(gold));
     };
     interp.onChangeSwitch = [](int id, bool val) {
         Game::Get().Switches().Set(id, val);
@@ -381,144 +1301,109 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     interp.onChangeVariable = [](int id, int val) {
         Game::Get().Variables().Set(id, val);
     };
-    interp.onTransferPlayer = [](int x, int y, int z, int mapId) {
-        Game::Get().Player().SetPosition(Vec3((float)x, (float)y, (float)z));
-        if (mapId > 0) Game::Get().Map().Setup(mapId);
-        RPG_LOG_INFO("[Event] Transfer player to map " + std::to_string(mapId) +
-                     " (" + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z) + ")");
+    interp.onChangeItems = [](int itemId, int amount) {
+        Game::Get().Party().GainItem(itemId, amount);
+        RPG_LOG_INFO("[Event] Item " + std::to_string(itemId) + " x" + std::to_string(amount));
     };
-    interp.onScript = [](const std::string& code) {
-        RPG_LOG_INFO("[Event] Script: " + code);
-        // Ausfuehrung ueber globalen Ruby-Hook (Engine setzt ihn)
-        if (s_scriptRunner) s_scriptRunner(code);
+    interp.onChangeActorHP = [](int actorId, int hpChange) {
+        if (auto* actor = Game::Get().Party().GetActor(actorId)) {
+            int old = actor->hp;
+            actor->hp += hpChange;
+            if (actor->hp < 0) actor->hp = 0;
+            if (const auto* data = Database::Get().GetActor(actorId))
+                if (actor->hp > data->initialStats.mhp) actor->hp = data->initialStats.mhp;
+            RPG_LOG_INFO("[Event] HP " + std::to_string(actorId) + ": " +
+                         std::to_string(old) + " -> " + std::to_string(actor->hp));
+        }
     };
-    interp.onBattleProcessing = [](int troopId) {
+    interp.onBattleProcessing = [](int troopId, bool canEscape, bool canLose) {
         std::vector<int> enemies;
+        std::vector<TroopPage> pages;
         if (const auto* troop = Database::Get().GetTroop(troopId)) {
             enemies = troop->members;
-        } else {
-            enemies = {1}; // fallback slime
-        }
-        BattleSystem::Get().Setup(enemies, true, false);
+            pages = troop->pages; // XP-Kampfereignis-Seiten
+        } else enemies = {1};
+        BattleSystem::Get().Setup(enemies, canEscape, canLose, pages);
+        // XP-Bruecke (Stufe 4g): auch der Event-Befehl „Kampf" meldet die
+        // Truppen-ID an $game_troop.setup (Battler stehen bereits).
+        if (Game::Get().onBattleStarted) Game::Get().onBattleStarted(troopId);
         BattleSystem::Get().onMessage = [](const std::string& m) {
             GameUI::Get().ShowMessage(m);
         };
         BattleSystem::Get().onVictory = []() {
             GameUI::Get().ShowMessage("Sieg!");
-            GameUI::Get().AddScreenText("VICTORY", Vec2(0.5f, 0.4f), Color(1,0.9f,0.2f,1), 3.0f);
+            GameUI::Get().AddScreenText("SIEG", Vec2(0.5f, 0.4f), Color(1, 0.9f, 0.2f, 1), 3.0f);
         };
         BattleSystem::Get().onDefeat = []() {
             GameUI::Get().ShowMessage("Niederlage...");
         };
-        // Auto-Angriff falls keine UI: erster Input-Frame Attack
-        BattleAction act;
-        act.type = BattleActionType::Attack;
-        act.subjectIndex = 0;
-        act.targetIndex = 0;
-        BattleSystem::Get().SetAction(act);
-        RPG_LOG_INFO("[Event] Battle troop=" + std::to_string(troopId) +
-                     " enemies=" + std::to_string(enemies.size()));
-        GameUI::Get().ShowMessage("Kampf startet! (Troop " + std::to_string(troopId) + ")");
+        RPG_LOG_INFO("[Event] Kampf gestartet: Troop " + std::to_string(troopId));
     };
-    interp.onShopProcessing = [](const std::vector<int>& itemIds) {
-        std::string list = "Shop: ";
-        for (size_t i = 0; i < itemIds.size(); ++i) {
-            const auto* it = Database::Get().GetItem(itemIds[i]);
-            if (i) list += ", ";
-            list += it ? it->name : ("#" + std::to_string(itemIds[i]));
-            if (it) list += " (" + std::to_string(it->price) + "G)";
-        }
-        list += "\n(E kauft erstes Item wenn genug Gold)";
-        GameUI::Get().ShowMessage(list);
-        // Einfacher Auto-Kauf: erstes Item wenn Gold reicht
-        if (!itemIds.empty()) {
-            const auto* it = Database::Get().GetItem(itemIds[0]);
-            if (it && Game::Get().Party().GetGold() >= it->price) {
-                Game::Get().Party().GainGold(-it->price);
-                Game::Get().Party().GainItem(it->id, 1);
-                RPG_LOG_INFO("[Shop] Bought " + it->name);
-            }
-        }
-    };
+    // Hinweis: Der Laden (302) laeuft INTERNE ueber GameUI::ShowShop
+    // (XP-Shopfenster mit Kaufen/Verkaufen). onShopProcessing bleibt als
+    // externer Override erhalten und ist hier bewusst NICHT vorbelegt.
     interp.onRecoverAll = [](int actorId) {
-        auto* a = Game::Get().Party().GetActor(actorId);
-        if (a) { a->RecoverAll(); RPG_LOG_INFO("[Event] RecoverAll actor " + std::to_string(actorId)); }
-        else {
+        if ((int)actorId > 0) {
+            if (auto* a = Game::Get().Party().GetActor(actorId)) a->RecoverAll();
+        } else {
             for (auto& m : Game::Get().Party().Members()) m.RecoverAll();
         }
         GameUI::Get().ShowMessage("HP/MP vollstaendig wiederhergestellt!");
     };
     interp.onChangeExp = [](int actorId, int exp) {
-        auto* a = Game::Get().Party().GetActor(actorId);
-        if (a) {
-            a->exp += exp;
-            RPG_LOG_INFO("[Event] EXP +" + std::to_string(exp));
-            GameUI::Get().AddScreenText("EXP +" + std::to_string(exp), Vec2(0.5f, 0.2f), Color(0.5f,1,0.5f,1), 2.0f);
-        }
+        ApplyToActorOrParty(actorId, [&](GameActor& a) {
+            if (exp >= 0) {
+                // EXP-Kurve der Klasse (GameActor::AddExp), Level-Up-Meldung
+                // inkl. neu gelernter Klassen-Fertigkeiten
+                std::vector<std::string> learned;
+                if (a.AddExp(exp, &learned) > 0) {
+                    std::string msg = a.name + " erreicht Level " +
+                                      std::to_string(a.level) + "!";
+                    for (const auto& s : learned)
+                        msg += "\n" + a.name + " hat [" + s + "] gelernt!";
+                    GameUI::Get().ShowMessage(msg);
+                }
+            } else {
+                // Reduzieren senkt nicht das Level (XP-Verhalten)
+                a.exp = std::max(0, a.exp + exp);
+            }
+        });
     };
     interp.onChangeLevel = [](int actorId, int level) {
-        auto* a = Game::Get().Party().GetActor(actorId);
-        if (a) {
-            a->level = std::max(1, level);
-            RPG_LOG_INFO("[Event] Level -> " + std::to_string(a->level));
-            GameUI::Get().ShowMessage(a->name + " ist nun Level " + std::to_string(a->level) + "!");
-        }
+        ApplyToActorOrParty(actorId, [&](GameActor& a) {
+            int maxLv = 99;
+            if (const auto* ad = Database::Get().GetActor(a.actorId))
+                maxLv = std::max(1, ad->maxLevel);
+            a.level = std::max(1, std::min(level, maxLv));
+            // Fertigkeiten bis zum neuen Level nachlernen (nur Meldung wenn neu)
+            std::vector<std::string> learned;
+            a.LearnSkillsUpToLevel(a.level, &learned);
+            for (const auto& s : learned)
+                GameUI::Get().ShowMessage(a.name + " hat [" + s + "] gelernt!");
+        });
     };
-    interp.onOpenSave = [](int slot) {
-        if (Game::Get().Save(slot > 0 ? slot : 1))
-            GameUI::Get().ShowMessage("Spiel gespeichert (Slot " + std::to_string(slot > 0 ? slot : 1) + ").");
-        else
-            GameUI::Get().ShowMessage("Speichern fehlgeschlagen.");
-    };
+    // Hinweis: "Speicherbildschirm aufrufen" (352) oeffnet INTERNE
+    // GameUI::ShowSaveScreen (4 XP-Slots). onOpenSave bleibt Override-Hook
+    // fuer externe UIs und ist hier bewusst NICHT vorbelegt.
     interp.onOpenLoad = [](int slot) {
         if (Game::Get().Load(slot > 0 ? slot : 1))
             GameUI::Get().ShowMessage("Spiel geladen (Slot " + std::to_string(slot > 0 ? slot : 1) + ").");
         else
             GameUI::Get().ShowMessage("Kein Spielstand gefunden.");
     };
-    // NEW: Screen text callbacks
-    interp.onShowScreenText = [](const std::string& txt, float x, float y, float r, float g, float b, float dur) {
-        float nx = x > 1.0f ? x / 100.0f : x;
-        float ny = y > 1.0f ? y / 100.0f : y;
-        if (nx <= 0.0f) nx = 0.5f;
-        if (ny <= 0.0f) ny = 0.2f;
-        GameUI::Get().AddScreenText(txt, Vec2(nx, ny), Color(r,g,b,1.0f), dur > 0 ? dur : 3.0f);
-        RPG_LOG_INFO("[Event] ScreenText: " + txt);
+    interp.onGameOver = []() {
+        GameUI::Get().ShowMessage("GAME OVER");
+        RPG_LOG_INFO("[Event] Game Over");
     };
-    interp.onShowWorldText = [](const std::string& txt, float x, float y, float z, float r, float g, float b, float dur) {
-        Vec3 pos(x,y,z);
-        // If x,y,z are 0, use player pos
-        if (glm::length(pos) < 0.01f) {
-            pos = Game::Get().Player().GetPosition() + Vec3(0,1.0f,0);
-        }
-        GameUI::Get().AddWorldText(txt, pos, Color(r,g,b,1.0f), dur > 0 ? dur : 2.5f);
-        RPG_LOG_INFO("[Event] WorldText: " + txt);
+    interp.onReturnToTitle = []() {
+        RPG_LOG_INFO("[Event] Zurück zum Titel");
     };
-    interp.onClearScreenTexts = []() {
-        GameUI::Get().ClearScreenTexts();
-    };
-    interp.onChangeItems = [](int itemId, int amount) {
-        Game::Get().Party().GainItem(itemId, amount);
-        RPG_LOG_INFO("[Event] Item " + std::to_string(itemId) + " x" + std::to_string(amount));
-    };
-    interp.onChangeActorHP = [](int actorId, int hpChange) {
-        auto* actor = Game::Get().Party().GetActor(actorId);
-        if (actor) {
-            int old = actor->hp;
-            actor->hp += hpChange;
-            if (actor->hp < 0) actor->hp = 0;
-            RPG_LOG_INFO("[Event] Actor " + std::to_string(actorId) + " HP " + std::to_string(old) + " -> " + std::to_string(actor->hp));
-            if (hpChange < 0) {
-                Vec3 pp = Game::Get().Player().GetPosition();
-                GameUI::Get().AddWorldText(std::to_string(hpChange) + " HP", pp + Vec3(0,1.0f,0), Color(1,0.2f,0.2f,1), 1.5f);
-            }
-        }
-    };
+    interp.onCallCommonEvent = nullptr; // intern (child interpreter)
     interp.onChangeSelfSwitch = [](int eventId, char ch, bool value) {
         int mapId = EventSystem::Get().GetCurrentMapId();
         Game::Get().SelfSwitches().Set(mapId, eventId, ch, value);
-        RPG_LOG_INFO(std::string("[Event] SelfSwitch ") + ch + " event " + std::to_string(eventId) +
-                     " = " + (value ? "ON" : "OFF"));
+        RPG_LOG_INFO(std::string("[Event] SelfSwitch ") + ch + " @Event " +
+                     std::to_string(eventId) + " = " + (value ? "AN" : "AUS"));
     };
     interp.onSetMoveRoute = [](int eventId, const MoveRoute& route) {
         auto* ev = EventSystem::Get().GetEvent(eventId);
@@ -527,98 +1412,154 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
         ev->moveRoute.stepIndex = 0;
         ev->moveRoute.waitTimer = 0;
         ev->hasMoveRoute = !route.list.empty();
-        RPG_LOG_INFO("[Event] MoveRoute set on " + std::to_string(eventId) +
-                     " steps=" + std::to_string(route.list.size()));
+        ev->routeForcing = !route.repeat; // einmalige Route = "forcing" bis fertig
     };
-    interp.onShowChoices = [](const std::string& txt, int) {
-        // text: "Frage|OptionA|OptionB|OptionC"
-        std::vector<std::string> opts;
-        std::string prompt = txt;
-        size_t p = txt.find('|');
-        if (p != std::string::npos) {
-            prompt = txt.substr(0, p);
-            std::string rest = txt.substr(p+1);
-            size_t start = 0;
-            while (start <= rest.size()) {
-                size_t n = rest.find('|', start);
-                if (n == std::string::npos) { opts.push_back(rest.substr(start)); break; }
-                opts.push_back(rest.substr(start, n-start));
-                start = n+1;
-            }
-        }
-        if (opts.empty()) opts = {"Ja", "Nein"};
-        GameUI::Get().ShowChoices(prompt, opts, [](int idx) {
-            EventSystem::Get().SetChoiceResult(idx);
-            Game::Get().Variables().Set(0, idx); // last choice in var 0
-        });
+    interp.onShowScreenText = [](const std::string& txt, float x, float y, float r, float g, float b, float dur) {
+        float nx = x > 1.0f ? x / 100.0f : x;
+        float ny = y > 1.0f ? y / 100.0f : y;
+        if (nx <= 0.0f) nx = 0.5f;
+        if (ny <= 0.0f) ny = 0.2f;
+        GameUI::Get().AddScreenText(txt, Vec2(nx, ny), Color(r, g, b, 1.0f), dur > 0 ? dur : 3.0f);
     };
+    interp.onShowWorldText = [](const std::string& txt, float x, float y, float z, float r, float g, float b, float dur) {
+        Vec3 pos(x, y, z);
+        if (glm::length(pos) < 0.01f)
+            pos = Game::Get().Player().GetPosition() + Vec3(0, 1.0f, 0);
+        GameUI::Get().AddWorldText(txt, pos, Color(r, g, b, 1.0f), dur > 0 ? dur : 2.5f);
+    };
+    interp.onClearScreenTexts = []() {
+        GameUI::Get().ClearScreenTexts();
+    };
+
+    // ---- Provider ----
+    interp.pollButtonCode = []() { return s_buttonProvider ? s_buttonProvider() : 0; };
+    interp.isAnyRouteForcing = [this]() { return IsAnyRouteForcing(); };
+    interp.eraseEvent = [this](int id) { EraseEvent(id); };
+    interp.setEventLocation = [this](int id, int x, int z) { SetEventLocation(id, x, z); };
+    interp.showNumberInput = [](int digits, int initial, std::function<void(int)> cb) -> int {
+        GameUI::Get().ShowNumberInput("", digits, initial, std::move(cb));
+        return 0;
+    };
+    interp.showNameInput = [](int actorId, int maxChars, std::function<void(const std::string&)> cb) {
+        std::string initial;
+        if (auto* a = Game::Get().Party().GetActor(actorId)) initial = a->name;
+        GameUI::Get().ShowNameInput("", initial, maxChars,
+            [actorId, cb = std::move(cb)](const std::string& name) {
+                if (auto* a = Game::Get().Party().GetActor(actorId)) a->name = name;
+                cb(name);
+            });
+    };
+    interp.getEventDirection = [this](int eventId) {
+        if (auto* ev = GetEvent(eventId)) return ev->direction;
+        return (int)DIR_DOWN;
+    };
+    interp.isEnemyAppeared = [this](int) { return BattleSystem::Get().IsInBattle(); };
 }
 
 void EventSystem::BindRuntimeCallbacks() {
     mCallbacksBound = true;
 }
 
-bool EventSystem::ConditionsMet(const EventPage::Condition& c) const {
+// ---------------------------------------------------------------------------
+// Seiten-Bedingungen (XP refresh)
+// ---------------------------------------------------------------------------
+bool EventSystem::ConditionsMet(const EventPage::Condition& c, int eventId) const {
     if (c.switch1Valid && !Game::Get().Switches().Get(c.switch1Id)) return false;
     if (c.switch2Valid && !Game::Get().Switches().Get(c.switch2Id)) return false;
     if (c.variableValid && Game::Get().Variables().Get(c.variableId) < c.variableValue) return false;
+    if (c.selfSwitchValid) {
+        char ch = c.selfSwitchCh ? c.selfSwitchCh : 'A';
+        if (!Game::Get().SelfSwitches().Get(mCurrentMapId, eventId, ch)) return false;
+    }
+    if (c.itemValid && Game::Get().Party().GetItemCount(c.itemId) <= 0) return false;
+    if (c.actorValid && !Game::Get().Party().HasActor(c.actorId)) return false;
     return true;
 }
 
 void EventSystem::RefreshEventPage(MapEvent& ev) {
-    int best = 0;
-    for (int i = 0; i < (int)ev.pages.size(); ++i) {
-        const auto& c = ev.pages[i].condition;
-        bool ok = ConditionsMet(c);
-        if (ok && c.selfSwitchValid) {
-            char ch = c.selfSwitchCh ? c.selfSwitchCh : 'A';
-            if (!Game::Get().SelfSwitches().Get(mCurrentMapId, ev.id, ch))
-                ok = false;
+    int best = -1;
+    if (!ev.erased) {
+        for (int i = 0; i < (int)ev.pages.size(); ++i) {
+            if (ConditionsMet(ev.pages[i].condition, ev.id)) best = i; // letzte erfuellte Seite (XP)
         }
-        if (ok) best = i; // highest page that matches (RM style: last matching)
     }
+    if (ev.currentPage == best) return;
     ev.currentPage = best;
+
+    // Seitenwechsel: Bewegung/Grafik anwenden (XP refresh)
+    ev.hasMoveRoute = false;
+    ev.routeForcing = false;
+    // PAKET 16: Route-Laufzeit-Overrides (Grafik/Transparenz) verfallen mit
+    // dem Seitenwechsel (XP: character.refresh stellt die Seitengrafik wieder
+    // her); Tempo/Haeufigkeit von der neuen Seite uebernehmen.
+    ev.transparent = false;
+    ev.routeGraphic.clear();
+    ev.routeGraphicIndex = 0;
+    if (auto* page = ev.GetCurrentPage()) {
+        ev.direction = page->direction2D;
+        ev.moveSpeedRt = std::clamp(page->moveSpeed, 1, 6);
+        ev.moveFrequencyRt = std::clamp(page->moveFrequency, 1, 6);
+        ev.through = page->through;
+        if (page->moveType == (int)EventMoveType::Custom && !page->customRoute.empty()) {
+            StartCustomRoute(ev, page->customRoute, page->routeRepeat, page->routeSkippable);
+        }
+    }
 }
 
+void EventSystem::StartCustomRoute(MapEvent& ev, const std::string& routeText, bool repeat, bool skippable) {
+    // PAKET 16: zentraler XP-Routen-Parser (Tokens s. EventSystem.h) —
+    // deckt die XP-Vollstaendigkeit auch fuer Seiten-Autonomierouten ab.
+    MoveRoute route = EventSystem_ParseMoveRouteText(routeText);
+    route.repeat = repeat;
+    route.skippable = skippable;
+    if (route.list.size() <= 1) return; // nur der End-Marker
+    ev.moveRoute = route;
+    ev.hasMoveRoute = true;
+}
+
+void EventSystem::RefreshAllPages() {
+    for (auto& ev : mEvents) RefreshEventPage(ev);
+}
+
+// ---------------------------------------------------------------------------
+// Update
+// ---------------------------------------------------------------------------
 void EventSystem::Update(float dt, const Vec3& playerPos) {
-    bool msgBusy = GameUI::Get().Message().IsBusy();
+    // Interpreter laufen lassen (sie verlassen Pausen selbst ueber GameUI-Zustand)
     for (auto& interp : mInterpreters) {
-        if (interp->IsWaitingForMessage() && !msgBusy) {
-            interp->Resume();
-        }
         if (interp->IsRunning()) interp->Update(dt);
     }
     mInterpreters.erase(std::remove_if(mInterpreters.begin(), mInterpreters.end(),
         [](const std::unique_ptr<EventInterpreter>& i) { return !i->IsRunning(); }),
         mInterpreters.end());
 
-    // Common Events (Autorun/Parallel) – RPG Maker Style
+    // Screen-Effekte ticken
+    GetScreenEffects().Update(dt);
+
+    // Common Events (Autorun/Parallel)
     for (auto& ce : mCommonEvents) {
         if (ce.list.empty()) continue;
         bool run = false;
-        if (ce.trigger == EventTrigger::Autorun || ce.trigger == EventTrigger::Parallel) {
-            if (ce.switchId <= 0 || Game::Get().Switches().Get(ce.switchId))
-                run = true;
-        }
+        if (ce.trigger == EventTrigger::Autorun || ce.trigger == EventTrigger::Parallel)
+            run = (ce.switchId <= 0 || Game::Get().Switches().Get(ce.switchId));
         if (!run) continue;
-        // Avoid stacking same common event if already running (id as negative)
         int cid = -ce.id;
         bool already = false;
         for (auto& it : mInterpreters)
             if (it->GetEventId() == cid && it->IsRunning()) { already = true; break; }
-        if (already && ce.trigger != EventTrigger::Parallel) continue;
-        if (already && ce.trigger == EventTrigger::Parallel) continue; // one instance
+        if (already) continue;
         auto interpreter = std::make_unique<EventInterpreter>();
         WireInterpreter(*interpreter);
-        interpreter->Setup(ce.list, cid);
+        interpreter->Setup(ce.list, cid, mCurrentMapId);
+        interpreter->SetBlocking(ce.trigger != EventTrigger::Parallel);
         mInterpreters.push_back(std::move(interpreter));
-        RPG_LOG_INFO("CommonEvent " + std::to_string(ce.id) + " (" + ce.name + ")");
     }
 
     UpdateMoveRoutes(dt, playerPos);
 
+    // Autorun / Parallel / Touch triggern
     for (auto& ev : mEvents) {
-        if (!ev.enabled || !ev.IsValid()) continue;
+        if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
         RefreshEventPage(ev);
         const EventPage* page = ev.GetCurrentPage();
         if (!page) continue;
@@ -628,16 +1569,11 @@ void EventSystem::Update(float dt, const Vec3& playerPos) {
             StartEvent(ev.id);
             continue;
         }
-
         if (page->trigger == EventTrigger::PlayerTouch || page->trigger == EventTrigger::EventTouch) {
             Vec3 ep = ev.worldPos;
-            if (glm::length(ep) < 0.001f) {
-                ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
-            }
+            if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
             float dist = glm::length(Vec3(playerPos.x - ep.x, 0.0f, playerPos.z - ep.z));
-            if (dist < 1.1f) {
-                StartEvent(ev.id);
-            }
+            if (dist < 1.1f) StartEvent(ev.id);
         }
     }
 }
@@ -648,7 +1584,7 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
     int bestId = -1;
 
     for (auto& ev : mEvents) {
-        if (!ev.enabled || !ev.IsValid()) continue;
+        if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
         RefreshEventPage(ev);
         const EventPage* page = ev.GetCurrentPage();
         if (!page || page->trigger != EventTrigger::ActionButton) continue;
@@ -657,12 +1593,88 @@ void EventSystem::TryInteract(const Vec3& playerPos, float radius) {
         float dist = glm::length(Vec3(playerPos.x - ep.x, 0.0f, playerPos.z - ep.z));
         if (dist < best) { best = dist; bestId = ev.id; }
     }
+    if (bestId >= 0) { StartEvent(bestId); return; }
+
+    // XP-Tresen (Counter-Flag, Paket 1/6): Wenn der Spieler einem Tresen-
+    // Tile (Verkaufstresen/Theke) gegenuebersteht, darf das ActionButton-
+    // Event EIN Feld dahinter ausgeloest werden.
+    const auto& gm = Game::Get().Map();
+    const Map* bound = gm.GetBoundMap();
+    if (!bound) return;
+    auto tileset = bound->GetTileset();
+    if (!tileset || !tileset->HasTilesetData()) return;
+
+    const float reach = radius + 1.0f; // zusaetzliche Kachel
+    float bestC = reach;
+    for (auto& ev : mEvents) {
+        if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
+        RefreshEventPage(ev);
+        const EventPage* page = ev.GetCurrentPage();
+        if (!page || page->trigger != EventTrigger::ActionButton) continue;
+        Vec3 ep = ev.worldPos;
+        if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+        const float dist = glm::length(Vec3(playerPos.x - ep.x, 0.0f, playerPos.z - ep.z));
+        if (dist >= reach || dist <= radius) continue; // nur die neu erschlossene Zone
+        // Mittelpunkt zwischen Spieler und Event: dort muss ein Tresen-Tile liegen
+        const Vec3 mid((playerPos.x + ep.x) * 0.5f, 0.0f, (playerPos.z + ep.z) * 0.5f);
+        int mx, mz;
+        if (!gm.WorldToMap(mid.x, mid.z, mx, mz)) continue;
+        bool counter = false;
+        for (const auto& layer : bound->GetLayers()) {
+            if (mx < 0 || mz < 0 || mx >= layer.width || mz >= layer.height) continue;
+            const int idx = mz * layer.width + mx;
+            if (idx >= 0 && idx < (int)layer.tiles.size()) {
+                const int tid = layer.tiles[idx];
+                if (tid >= 0 && tileset->GetCounter(tid) != 0) { counter = true; break; }
+            }
+        }
+        if (counter && dist < bestC) { bestC = dist; bestId = ev.id; }
+    }
     if (bestId >= 0) StartEvent(bestId);
+}
+
+// ---------------------------------------------------------------------------
+// PAKET 25: Event-Kollision (Spieler laeuft nicht mehr durch NPCs u. a.)
+// XP-Regel: aktive Events mit aktueller Seite sind solide, ausser die Seite
+// ist "Durchlaessig" (through). Der Block-Radius (0.38) bleibt bewusst
+// unter der Touch-Schwelle (1.1) und Interaktions-Reichweite (1.35), damit
+// PlayerTouch-/ActionButton-Events unveraendert erreichbar bleiben.
+// ---------------------------------------------------------------------------
+bool EventSystem::IsBlockingAt(const Vec3& worldPos, float radius, int excludeEventId) {
+    constexpr float kEventBody = 0.38f; // halbe Event-Hitbox (Welt-Einheiten)
+    for (auto& ev : mEvents) {
+        if (ev.id == excludeEventId) continue; // PAKET 27: sich selbst auslassen
+        if (!ev.enabled || ev.erased || !ev.IsValid()) continue;
+        RefreshEventPage(ev);
+        const EventPage* page = ev.GetCurrentPage();
+        if (!page || page->through) continue;
+        Vec3 ep = ev.worldPos;
+        if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
+        const float dist = glm::length(Vec3(worldPos.x - ep.x, 0.0f, worldPos.z - ep.z));
+        if (dist < radius + kEventBody) return true;
+    }
+    return false;
+}
+
+bool EventSystem::StartCommonEventById(int commonEventId, int runtimeEventId, bool blocking) {
+    const CommonEvent* ce = nullptr;
+    for (const auto& e : mCommonEvents)
+        if (e.id == commonEventId) { ce = &e; break; }
+    if (!ce || ce->list.empty()) return false;
+    // Laeuft diese Runtime-Instanz schon? (Doppelstart verhindern)
+    for (auto& it : mInterpreters)
+        if (it->GetEventId() == runtimeEventId && it->IsRunning()) return true;
+    auto interpreter = std::make_unique<EventInterpreter>();
+    WireInterpreter(*interpreter);
+    interpreter->Setup(ce->list, runtimeEventId, mCurrentMapId);
+    interpreter->SetBlocking(blocking);
+    mInterpreters.push_back(std::move(interpreter));
+    return true;
 }
 
 void EventSystem::StartEvent(int eventId) {
     auto* ev = GetEvent(eventId);
-    if (!ev || !ev->IsValid()) return;
+    if (!ev || !ev->IsValid() || ev->erased) return;
     RefreshEventPage(*ev);
     const EventPage* page = ev->GetCurrentPage();
     if (!page || page->list.empty()) return;
@@ -670,9 +1682,10 @@ void EventSystem::StartEvent(int eventId) {
 
     auto interpreter = std::make_unique<EventInterpreter>();
     WireInterpreter(*interpreter);
-    interpreter->Setup(page->list, eventId);
+    interpreter->Setup(page->list, eventId, mCurrentMapId);
+    interpreter->SetBlocking(page->trigger != EventTrigger::Parallel);
     mInterpreters.push_back(std::move(interpreter));
-    RPG_LOG_INFO("Started event " + std::to_string(eventId) + " (" + ev->name + ")");
+    RPG_LOG_INFO("Event " + std::to_string(eventId) + " (\"" + ev->name + "\") gestartet");
 }
 
 bool EventSystem::IsEventRunning(int eventId) const {
@@ -691,197 +1704,351 @@ bool EventSystem::IsWaitingForMessage() const {
     return false;
 }
 
+bool EventSystem::IsBlockingEventRunning() const {
+    for (auto& it : mInterpreters)
+        if (it->IsRunning() && it->IsBlocking()) return true;
+    return false;
+}
 
+// ---------------------------------------------------------------------------
+// Autonome Bewegung + Move Routes
+// ---------------------------------------------------------------------------
 void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
     for (auto& ev : mEvents) {
-        if (!ev.hasMoveRoute || ev.moveRoute.list.empty()) continue;
-        auto& mr = ev.moveRoute;
-        if (mr.waitTimer > 0) {
-            mr.waitTimer -= dt;
-            continue;
-        }
-        if (mr.stepIndex < 0 || mr.stepIndex >= (int)mr.list.size()) {
-            if (mr.repeat) mr.stepIndex = 0;
-            else { ev.hasMoveRoute = false; continue; }
-        }
-        const auto& step = mr.list[mr.stepIndex];
+        if (!ev.enabled || ev.erased) continue;
+        const EventPage* page = nullptr;
+        if (ev.currentPage >= 0 && ev.currentPage < (int)ev.pages.size())
+            page = &ev.pages[ev.currentPage];
+
         Vec3& pos = ev.worldPos;
         if (glm::length(pos) < 0.001f)
             pos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
-        const float speed = 2.0f * dt;
-        auto applyDir = [&](Vec3 d) {
-            if (glm::length(d) > 1e-5f) d = glm::normalize(d);
-            pos += d * speed * 20.0f; // step roughly one cell over ~0.5s - use fixed step
+
+        // PAKET 27: Kollisionswache fuer Event-Bewegung (autonom + Move
+        // Route). Vorher liefen Events in Mauern/Wasser/aus der Karte,
+        // ineinander und IN den Spieler hinein.
+        const bool selfThrough = ev.through || (page && page->through);
+        auto blockedAt = [&](const Vec3& target) {
+            if (selfThrough) return false; // Durchlaessig: keine Kollision
+            if (!Game::Get().Map().IsPassableWorld(target.x, target.z)) return true;
+            if (IsBlockingAt(target, 0.30f, ev.id)) return true;
+            const Vec3 dtp(playerPos.x - target.x, 0.0f, playerPos.z - target.z);
+            if (glm::length(dtp) < 0.45f) return true; // nicht auf den Spieler
+            return false;
         };
-        // fixed cell step
+
+        // ---- Autonome Bewegung der aktiven Seite (Fixed/Random/Approach) ----
+        if (page && !ev.hasMoveRoute && page->moveType != (int)EventMoveType::Custom) {
+            // Frequenz 1..6 -> Intervall 1.5s .. 0.25s
+            float interval = 1.75f - page->moveFrequency * 0.25f;
+            ev.moveTimer += dt;
+            if (ev.moveTimer >= interval) {
+                ev.moveTimer = 0.0f;
+                Vec3 delta(0.0f);
+                if (page->moveType == (int)EventMoveType::Random) {
+                    switch (std::rand() % 4) {
+                        case 0: delta = Vec3(1, 0, 0); break;
+                        case 1: delta = Vec3(-1, 0, 0); break;
+                        case 2: delta = Vec3(0, 0, 1); break;
+                        default: delta = Vec3(0, 0, -1); break;
+                    }
+                } else if (page->moveType == (int)EventMoveType::Approach) {
+                    Vec3 to = playerPos - pos;
+                    to.y = 0.0f;
+                    if (glm::length(to) > 1.2f) {
+                        delta = (std::fabs(to.x) > std::fabs(to.z))
+                            ? Vec3(to.x > 0 ? 1.f : -1.f, 0, 0)
+                            : Vec3(0, 0, to.z > 0 ? 1.f : -1.f);
+                    }
+                }
+                if (glm::length(delta) > 0.001f && !blockedAt(pos + delta)) {
+                    pos += delta; // ganzzellig (XP-Kachel)
+                    ev.x = (int)std::round(pos.x);
+                    ev.z = (int)std::round(pos.z);
+                    if (delta.x > 0) ev.direction = DIR_RIGHT;
+                    else if (delta.x < 0) ev.direction = DIR_LEFT;
+                    else if (delta.z > 0) ev.direction = DIR_DOWN;
+                    else if (delta.z < 0) ev.direction = DIR_UP;
+                }
+            }
+        }
+
+        // ---- Explizite Move Routes (SetMoveRoute / Custom Page Route) ----
+        if (!ev.hasMoveRoute || ev.moveRoute.list.empty()) continue;
+        auto& mr = ev.moveRoute;
+        if (mr.waitTimer > 0) { mr.waitTimer -= dt; continue; }
+        if (mr.stepIndex < 0 || mr.stepIndex >= (int)mr.list.size()) {
+            if (mr.repeat) {
+                mr.stepIndex = 0;
+                // PAKET 16 (Schritt 30): Route-Loop-Pause nach Haeufigkeit —
+                // hoehere Frequenz = kuerzere Pause (XP-Verhalten)
+                mr.waitTimer = 0.08f * (float)(7 - std::clamp(ev.moveFrequencyRt, 1, 6));
+                continue;
+            }
+            ev.hasMoveRoute = false;
+            ev.routeForcing = false;
+            continue;
+        }
+        const auto& step = mr.list[mr.stepIndex];
         const float cell = 1.0f;
-        Vec3 delta(0);
+        Vec3 delta(0.0f);
+        int dir = -1;
         switch (step.code) {
-            case MoveRouteCode::MoveUp: delta = Vec3(0,0,-cell); break;
-            case MoveRouteCode::MoveDown: delta = Vec3(0,0,cell); break;
-            case MoveRouteCode::MoveLeft: delta = Vec3(-cell,0,0); break;
-            case MoveRouteCode::MoveRight: delta = Vec3(cell,0,0); break;
+            case MoveRouteCode::MoveUp:    delta = Vec3(0, 0, -cell); dir = DIR_UP; break;
+            case MoveRouteCode::MoveDown:  delta = Vec3(0, 0, cell);  dir = DIR_DOWN; break;
+            case MoveRouteCode::MoveLeft:  delta = Vec3(-cell, 0, 0); dir = DIR_LEFT; break;
+            case MoveRouteCode::MoveRight: delta = Vec3(cell, 0, 0);  dir = DIR_RIGHT; break;
             case MoveRouteCode::MoveForward: {
-                auto* page = ev.GetCurrentPage();
-                Vec3 d = page ? page->direction : Vec3(0,0,-1);
-                delta = glm::normalize(d) * cell;
+                switch (ev.direction) {
+                    case DIR_UP: delta = Vec3(0, 0, -cell); break;
+                    case DIR_DOWN: delta = Vec3(0, 0, cell); break;
+                    case DIR_LEFT: delta = Vec3(-cell, 0, 0); break;
+                    case DIR_RIGHT: delta = Vec3(cell, 0, 0); break;
+                    default: delta = Vec3(0, 0, cell); break;
+                }
                 break;
             }
             case MoveRouteCode::TowardPlayer: {
-                Vec3 d = playerPos - pos; d.y = 0;
-                if (glm::length(d) > 0.1f) {
-                    if (std::fabs(d.x) > std::fabs(d.z))
-                        delta = Vec3(d.x > 0 ? cell : -cell, 0, 0);
-                    else
-                        delta = Vec3(0, 0, d.z > 0 ? cell : -cell);
+                Vec3 to = playerPos - pos; to.y = 0.0f;
+                if (glm::length(to) > 0.4f) {
+                    delta = (std::fabs(to.x) > std::fabs(to.z))
+                        ? Vec3(to.x > 0 ? cell : -cell, 0, 0)
+                        : Vec3(0, 0, to.z > 0 ? cell : -cell);
                 }
                 break;
             }
             case MoveRouteCode::AwayFromPlayer: {
-                Vec3 d = pos - playerPos; d.y = 0;
-                if (glm::length(d) > 0.1f) {
-                    if (std::fabs(d.x) > std::fabs(d.z))
-                        delta = Vec3(d.x > 0 ? cell : -cell, 0, 0);
-                    else
-                        delta = Vec3(0, 0, d.z > 0 ? cell : -cell);
-                }
+                Vec3 to = pos - playerPos; to.y = 0.0f;
+                delta = (std::fabs(to.x) > std::fabs(to.z))
+                    ? Vec3(to.x > 0 ? cell : -cell, 0, 0)
+                    : Vec3(0, 0, to.z > 0 ? cell : -cell);
                 break;
             }
             case MoveRouteCode::Random: {
-                int r = rand() % 4;
-                if (r==0) delta=Vec3(cell,0,0);
-                else if (r==1) delta=Vec3(-cell,0,0);
-                else if (r==2) delta=Vec3(0,0,cell);
-                else delta=Vec3(0,0,-cell);
+                switch (std::rand() % 4) {
+                    case 0: delta = Vec3(cell, 0, 0); break;
+                    case 1: delta = Vec3(-cell, 0, 0); break;
+                    case 2: delta = Vec3(0, 0, cell); break;
+                    default: delta = Vec3(0, 0, -cell); break;
+                }
                 break;
             }
+            case MoveRouteCode::MoveBackward: {
+                // XP 13: entgegen Blickrichtung (ohne Richtungswechsel)
+                switch (ev.direction) {
+                    case DIR_UP:    delta = Vec3(0, 0, cell); break;
+                    case DIR_DOWN:  delta = Vec3(0, 0, -cell); break;
+                    case DIR_LEFT:  delta = Vec3(cell, 0, 0); break;
+                    case DIR_RIGHT: delta = Vec3(-cell, 0, 0); break;
+                    default:        delta = Vec3(0, 0, -cell); break;
+                }
+                dir = ev.direction; // Blick bleibt (kein Auto-Turn unten)
+                break;
+            }
+            case MoveRouteCode::Jump:
+                // XP 14: (dx,dz)-Kachel-Sprung, Blick bleibt unveraendert
+                delta = Vec3((float)step.param, 0, (float)step.param2);
+                dir = ev.direction;
+                break;
             case MoveRouteCode::Wait:
-                mr.waitTimer = step.param > 0 ? step.param / 60.0f : 0.3f;
+                mr.waitTimer = step.param > 0 ? step.param / 40.0f : 0.5f;
+                mr.stepIndex++;
+                continue;
+            case MoveRouteCode::TurnDown:  ev.direction = DIR_DOWN;  mr.stepIndex++; continue;
+            case MoveRouteCode::TurnLeft:  ev.direction = DIR_LEFT;  mr.stepIndex++; continue;
+            case MoveRouteCode::TurnRight: ev.direction = DIR_RIGHT; mr.stepIndex++; continue;
+            case MoveRouteCode::TurnUp:    ev.direction = DIR_UP;    mr.stepIndex++; continue;
+            // ---------------- PAKET 16 (XP-Vervollstaendigung) ----------------
+            case MoveRouteCode::TurnRight90:
+                // 90° im Uhrzeigersinn (von oben): unten->links->oben->rechts
+                ev.direction = ev.direction == DIR_DOWN ? DIR_LEFT :
+                               ev.direction == DIR_LEFT ? DIR_UP :
+                               ev.direction == DIR_UP ? DIR_RIGHT : DIR_DOWN;
+                mr.stepIndex++; continue;
+            case MoveRouteCode::TurnLeft90:
+                ev.direction = ev.direction == DIR_DOWN ? DIR_RIGHT :
+                               ev.direction == DIR_RIGHT ? DIR_UP :
+                               ev.direction == DIR_UP ? DIR_LEFT : DIR_DOWN;
+                mr.stepIndex++; continue;
+            case MoveRouteCode::Turn180: {
+                ev.direction = (ev.direction == DIR_DOWN) ? DIR_UP :
+                               (ev.direction == DIR_UP) ? DIR_DOWN :
+                               (ev.direction == DIR_LEFT) ? DIR_RIGHT : DIR_LEFT;
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::TurnRandom:
+                ev.direction = (std::rand() % 2 == 0)
+                    ? ((std::rand() % 2 == 0) ? DIR_DOWN : DIR_UP)
+                    : ((std::rand() % 2 == 0) ? DIR_LEFT : DIR_RIGHT);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::TurnTowardPlayer: {
+                Vec3 to = playerPos - pos; to.y = 0.0f;
+                if (glm::length(to) > 0.001f)
+                    ev.direction = (std::fabs(to.x) > std::fabs(to.z))
+                        ? (to.x > 0 ? DIR_RIGHT : DIR_LEFT)
+                        : (to.z > 0 ? DIR_DOWN : DIR_UP);
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::TurnAwayPlayer: {
+                Vec3 to = playerPos - pos; to.y = 0.0f;
+                if (glm::length(to) > 0.001f)
+                    ev.direction = (std::fabs(to.x) > std::fabs(to.z))
+                        ? (to.x > 0 ? DIR_LEFT : DIR_RIGHT)
+                        : (to.z > 0 ? DIR_UP : DIR_DOWN);
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::SwitchOn:
+                Game::Get().Switches().Set(step.param, true);
+                RefreshAllPages(); // XP: Game_Switches setzt need_refresh
+                mr.stepIndex++; continue;
+            case MoveRouteCode::SwitchOff:
+                Game::Get().Switches().Set(step.param, false);
+                RefreshAllPages();
+                mr.stepIndex++; continue;
+            case MoveRouteCode::ChangeSpeed:
+                ev.moveSpeedRt = std::clamp(step.param, 1, 6);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::ChangeFrequency:
+                ev.moveFrequencyRt = std::clamp(step.param, 1, 6);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::ThroughOn:  ev.through = true;  mr.stepIndex++; continue;
+            case MoveRouteCode::ThroughOff: ev.through = false; mr.stepIndex++; continue;
+            case MoveRouteCode::TransparentOn:  ev.transparent = true;  mr.stepIndex++; continue;
+            case MoveRouteCode::TransparentOff: ev.transparent = false; mr.stepIndex++; continue;
+            case MoveRouteCode::ChangeGraphic: {
+                // text = "name" oder "name,idx" (Seitengrafik-Override, XP 39)
+                const size_t comma = step.text.find(',');
+                ev.routeGraphic = (comma == std::string::npos)
+                                    ? step.text : step.text.substr(0, comma);
+                if (comma != std::string::npos) {
+                    try { ev.routeGraphicIndex = std::max(1, std::stoi(step.text.substr(comma + 1))); }
+                    catch (...) { ev.routeGraphicIndex = 1; }
+                }
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::PlaySE:
+                if (!step.text.empty()) EventSystem_PlayAudio(step.text, 3, false);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::Script:
+                if (!step.text.empty() && s_scriptRunner) s_scriptRunner(step.text);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::End:
                 mr.stepIndex++;
                 continue;
             default:
                 mr.stepIndex++;
                 continue;
         }
-        // passability
-        Vec3 next = pos + delta;
-        if (Game::Get().Map().IsPassableWorld(next.x, next.z) || mr.skippable) {
-            if (Game::Get().Map().IsPassableWorld(next.x, next.z)) {
-                pos = next;
-                ev.x = (int)std::round(pos.x);
-                ev.z = (int)std::round(pos.z);
-                if (glm::length(delta) > 0.01f && !ev.pages.empty()) {
-                    int pi = ev.currentPage;
-                    if (pi < 0 || pi >= (int)ev.pages.size()) pi = 0;
-                    ev.pages[pi].direction = glm::normalize(delta);
-                }
-            }
-        }
-        mr.waitTimer = 0.25f; // pause between steps
         mr.stepIndex++;
-        if (mr.stepIndex >= (int)mr.list.size()) {
-            if (mr.repeat) mr.stepIndex = 0;
-            else ev.hasMoveRoute = false;
+        if (dir >= 0) ev.direction = dir;
+        else if (glm::length(delta) > 0.001f) {
+            if (delta.x > 0) ev.direction = DIR_RIGHT;
+            else if (delta.x < 0) ev.direction = DIR_LEFT;
+            else if (delta.z > 0) ev.direction = DIR_DOWN;
+            else if (delta.z < 0) ev.direction = DIR_UP;
         }
+        if (glm::length(delta) > 0.001f && blockedAt(pos + delta)) {
+            // PAKET 27: Ziel belegt/nicht begehbar (Mauer, Wasser, Rand,
+            // anderes Event, Spieler). XP-Semantik:
+            if (!mr.skippable) {
+                // nicht skippierbar: Schritt zurueckdrehen, in kurzer
+                // Pause erneut versuchen (Route wartet). continue, damit
+                // die Standard-Schrittpause unten die 0,25 s nicht
+                // ueberschreibt.
+                mr.stepIndex--;
+                mr.waitTimer = 0.25f;
+                continue;
+            }
+            // skippierbar: Schritt auslassen (stepIndex ist schon weiter)
+        } else {
+            pos += delta;
+            ev.x = (int)std::round(pos.x);
+            ev.z = (int)std::round(pos.z);
+        }
+        // PAKET 16 (Schritt 29): Schritt-Pause nach Geschwindigkeit —
+        // hoehere Tempo = kuerzere Pause; speed 3 entspricht dem
+        // bisherigen festen 0,05 s (Bestandsverhalten unveraendert).
+        mr.waitTimer = 0.05f * (7.0f / (float)(std::clamp(ev.moveSpeedRt, 1, 6) + 3));
     }
 }
 
+// ---------------------------------------------------------------------------
+// Demo-Event (Playtest ohne Projektdatei)
+// ---------------------------------------------------------------------------
 void EventSystem::EnsureDemoEvent() {
-    // Sample Common Event (switch 1 triggers parallel? autorun when switch 1 ON)
-    if (mCommonEvents.empty()) {
-        CommonEvent ce;
-        ce.id = 1;
-        ce.name = "Welcome CE";
-        ce.trigger = EventTrigger::None; // call manually / switch later
-        ce.switchId = 0;
-        EventCommand c;
-        c.code = EventCommandCode::ShowText;
-        c.text = "Common Event: Willkommen! (Scripts steuern das Spiel)";
-        ce.list.push_back(c);
-        mCommonEvents.push_back(ce);
-    }
     if (!mEvents.empty()) return;
 
-    MapEvent ev;
-    ev.id = 1;
-    ev.name = "Village Elder";
-    ev.x = 2; ev.y = 0; ev.z = 2;
-    ev.worldPos = Vec3(2.0f, 0.0f, 2.0f);
-
+    MapEvent elder;
+    elder.id = 1;
+    elder.name = "Dorfaeltester";
+    elder.worldPos = Vec3(2.0f, 0.0f, 2.0f);
+    elder.x = 2; elder.y = 0; elder.z = 2;
     EventPage page;
-    page.id = 1;
     page.trigger = EventTrigger::ActionButton;
+    page.id = 0;
+    {
+        EventCommand t; t.code = EventCommandCode::ShowText;
+        t.text = "Willkommen in RPG Maker 3D! Ich bin der Dorfaelteste.";
+        page.list.push_back(t);
+        EventCommand c; c.code = EventCommandCode::ShowChoices;
+        c.text = "Was moechtest du wissen?|Gold geben|Nichts";
+        c.param1 = 2; c.param2 = 0;
+        page.list.push_back(c);
+        // XP-Konvention: "Wenn"-Koepfe haben denselben Einzug wie ShowChoices,
+        // nur der Body ist tiefer eingerueckt.
+        EventCommand w0; w0.code = EventCommandCode::WhenChoice; w0.param1 = 0; w0.indent = 0;
+        page.list.push_back(w0);
+        EventCommand g; g.code = EventCommandCode::ChangeGold; g.param1 = 50; g.indent = 1;
+        page.list.push_back(g);
+        EventCommand gm; gm.code = EventCommandCode::ShowText; gm.text = "Hier, nimm 50 Gold."; gm.indent = 1;
+        page.list.push_back(gm);
+        EventCommand w1; w1.code = EventCommandCode::WhenChoice; w1.param1 = 1; w1.indent = 0;
+        page.list.push_back(w1);
+        EventCommand nm; nm.code = EventCommandCode::ShowText; nm.text = "Komm bald wieder!"; nm.indent = 1;
+        page.list.push_back(nm);
+        EventCommand ce; ce.code = EventCommandCode::ChoicesEnd; ce.indent = 0;
+        page.list.push_back(ce);
+    }
+    elder.pages.push_back(page);
 
-    EventCommand hello;
-    hello.code = EventCommandCode::ShowText;
-    hello.text = "Willkommen im RPG Maker 3D Playtest!\nDruecke E in der Naehe von NPCs.\nWASD bewegt den Spieler.";
-    page.list.push_back(hello);
-
-    EventCommand gold;
-    gold.code = EventCommandCode::ChangeGold;
-    gold.param1 = 50;
-    page.list.push_back(gold);
-
-    EventCommand goldMsg;
-    goldMsg.code = EventCommandCode::ShowText;
-    goldMsg.text = "Du erhaeltst 50 Gold.";
-    page.list.push_back(goldMsg);
-
-    EventCommand wait;
-    wait.code = EventCommandCode::Wait;
-    wait.param1 = 30;
-    page.list.push_back(wait);
-
-    EventCommand bye;
-    bye.code = EventCommandCode::ShowText;
-    bye.text = "Viel Erfolg bei deinem Abenteuer!";
-    page.list.push_back(bye);
-
-    ev.pages.push_back(page);
-    mEvents.push_back(ev);
+    // Seite 2: falls SelfSwitch A an -> nur kurze Grussformel
+    EventPage p2;
+    p2.id = 1;
+    p2.trigger = EventTrigger::ActionButton;
+    p2.condition.selfSwitchValid = true;
+    p2.condition.selfSwitchCh = 'A';
+    EventCommand t2; t2.code = EventCommandCode::ShowText;
+    t2.text = "Schoen, dich wiederzusehen!";
+    p2.list.push_back(t2);
+    elder.pages.push_back(p2);
+    mEvents.push_back(elder);
 
     MapEvent sign;
     sign.id = 2;
-    sign.name = "Sign";
+    sign.name = "Schild";
     sign.worldPos = Vec3(-2.0f, 0.0f, 1.0f);
     sign.x = -2; sign.z = 1;
-    EventPage p2;
-    p2.trigger = EventTrigger::PlayerTouch;
-    EventCommand t;
-    t.code = EventCommandCode::ShowText;
-    t.text = "(Schild) Norden: Dorf  |  Sueden: Wald";
-    p2.list.push_back(t);
-    sign.pages.push_back(p2);
-    // Schild bleibt; Elder bekommt Patrol-MoveRoute
-    {
-        MoveRoute mr;
-        mr.repeat = true;
-        mr.list.push_back({MoveRouteCode::MoveRight, 0});
-        mr.list.push_back({MoveRouteCode::Wait, 45});
-        mr.list.push_back({MoveRouteCode::MoveLeft, 0});
-        mr.list.push_back({MoveRouteCode::Wait, 45});
-        // apply to elder (id 1) already pushed - fix elder before push instead
-    }
+    EventPage sp;
+    sp.trigger = EventTrigger::ActionButton;
+    EventCommand st; st.code = EventCommandCode::ShowText;
+    st.text = "(Schild) Norden: Dorf  |  Sueden: Wald";
+    sp.list.push_back(st);
+    sign.pages.push_back(sp);
     mEvents.push_back(sign);
 
-    // Patrol auf Village Elder
-    if (auto* elder = GetEvent(1)) {
-        MoveRoute mr;
-        mr.repeat = true;
-        mr.skippable = true;
-        mr.list.push_back({MoveRouteCode::MoveRight, 0});
-        mr.list.push_back({MoveRouteCode::Wait, 40});
-        mr.list.push_back({MoveRouteCode::MoveLeft, 0});
-        mr.list.push_back({MoveRouteCode::Wait, 40});
-        elder->moveRoute = mr;
-        elder->hasMoveRoute = true;
+    // Patrol fuer den Aeltesten
+    if (auto* e = GetEvent(1)) {
+        e->pages[0].moveType = (int)EventMoveType::Custom;
+        e->pages[0].customRoute = "R W40 L W40";
+        e->pages[0].routeRepeat = true;
     }
 
-    RPG_LOG_INFO("Demo events created (Elder + Sign + MoveRoute)");
+    RPG_LOG_INFO("Demo-Events erstellt (Dorfaeltester + Schild, XP-Struktur)");
 }
 
-// ==================== JSON Event Persistence ====================
-
+// ============================================================================
+// JSON Event Persistence (formatVersion 2, XP-Codes; liest v1 alt)
+// ============================================================================
 namespace {
 
 std::string ReadFileToString(const std::string& path) {
@@ -897,27 +2064,41 @@ std::string FormatMapEventFileName(int mapId, bool padded) {
         char buf[32];
         std::snprintf(buf, sizeof(buf), "Map%03d_events.json", mapId);
         return std::string(buf);
-    } else {
-        return "map" + std::to_string(mapId) + "_events.json";
     }
+    return "map" + std::to_string(mapId) + "_events.json";
 }
 
 std::vector<std::string> FindEventFiles(const std::string& projectPath, int mapId) {
-    std::vector<std::string> candidates;
-    candidates.push_back(projectPath + "/maps/" + FormatMapEventFileName(mapId, true));
-    candidates.push_back(projectPath + "/maps/" + FormatMapEventFileName(mapId, false));
-    candidates.push_back(projectPath + "/maps/Map" + std::to_string(mapId) + "_events.json");
-    candidates.push_back(projectPath + "/" + FormatMapEventFileName(mapId, true));
-    candidates.push_back(projectPath + "/" + FormatMapEventFileName(mapId, false));
-    candidates.push_back(projectPath + "/maps/map" + std::to_string(mapId) + ".json");
-    return candidates;
+    return {
+        projectPath + "/maps/" + FormatMapEventFileName(mapId, true),
+        projectPath + "/maps/" + FormatMapEventFileName(mapId, false),
+        projectPath + "/maps/Map" + std::to_string(mapId) + "_events.json",
+        projectPath + "/" + FormatMapEventFileName(mapId, true),
+        projectPath + "/" + FormatMapEventFileName(mapId, false),
+        projectPath + "/maps/map" + std::to_string(mapId) + ".json"
+    };
 }
 
-EventCommand ParseCommandObject(const std::string& obj) {
+// Legacy: alte Dateien (formatVersion < 2 bzw. fehlend) hatten andere Codes:
+//  104=ShowScreenText -> 181, 105=ShowWorldText -> 182, 106=ClearScreenTexts -> 183,
+//  205=SetMoveRoute -> 209, 230=Wait -> 106
+EventCommandCode RemapLegacyCode(int code, bool legacy) {
+    if (!legacy) return static_cast<EventCommandCode>(code);
+    switch (code) {
+        case 104: return EventCommandCode::ShowScreenText;
+        case 105: return EventCommandCode::ShowWorldText;
+        case 106: return EventCommandCode::ClearScreenTexts;
+        case 205: return EventCommandCode::SetMoveRoute;
+        case 230: return EventCommandCode::Wait;
+        default: return static_cast<EventCommandCode>(code);
+    }
+}
+
+EventCommand ParseCommandObject(const std::string& obj, bool legacy) {
     using namespace JsonUtils;
     EventCommand cmd;
     int code = 0;
-    if (TryParseInt(obj, "code", 0, code)) cmd.code = static_cast<EventCommandCode>(code);
+    if (TryParseInt(obj, "code", 0, code)) cmd.code = RemapLegacyCode(code, legacy);
     int iv = 0;
     if (TryParseInt(obj, "indent", 0, iv)) cmd.indent = iv;
     if (TryParseInt(obj, "param1", 0, iv)) cmd.param1 = iv;
@@ -932,17 +2113,20 @@ EventCommand ParseCommandObject(const std::string& obj) {
 
     std::string paramsArr;
     if (FindArrayForKey(obj, "parameters", 0, paramsArr)) {
-        // parse string array
         size_t pos = 0;
         while (true) {
             size_t q1 = paramsArr.find('\"', pos);
             if (q1 == std::string::npos) break;
-            size_t q2 = paramsArr.find('\"', q1+1);
-            if (q2 == std::string::npos) break;
-            std::string raw = paramsArr.substr(q1+1, q2-q1-1);
-            // handle escaped? simple unescape
-            cmd.parameters.push_back(JsonUtils::Unescape(raw));
-            pos = q2+1;
+            // escapes beruecksichtigen
+            std::string raw;
+            size_t q2 = q1 + 1;
+            while (q2 < paramsArr.size() && paramsArr[q2] != '\"') {
+                if (paramsArr[q2] == '\\' && q2 + 1 < paramsArr.size()) { raw.push_back(paramsArr[q2 + 1]); q2 += 2; }
+                else { raw.push_back(paramsArr[q2]); q2++; }
+            }
+            if (q2 >= paramsArr.size()) break;
+            cmd.parameters.push_back(raw);
+            pos = q2 + 1;
         }
     }
     return cmd;
@@ -970,7 +2154,7 @@ EventPage::Condition ParseConditionObject(const std::string& obj) {
     return c;
 }
 
-EventPage ParsePageObject(const std::string& obj) {
+EventPage ParsePageObject(const std::string& obj, bool legacy) {
     using namespace JsonUtils;
     EventPage page;
     int iv = 0;
@@ -981,54 +2165,53 @@ EventPage ParsePageObject(const std::string& obj) {
     if (TryParseBool(obj, "stepAnime", 0, b)) page.stepAnime = b;
     if (TryParseBool(obj, "directionFix", 0, b)) page.directionFix = b;
     if (TryParseBool(obj, "through", 0, b)) page.through = b;
+    if (TryParseBool(obj, "alwaysOnTop", 0, b)) page.alwaysOnTop = b;
     if (TryParseInt(obj, "moveType", 0, iv)) page.moveType = iv;
     if (TryParseInt(obj, "moveSpeed", 0, iv)) page.moveSpeed = iv;
     if (TryParseInt(obj, "moveFrequency", 0, iv)) page.moveFrequency = iv;
+    if (TryParseInt(obj, "direction2D", 0, iv) && iv >= 2 && iv <= 8) page.direction2D = iv;
     std::string s;
     if (TryParseString(obj, "graphicName", 0, s)) page.graphicName = s;
     if (TryParseInt(obj, "graphicIndex", 0, iv)) page.graphicIndex = iv;
+    if (TryParseString(obj, "customRoute", 0, s)) page.customRoute = s;
+    if (TryParseBool(obj, "routeRepeat", 0, b)) page.routeRepeat = b;
+    if (TryParseBool(obj, "routeSkippable", 0, b)) page.routeSkippable = b;
     Vec3 dir;
     if (ParseVec3(obj, "direction", 0, dir)) page.direction = dir;
 
     std::string condObj;
-    if (FindObjectForKey(obj, "condition", 0, condObj)) {
+    if (FindObjectForKey(obj, "condition", 0, condObj))
         page.condition = ParseConditionObject(condObj);
-    }
     std::string listArr;
     if (FindArrayForKey(obj, "list", 0, listArr)) {
         auto cmdObjs = ExtractObjectsFromArray(listArr);
-        for (auto& co : cmdObjs) {
-            page.list.push_back(ParseCommandObject(co));
-        }
+        for (auto& co : cmdObjs)
+            page.list.push_back(ParseCommandObject(co, legacy));
     }
     return page;
 }
 
-MapEvent ParseMapEventObject(const std::string& obj) {
+MapEvent ParseMapEventObject(const std::string& obj, bool legacy) {
     using namespace JsonUtils;
     MapEvent ev;
     int iv = 0;
     if (TryParseInt(obj, "id", 0, iv)) ev.id = iv;
-    std::string name;
-    if (TryParseString(obj, "name", 0, name)) ev.name = name;
     if (TryParseInt(obj, "x", 0, iv)) ev.x = iv;
     if (TryParseInt(obj, "y", 0, iv)) ev.y = iv;
     if (TryParseInt(obj, "z", 0, iv)) ev.z = iv;
+    std::string name;
+    if (TryParseString(obj, "name", 0, name)) ev.name = name;
     Vec3 wp;
     if (ParseVec3(obj, "worldPos", 0, wp)) ev.worldPos = wp;
-    else {
-        // try worldPos as separate x,y,z? fallback to x,y,z as world
-        ev.worldPos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
-    }
+    else ev.worldPos = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
     bool en = true;
     if (TryParseBool(obj, "enabled", 0, en)) ev.enabled = en;
 
     std::string pagesArr;
     if (FindArrayForKey(obj, "pages", 0, pagesArr)) {
         auto pageObjs = ExtractObjectsFromArray(pagesArr);
-        for (auto& po : pageObjs) {
-            ev.pages.push_back(ParsePageObject(po));
-        }
+        for (auto& po : pageObjs)
+            ev.pages.push_back(ParsePageObject(po, legacy));
     }
     return ev;
 }
@@ -1045,139 +2228,95 @@ void EventSystem::LoadMapEvents(int mapId, const std::string& projectPath) {
     for (auto& cand : FindEventFiles(projectPath, mapId)) {
         if (std::filesystem::exists(cand)) {
             std::string c = ReadFileToString(cand);
-            if (!c.empty()) {
-                loadedPath = cand;
-                content = c;
-                break;
-            }
+            if (!c.empty()) { loadedPath = cand; content = c; break; }
         }
     }
 
     if (content.empty()) {
-        RPG_LOG_INFO("No event file found for map " + std::to_string(mapId) + " in " + projectPath + " - using demo events");
+        RPG_LOG_INFO("Keine Event-Datei fuer Map " + std::to_string(mapId) + " - Demo-Events");
         EnsureDemoEvent();
         return;
     }
 
     try {
         using namespace JsonUtils;
+        bool legacy = true;
+        int fv = 0;
+        if (TryParseInt(content, "formatVersion", 0, fv) && fv >= 2) legacy = false;
+
         std::string eventsArr;
         if (!FindArrayForKey(content, "events", 0, eventsArr)) {
-            // Maybe file itself is array of events directly
-            if (content.find('\"') != std::string::npos && content.find('[') != std::string::npos) {
-                size_t start = content.find('[');
+            size_t start = content.find('[');
+            if (start != std::string::npos) {
                 size_t end;
                 std::string full;
-                if (ExtractArray(content, start, full, end)) {
-                    eventsArr = full;
-                }
+                if (ExtractArray(content, start, full, end)) eventsArr = full;
             }
         }
-
         if (eventsArr.empty()) {
-            RPG_LOG_WARN("Events array not found in " + loadedPath + " - using demo");
+            RPG_LOG_WARN("Events-Array nicht gefunden in " + loadedPath + " - Demo-Events");
             EnsureDemoEvent();
             return;
         }
-
         auto evObjs = ExtractObjectsFromArray(eventsArr);
-        if (evObjs.empty()) {
-            RPG_LOG_WARN("No events parsed from " + loadedPath);
-            EnsureDemoEvent();
-            return;
-        }
-
         for (auto& eo : evObjs) {
-            MapEvent ev = ParseMapEventObject(eo);
-            if (ev.id != 0 && !ev.pages.empty()) {
+            MapEvent ev = ParseMapEventObject(eo, legacy);
+            if (ev.id != 0 && !ev.pages.empty())
                 mEvents.push_back(std::move(ev));
-            }
         }
-
         if (mEvents.empty()) {
-            RPG_LOG_WARN("Parsed 0 valid events from " + loadedPath + " - using demo");
+            RPG_LOG_WARN("0 gueltige Events in " + loadedPath + " - Demo-Events");
             EnsureDemoEvent();
         } else {
-            RPG_LOG_INFO("LoadMapEvents map " + std::to_string(mapId) + " loaded " + std::to_string(mEvents.size()) + " events from " + loadedPath);
-            // CommonEvents
-            try {
-                std::string cpath = projectPath + "/maps/CommonEvents.json";
-                if (std::filesystem::exists(cpath)) {
-                    std::ifstream cf(cpath);
-                    std::stringstream ss; ss << cf.rdbuf();
-                    std::string content = ss.str();
+            RPG_LOG_INFO("Map " + std::to_string(mapId) + ": " +
+                         std::to_string(mEvents.size()) + " Events aus " + loadedPath +
+                         (legacy ? " (Legacy-Format konvertiert)" : ""));
+        }
+
+        // CommonEvents (Projekt-weit) laden falls vorhanden
+        try {
+            std::string cpath = projectPath + "/maps/CommonEvents.json";
+            if (std::filesystem::exists(cpath)) {
+                std::string cc = ReadFileToString(cpath);
+                if (!cc.empty()) {
                     mCommonEvents.clear();
+                    bool cLegacy = legacy;
+                    int cfv = 0;
+                    if (TryParseInt(cc, "formatVersion", 0, cfv) && cfv >= 2) cLegacy = false;
                     size_t pos = 0;
-                    while ((pos = content.find("\"id\"", pos)) != std::string::npos) {
+                    while ((pos = cc.find("\"id\"", pos)) != std::string::npos) {
                         CommonEvent ce;
-                        int id=0, trig=0, sw=0;
-                        // naive parse
-                        try {
-                            size_t c = content.find(':', pos);
-                            id = std::stoi(content.substr(c+1));
-                        } catch(...) {}
-                        ce.id = id;
-                        size_t np = content.find("\"name\"", pos);
-                        size_t next = content.find("\"id\"", pos+4);
-                        if (np != std::string::npos && (next==std::string::npos || np < next)) {
-                            size_t q1 = content.find('"', content.find(':', np)+1);
-                            size_t q2 = content.find('"', q1+1);
-                            if (q1!=std::string::npos && q2!=std::string::npos)
-                                ce.name = content.substr(q1+1, q2-q1-1);
+                        try { ce.id = std::stoi(cc.substr(cc.find(':', pos) + 1)); } catch (...) {}
+                        size_t next = cc.find("\"id\"", pos + 4);
+                        auto inRange = [&](size_t p) {
+                            return p != std::string::npos && (next == std::string::npos || p < next);
+                        };
+                        size_t np = cc.find("\"name\"", pos);
+                        if (inRange(np)) {
+                            size_t q1 = cc.find('"', cc.find(':', np) + 1);
+                            size_t q2 = cc.find('"', q1 + 1);
+                            if (q1 != std::string::npos && q2 != std::string::npos)
+                                ce.name = cc.substr(q1 + 1, q2 - q1 - 1);
                         }
-                        size_t tp = content.find("\"trigger\"", pos);
-                        if (tp != std::string::npos && (next==std::string::npos || tp < next)) {
-                            try { ce.trigger = (EventTrigger)std::stoi(content.substr(content.find(':',tp)+1)); } catch(...) {}
-                        }
-                        size_t sp = content.find("\"switchId\"", pos);
-                        if (sp != std::string::npos && (next==std::string::npos || sp < next)) {
-                            try { ce.switchId = std::stoi(content.substr(content.find(':',sp)+1)); } catch(...) {}
-                        }
-                        // commands: find "list"
-                        size_t lp = content.find("\"list\"", pos);
-                        if (lp != std::string::npos && (next==std::string::npos || lp < next)) {
-                            size_t b = content.find('[', lp);
-                            size_t e = content.find(']', b);
-                            // parse code entries
-                            size_t cp = b;
-                            while (cp != std::string::npos && cp < e) {
-                                cp = content.find("\"code\"", cp);
-                                if (cp==std::string::npos || cp > e) break;
-                                EventCommand cmd;
-                                try { cmd.code = (EventCommandCode)std::stoi(content.substr(content.find(':',cp)+1)); } catch(...) {}
-                                size_t tx = content.find("\"text\"", cp);
-                                if (tx != std::string::npos && tx < e) {
-                                    size_t q1 = content.find('"', content.find(':', tx)+1);
-                                    size_t q2 = q1+1;
-                                    std::string text;
-                                    while (q2 < content.size() && content[q2] != '"') {
-                                        if (content[q2]=='\\' && q2+1<content.size()) { text.push_back(content[q2+1]); q2+=2; }
-                                        else { text.push_back(content[q2]); q2++; }
-                                    }
-                                    cmd.text = text;
-                                }
-                                auto grabP = [&](const char* k, int& out) {
-                                    size_t p = content.find(k, cp);
-                                    if (p!=std::string::npos && p < (cp+200)) {
-                                        try { out = std::stoi(content.substr(content.find(':',p)+1)); } catch(...) {}
-                                    }
-                                };
-                                grabP("\"p1\"", cmd.param1);
-                                grabP("\"p2\"", cmd.param2);
-                                grabP("\"p3\"", cmd.param3);
-                                ce.list.push_back(cmd);
-                                cp = content.find("\"code\"", cp+6);
-                            }
+                        size_t tp = cc.find("\"trigger\"", pos);
+                        if (inRange(tp)) { try { ce.trigger = (EventTrigger)std::stoi(cc.substr(cc.find(':', tp) + 1)); } catch (...) {} }
+                        size_t sp = cc.find("\"switchId\"", pos);
+                        if (inRange(sp)) { try { ce.switchId = std::stoi(cc.substr(cc.find(':', sp) + 1)); } catch (...) {} }
+                        std::string listArr;
+                        if (FindArrayForKey(cc, "list", (int)pos, listArr)) {
+                            auto cmdObjs = ExtractObjectsFromArray(listArr);
+                            for (auto& co : cmdObjs)
+                                ce.list.push_back(ParseCommandObject(co, cLegacy));
                         }
                         if (ce.id > 0) mCommonEvents.push_back(ce);
                         pos += 4;
                     }
-                    RPG_LOG_INFO("Loaded CommonEvents: " + std::to_string(mCommonEvents.size()));
+                    RPG_LOG_INFO("CommonEvents geladen: " + std::to_string(mCommonEvents.size()));
                 }
-            } catch (...) {}
-        }
+            }
+        } catch (...) {}
     } catch (const std::exception& e) {
-        RPG_LOG_ERROR(std::string("LoadMapEvents failed for map ") + std::to_string(mapId) + ": " + e.what() + " - using demo");
+        RPG_LOG_ERROR(std::string("LoadMapEvents fehlgeschlagen: ") + e.what() + " - Demo-Events");
         EnsureDemoEvent();
     }
 }
@@ -1191,11 +2330,12 @@ void EventSystem::SaveMapEvents(int mapId, const std::string& projectPath) const
 
         std::ofstream f(path);
         if (!f) {
-            RPG_LOG_ERROR("Failed to open event file for saving: " + path);
+            RPG_LOG_ERROR("Event-Datei kann nicht geschrieben werden: " + path);
             return;
         }
 
         f << "{\n";
+        f << "  \"formatVersion\": 2,\n";
         f << "  \"mapId\": " << mapId << ",\n";
         f << "  \"events\": [\n";
         for (size_t ei = 0; ei < mEvents.size(); ++ei) {
@@ -1216,12 +2356,16 @@ void EventSystem::SaveMapEvents(int mapId, const std::string& projectPath) const
                 f << "          \"stepAnime\": " << (pg.stepAnime ? "true" : "false") << ",\n";
                 f << "          \"directionFix\": " << (pg.directionFix ? "true" : "false") << ",\n";
                 f << "          \"through\": " << (pg.through ? "true" : "false") << ",\n";
+                f << "          \"alwaysOnTop\": " << (pg.alwaysOnTop ? "true" : "false") << ",\n";
                 f << "          \"moveType\": " << pg.moveType << ",\n";
                 f << "          \"moveSpeed\": " << pg.moveSpeed << ",\n";
                 f << "          \"moveFrequency\": " << pg.moveFrequency << ",\n";
+                f << "          \"direction2D\": " << pg.direction2D << ",\n";
                 f << "          \"graphicName\": \"" << Escape(pg.graphicName) << "\",\n";
                 f << "          \"graphicIndex\": " << pg.graphicIndex << ",\n";
-                f << "          \"direction\": [" << pg.direction.x << "," << pg.direction.y << "," << pg.direction.z << "],\n";
+                f << "          \"customRoute\": \"" << Escape(pg.customRoute) << "\",\n";
+                f << "          \"routeRepeat\": " << (pg.routeRepeat ? "true" : "false") << ",\n";
+                f << "          \"routeSkippable\": " << (pg.routeSkippable ? "true" : "false") << ",\n";
                 f << "          \"condition\": {\n";
                 f << "            \"switch1Valid\": " << (pg.condition.switch1Valid ? "true" : "false") << ",\n";
                 f << "            \"switch1Id\": " << pg.condition.switch1Id << ",\n";
@@ -1271,39 +2415,37 @@ void EventSystem::SaveMapEvents(int mapId, const std::string& projectPath) const
         f << "  ]\n";
         f << "}\n";
         f.close();
-        RPG_LOG_INFO("SaveMapEvents map " + std::to_string(mapId) + " saved " + std::to_string(mEvents.size()) + " events to " + path);
-        // Common Events (projektweit)
+        RPG_LOG_INFO("Events gespeichert: " + path + " (" + std::to_string(mEvents.size()) + " Events)");
+
+        // Common Events
         try {
-            std::filesystem::create_directories(projectPath + "/maps");
             std::string cpath = projectPath + "/maps/CommonEvents.json";
             std::ofstream cf(cpath);
-            cf << "[\n";
+            cf << "{\n  \"formatVersion\": 2,\n  \"commonEvents\": [\n";
             for (size_t i = 0; i < mCommonEvents.size(); ++i) {
                 const auto& ce = mCommonEvents[i];
-                cf << "  {\"id\":" << ce.id << ",\"name\":\"" << ce.name
+                cf << "  {\"id\":" << ce.id << ",\"name\":\"" << Escape(ce.name)
                    << "\",\"trigger\":" << (int)ce.trigger
                    << ",\"switchId\":" << ce.switchId
                    << ",\"list\":[";
                 for (size_t j = 0; j < ce.list.size(); ++j) {
                     const auto& c = ce.list[j];
                     if (j) cf << ",";
-                    cf << "{\"code\":" << (int)c.code << ",\"text\":\"";
-                    for (char ch : c.text) {
-                        if (ch=='\\'||ch=='"') cf << '\\';
-                        cf << ch;
-                    }
-                    cf << "\",\"p1\":" << c.param1 << ",\"p2\":" << c.param2
-                       << ",\"p3\":" << c.param3 << "}";
+                    cf << "{\"code\":" << (int)c.code
+                       << ",\"indent\":" << c.indent
+                       << ",\"text\":\"" << Escape(c.text)
+                       << "\",\"param1\":" << c.param1
+                       << ",\"param2\":" << c.param2
+                       << ",\"param3\":" << c.param3 << "}";
                 }
                 cf << "]}";
-                if (i+1<mCommonEvents.size()) cf << ",";
+                if (i + 1 < mCommonEvents.size()) cf << ",";
                 cf << "\n";
             }
-            cf << "]\n";
-            RPG_LOG_INFO("Saved CommonEvents: " + std::to_string(mCommonEvents.size()));
+            cf << "  ]\n}\n";
         } catch (...) {}
     } catch (const std::exception& e) {
-        RPG_LOG_ERROR(std::string("SaveMapEvents failed: ") + e.what());
+        RPG_LOG_ERROR(std::string("SaveMapEvents fehlgeschlagen: ") + e.what());
     }
 }
 

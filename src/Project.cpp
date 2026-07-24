@@ -68,10 +68,24 @@ bool Project::New(const std::string& path, const std::string& name) {
     std::filesystem::create_directories(path + "/assets/textures");
     std::filesystem::create_directories(path + "/assets/models");
     std::filesystem::create_directories(path + "/assets/audio");
+    std::filesystem::create_directories(path + "/Audio/BGM");
+    std::filesystem::create_directories(path + "/Audio/BGS");
+    std::filesystem::create_directories(path + "/Audio/ME");
+    std::filesystem::create_directories(path + "/Audio/SE");
     std::filesystem::create_directories(path + "/assets/shaders");
     std::filesystem::create_directories(path + "/maps");
     std::filesystem::create_directories(path + "/scripts");
     std::filesystem::create_directories(path + "/prefabs");
+    // XP-Ordnerstruktur (Material-Kategorien des Importdialogs /
+    // RPG::Cache-Suchpfade): neue Projekte legen sie gleich mit an,
+    // damit der Asset-Browser-Import sie vorfindet.
+    static const char* kGfxDirs[] = {
+        "Tilesets", "Autotiles", "Characters", "Animations", "Battlers",
+        "Battlebacks", "Panoramas", "Fogs", "Pictures", "Titles",
+        "Gameovers", "Icons", "Transitions", "System", "Windowskins", "Faces"
+    };
+    for (const char* d : kGfxDirs)
+        std::filesystem::create_directories(path + "/Graphics/" + d);
 
     Save();
     return true;
@@ -141,6 +155,10 @@ bool Project::SaveAs(const std::string& path) {
     std::filesystem::create_directories(path + "/assets/textures");
     std::filesystem::create_directories(path + "/assets/models");
     std::filesystem::create_directories(path + "/assets/audio");
+    std::filesystem::create_directories(path + "/Audio/BGM");
+    std::filesystem::create_directories(path + "/Audio/BGS");
+    std::filesystem::create_directories(path + "/Audio/ME");
+    std::filesystem::create_directories(path + "/Audio/SE");
     std::filesystem::create_directories(path + "/assets/shaders");
     std::filesystem::create_directories(path + "/maps");
     std::filesystem::create_directories(path + "/scripts");

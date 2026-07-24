@@ -1,4 +1,7 @@
-# Scene_Title - Titelbildschirm (Ruby steuert Texte via UI -> GameUI -> RmlUi)
+# Scene_Title - Titelbildschirm (Ruby-Texte via UI -> GameUI-Overlay/
+# RgssUI-Canvas; RmlUi ist seit PAKET 10 entfernt).
+# Hinweis: Der Player zeigt zusaetzlich den nativen XP-Titel
+# (Datenbank -> System -> Titel-Optionen, PAKET 11/14).
 class Scene_Title < Scene_Base
   def start
     super

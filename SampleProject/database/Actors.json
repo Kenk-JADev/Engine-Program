@@ -1,4 +1,4 @@
 [
-  {"id": 1, "name": "Hero", "class": "Warrior", "level": 1},
+  {"id": 1, "name": "Hero", "class": "Warrior", "level": 1, "equips": "2"},
   {"id": 2, "name": "Mage", "class": "Mage", "level": 1}
 ]

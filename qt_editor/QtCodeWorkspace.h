@@ -1,7 +1,9 @@
 #pragma once
-// Code-Workspace: ersetzt den alten ImGui-"Game Scene"-Schwerpunkt.
+// Skript-Editor im XP-Look (PAKET 28): links Ruby-Skriptliste, rechts grosser
+// Code-Editor. Schlanke Kopfzeile (Ansicht + Suche), Fusszeile mit Snippets
+// und nur zwei Buttons; alle Dateiaktionen im RECHTSKLICK-Menue der Liste.
 // Dient dem Editieren von Ruby-Spiellogik und C++-Engine-API-Referenz/Snippets
-// in nativen Qt-Widgets (QPlainTextEdit + Dateibaum).
+// in nativen Qt-Widgets (QPlainTextEdit + Skriptliste).
 
 #include <QWidget>
 #include <QString>
@@ -14,7 +16,6 @@ class QLabel;
 class QComboBox;
 class QLineEdit;
 class QSplitter;
-class QToolBar;
 class QAction;
 class QTabWidget;
 
@@ -43,8 +44,6 @@ public:
     bool saveCurrent();
     bool saveAll();
     // Ruby-Scripts ausfuehren (Playtest-Vorbereitung)
-    void runCurrent();
-    void runAll();
     void hotReloadAll(); // speichern + ExecuteAllScripts
 
     bool hasUnsavedChanges() const;
@@ -62,6 +61,7 @@ private slots:
     void onFileSelected();
     void onTextChanged();
     void onNewRubyScript();
+    void onRenameRubyScript();   // F2 / Doppelklick (XP: Enter auf Listeneintrag)
     void onDeleteRubyScript();
     void onReloadFromDisk();
     void onOpenExternal();
@@ -89,7 +89,6 @@ private:
     QLabel* mDirtyLabel = nullptr;
     QComboBox* mSnippetCombo = nullptr;
     QAction* mSaveAction = nullptr;
-    QAction* mRunAction = nullptr;
     QAction* mNewAction = nullptr;
     QAction* mDeleteAction = nullptr;
     QLineEdit* mFindEdit = nullptr;

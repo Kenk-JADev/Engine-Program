@@ -1,18 +1,14 @@
 #pragma once
-// Event-Editor: Map-Events listen, Seiten, Befehls-Liste (RPG-Maker-Style).
+// Event-Verwaltung als Dock: Liste aller Map-Events, Neu/Löschen,
+// Position, Speichern/Laden. Der eigentliche Editor öffnet modal
+// (QtEventEditorDialog, XP-artig mit Seiten + Befehlsliste).
 
 #include <QWidget>
 #include <QString>
 
 class QListWidget;
-class QLineEdit;
 class QSpinBox;
-class QComboBox;
-class QPlainTextEdit;
 class QLabel;
-class QPushButton;
-class QCheckBox;
-class QDoubleSpinBox;
 
 namespace rpg { class Engine; }
 
@@ -31,55 +27,25 @@ signals:
 
 private slots:
     void onEventSelected();
+    void onEditEvent();       // Doppelklick / Button -> XP-Eventdialog
     void onNewEvent();
     void onDeleteEvent();
+    void onDuplicateEvent();
     void onSaveEvents();
     void onReloadEvents();
-    void onApplyEventProps();
-    void onCommandSelected();
-    void onAddCommand();
-    void onRemoveCommand();
-    void onMoveCommandUp();
-    void onMoveCommandDown();
-    void onApplyCommand();
-    void onPageChanged(int index);
+    void onApplyPosition();
 
 private:
-    void buildUi();
-    void rebuildEventList();
-    void rebuildCommandList();
-    void syncEventProps();
-    void syncCommandProps();
     int currentEventId() const;
-    int currentCommandIndex() const;
+    void rebuildEventList();
 
     rpg::Engine* mEngine = nullptr;
-
     QListWidget* mEventList = nullptr;
-    QListWidget* mCommandList = nullptr;
-    QComboBox* mPageCombo = nullptr;
-
-    QLineEdit* mNameEdit = nullptr;
     QSpinBox* mPosX = nullptr;
     QSpinBox* mPosY = nullptr;
     QSpinBox* mPosZ = nullptr;
-    QComboBox* mTriggerCombo = nullptr;
-    QCheckBox* mCondSwitchCheck = nullptr;
-    QSpinBox* mCondSwitchId = nullptr;
-    QCheckBox* mSelfSwitchCheck = nullptr;
-    QComboBox* mSelfSwitchChar = nullptr;
-    QLineEdit* mMoveRouteEdit = nullptr;
-
-    QComboBox* mCmdCodeCombo = nullptr;
-    QPlainTextEdit* mCmdText = nullptr;
-    QSpinBox* mCmdP1 = nullptr;
-    QSpinBox* mCmdP2 = nullptr;
-    QSpinBox* mCmdP3 = nullptr;
     QLabel* mInfoLabel = nullptr;
-
     int mSelectedEventId = -1;
-    int mSelectedPage = 0;
-    int mSelectedCommand = -1;
     bool mSyncing = false;
 };
 

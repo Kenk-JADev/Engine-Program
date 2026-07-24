@@ -1,6 +1,7 @@
 # RPG Maker 3D – Hauptspielskript (zuletzt geladen)
 # WICHTIG: Spiellogik laeuft in Ruby. C++ liefert Engine/Rendering/Input.
-# UI.* schreibt in GameUI; RmlUi zeigt es im Game-Fenster an (kein Ruby-in-RmlUi).
+# UI.* schreibt in GameUI (ImGui-Overlay) / RgssUI-Canvas.
+# RmlUi ist seit PAKET 10 vollstaendig entfernt.
 
 class Game
   def initialize
@@ -10,8 +11,11 @@ class Game
 
   def update(delta_time)
     @time += delta_time
-    # Party-Menue (Esc) hat Vorrang
-    if Object.const_defined?(:PartyMenu)
+    # Ruby-Party-Menue (Esc) laeuft nur, wenn das native Engine-Menue
+    # deaktiviert ist (doppeltes Menue verhindern, PAKET 26).
+    if Object.const_defined?(:PartyMenu) &&
+       !(defined?(RPGMaker3D::Config::USE_NATIVE_MENU) &&
+         RPGMaker3D::Config::USE_NATIVE_MENU)
       PartyMenu.update
       return if PartyMenu.open?
     end

@@ -1,7 +1,10 @@
 #include "rpgmaker3d/UI.h"
 #include "rpgmaker3d/Game.h"
+#include "rpgmaker3d/Database.h"
 #include "rpgmaker3d/EventSystem.h"
+#include "rpgmaker3d/BattleSystem.h" // XP-Kampfmenue (Battler/BattleAction)
 #include "rpgmaker3d/Texture.h"
+#include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 // ImGui-Editor ist entfernt. GameUI-Overlay war historisch ImGui-basiert;
 // ohne RPGMAKER3D_ENABLE_IMGUI sind Draw()-Pfade No-Ops (RmlUi/Logic bleibt).
@@ -12,6 +15,9 @@
 #include <unordered_map>
 #include <filesystem>
 #include <cmath>
+#include <cctype>
+#include <cstdio> // std::snprintf (MSVC: nicht transitiv vorhanden)
+#include <memory>
 
 namespace rpg {
 
@@ -51,6 +57,16 @@ void MessageWindow::AdvanceInput() {
     }
 }
 
+void MessageWindow::ConfirmChoice(int overrideIdx) {
+    if (mChoices.empty()) return;
+    // overrideIdx: -2 = aktuelle Auswahl, -1 = Abbruch, sonst direkter Index
+    int idx = (overrideIdx == -2) ? mSelectedChoice : overrideIdx;
+    auto cb = onChoice;
+    mChoices.clear();
+    mVisible = false;
+    if (cb) cb(idx);
+}
+
 void MessageWindow::Update(float dt) {
     if (!mVisible) return;
     if (mCharIndex < mText.size()) {
@@ -74,6 +90,8 @@ void MessageWindow::Draw() {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
     ImGui::Begin("##MessageBox", nullptr,
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    if (!mSpeakerName.empty()) // PAKET 10: Sprecherzeile (war im RmlUi-Kasten)
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mSpeakerName.c_str());
     ImGui::TextWrapped("%s", mDisplayed.c_str());
     ImGui::Dummy(ImVec2(0, 8));
     if (mCharIndex >= mText.size()) {
@@ -109,55 +127,144 @@ void MessageWindow::Draw() {
 #endif
 }
 
-// --- TitleScreen ---
-void TitleScreen::Show() { mVisible = true; }
-void TitleScreen::Update(float dt) { (void)dt; }
-void TitleScreen::Draw() {
-    if (!mVisible) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGui::SetNextWindowPos(ImVec2(0,0));
-    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
-    ImGui::Begin("Title", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 100, ImGui::GetWindowSize().y*0.3f));
-    ImGui::Text("RPG Maker 3D");
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 50, ImGui::GetWindowSize().y*0.5f));
-    if (ImGui::Button("New Game", ImVec2(100,30))) {
-        if (onNewGame) onNewGame();
-        mVisible=false;
-    }
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 50, ImGui::GetWindowSize().y*0.5f + 40));
-    if (ImGui::Button("Continue", ImVec2(100,30))) {
-        if (onContinue) onContinue();
-    }
-    ImGui::SetCursorPos(ImVec2(ImGui::GetWindowSize().x*0.5f - 50, ImGui::GetWindowSize().y*0.5f + 80));
-    if (ImGui::Button("Exit", ImVec2(100,30))) {
-        if (onExit) onExit();
-    }
-    ImGui::End();
-#else
-    // Title-Overlay ohne ImGui: RmlUi / Playtest uebernimmt UI.
-#endif
-}
-
-// --- PauseMenu ---
-void PauseMenu::Show() { mVisible = true; mSelected=0; }
-void PauseMenu::Draw() {
-    if (!mVisible) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGui::Begin("Pause");
-    const char* options[] = {"Resume", "Save", "Exit to Title"};
-    for (int i=0;i<3;++i) {
-        bool sel = (mSelected==i);
-        if (ImGui::Selectable(options[i], sel)) {
-            mSelected=i;
-            if (i==0 && onResume) { onResume(); mVisible=false; }
-            if (i==1 && onSave) onSave();
-            if (i==2 && onExitToTitle) { onExitToTitle(); mVisible=false; }
+// --- TitleScreen (XP: Neues Spiel / Weiterspielen / Beenden) ---
+void TitleScreen::Show() {
+    mVisible = true;
+    // "Weiterspielen" nur aktiv, wenn mindestens ein Slot belegt ist (XP)
+    bool anySave = false;
+    for (int slot = 1; slot <= 4; ++slot) {
+        Game::SaveSlotInfo info;
+        if (Game::Get().GetSaveSlotInfo(slot, info) && info.exists) {
+            anySave = true;
+            break;
         }
     }
+    std::vector<MenuWindow::Entry> items = {
+        {"Neues Spiel", true},
+        {"Weiterspielen", anySave},
+        {"Beenden", true}};
+    const std::string titleText = Database::Get().System().gameTitle.empty()
+        ? "RPG Maker 3D" : Database::Get().System().gameTitle;
+    auto& menu = GameUI::Get().Menu();
+    menu.Show(titleText, items, [this](int idx) {
+        std::function<void()> cb;
+        if (idx == 0) cb = onNewGame;
+        else if (idx == 1) cb = onContinue;
+        else cb = onExit;
+        if (cb) cb();
+    }, false); // kein Esc-Abbrechen auf dem Titel
+}
+void TitleScreen::Update(float dt) { (void)dt; }
+void TitleScreen::Draw() {
+    // Das Titelmenue ist ein MenuWindow (siehe Show oben) — die Anzeige
+    // laeuft im GameUI-ImGui-Overlay (DrawModalWindows, Titel mittig).
+}
+
+// --- PauseMenu (delegiert an das XP-Spielmenue) ---
+void PauseMenu::Show() { GameUI::Get().OpenGameMenu(); }
+void PauseMenu::Hide() { GameUI::Get().Menu().Hide(); }
+bool PauseMenu::IsVisible() const { return GameUI::Get().Menu().IsVisible(); }
+void PauseMenu::Draw() {
+    // Das Pausenmenue ist das XP-Spielmenue (MenuWindow) — die Anzeige
+    // laeuft im GameUI-ImGui-Overlay (DrawModalWindows).
+}
+
+// --- MenuWindow ---
+void MenuWindow::Show(const std::string& title, const std::vector<Entry>& items,
+                      std::function<void(int)> onPickFn, bool cancelable) {
+    mTitle = title;
+    mItems = items;
+    onPick = std::move(onPickFn);
+    mCancelable = cancelable;
+    mCursor = 0;
+    // Cursor auf ersten aktivierten Eintrag setzen
+    while (mCursor < (int)mItems.size() && !mItems[mCursor].enabled) ++mCursor;
+    if (mCursor >= (int)mItems.size()) mCursor = 0;
+    onCancel = nullptr;
+    mVisible = true;
+}
+
+void MenuWindow::Hide() {
+    mVisible = false;
+    onPick = nullptr;
+    onCancel = nullptr;
+}
+
+void MenuWindow::MoveCursor(int dir) {
+    if (mItems.empty()) return;
+    int next = mCursor;
+    for (size_t guard = 0; guard < mItems.size(); ++guard) {
+        next = (next + dir + (int)mItems.size()) % (int)mItems.size();
+        if (mItems[next].enabled) { mCursor = next; return; }
+    }
+}
+
+void MenuWindow::Confirm() {
+    if (!mVisible || mItems.empty() || mCursor < 0 || mCursor >= (int)mItems.size()) return;
+    if (!mItems[mCursor].enabled) return;
+    auto cb = onPick;
+    const int idx = mCursor;
+    if (cb) cb(idx); // cb darf das Menue neu aufbauen (Show erneut aufrufen)
+}
+
+void MenuWindow::Cancel() {
+    if (!mVisible || !mCancelable) return;
+    auto cb = onCancel;
+    if (cb) { cb(); return; }
+    Hide();
+}
+
+// PAKET 10: Darstellung im GameUI-ImGui-Overlay (ersetzt das RmlUi-#menu_box).
+// Tastatur bleibt in GameUI::UpdateModalInput; die Maus kann zusaetzlich
+// klicken. Ohne ImGui-Define: No-Op (Logik laeuft weiter).
+void MenuWindow::Draw() {
+    if (!mVisible) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const bool titleMode = GameUI::Get().Title().IsVisible();
+    const float w = io.DisplaySize.x * (titleMode ? 0.40f : 0.46f);
+    float x, y;
+    if (titleMode) {
+        // XP: Titelmenue mittig
+        x = (io.DisplaySize.x - w) * 0.5f;
+        y = io.DisplaySize.y * 0.30f;
+    } else {
+        // im Spiel/Menue rechts oben (ehemalige #menu_box-Position)
+        x = io.DisplaySize.x - w - io.DisplaySize.x * 0.04f;
+        y = io.DisplaySize.y * 0.12f;
+    }
+    ImGui::SetNextWindowPos(ImVec2(x, y));
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f)); // Hoehe waechst mit dem Inhalt
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##MenuBox", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    if (!mTitle.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mTitle.c_str());
+        ImGui::Separator();
+    }
+    // Schnappschuss: onPick darf das Menue neu aufbauen (Show erneut rufen),
+    // waehrend wir noch in der Schleife waeren.
+    const std::vector<Entry> items = mItems;
+    for (size_t i = 0; i < items.size(); ++i) {
+        ImGui::PushID((int)i);
+        if (!items[i].enabled) {
+            ImGui::TextDisabled("%s", items[i].text.c_str());
+        } else if (ImGui::Selectable(items[i].text.c_str(), (int)i == mCursor)) {
+            mCursor = (int)i; // Maus bestaetigt direkt (Tastatur: UpdateModalInput)
+            Confirm();
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    ImGui::Dummy(ImVec2(0, 4));
+    if (mCancelable)
+        ImGui::TextDisabled("Pfeile/W-S waehlen | E/Enter bestaetigen | Esc zurueck");
+    else
+        ImGui::TextDisabled("Pfeile/W-S waehlen | E/Enter bestaetigen");
     ImGui::End();
-#else
-    (void)mSelected;
+    ImGui::PopStyleColor();
 #endif
 }
 
@@ -176,9 +283,151 @@ void GameUI::Draw() {
     if (mTitle.IsVisible()) mTitle.Draw();
     else if (mPause.IsVisible()) mPause.Draw();
     else if (mMessage.IsVisible()) mMessage.Draw();
+    DrawBattleStatus(); // PAKET 9: XP-Kampfstatus (unter den HUD-Overlays)
     // Screen texts and pictures always on top (HUD)
     DrawPictures();
     DrawScreenTexts();
+    // PAKET 11: Bildschirm-Effekte (Farbton/Blitz) + Wetter — ueber der
+    // 3D-Welt, aber unter Menues/Nachrichten (XP faerbt Fenster nicht mit).
+    DrawScreenEffects();
+    DrawWeather();
+    // PAKET 10: modale Fenster (Menue/Zahl/Name) obenauf (ImGui-Overlay,
+    // ersetzt das RmlUi-#menu_box; ohne ImGui No-Op)
+    DrawModalWindows();
+}
+
+// PAKET 11: Kurzes, deterministisches Hash in 0..1 (Wettertröpfchen ohne
+// rand() pro Frame — keine globalen Zustandswechsel, reproduzierbar).
+namespace {
+    float WeatherHash01(unsigned int n) {
+        n = n * 1664525u + 1013904223u;
+        n ^= n >> 16;
+        return (float)(n & 0xFFFFu) / 65535.0f;
+    }
+}
+
+// Bildschirm-Farbton (223) + Blitz (224) als Vollbild-Veils. XP rechnet den
+// Farbton pro Kanal (-255..255) plus Grauanteil — mit einfacher
+// Alpha-Mischung ist das eine bewusste Naeherung (dokumentiert): positives
+// Signal legt einen Farbveil, negatives dunkelt ab, Grau legt Sepia.
+void GameUI::DrawScreenEffects() {
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    const auto& fx = GetScreenEffects();
+    const float tr = fx.toneCurrent.r, tg = fx.toneCurrent.g,
+                tb = fx.toneCurrent.b, tgr = fx.toneCurrent.a;
+    const bool hasTone = (tr != 0.0f || tg != 0.0f || tb != 0.0f || tgr > 0.0f);
+    const bool hasFlash = (fx.flashTimer > 0.0f && fx.flashDuration > 0.0f);
+    if (!hasTone && !hasFlash) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    // Unsichtbares Vollbild-Fenster GANZ UNTEN in der ImGui-Ordnung (wird vor
+    // den anderen Overlays gerufen): liegt ueber der 3D-Welt, aber unter
+    // Menues/Nachrichten — wie in XP, wo Fenster nicht gefaerbt werden.
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("##ScreenFx", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    if (hasTone) {
+        const float posR = std::max(0.0f, tr), posG = std::max(0.0f, tg),
+                    posB = std::max(0.0f, tb);
+        const float negL = (std::max(0.0f, -tr) + std::max(0.0f, -tg) +
+                            std::max(0.0f, -tb)) / 3.0f;
+        const float posL = (posR + posG + posB) / 3.0f;
+        // gewichteter Veil: Farbe aus positiven Kanaelen, Abdunklung aus
+        // negativen, Sepia aus Grauanteil.
+        const float wPos = posL * 0.65f, wNeg = negL * 0.75f,
+                    wGray = tgr * 0.55f;
+        const float wSum = wPos + wNeg + wGray;
+        if (wSum > 0.004f) {
+            float cr = 0.0f, cg = 0.0f, cb = 0.0f;
+            if (posL > 0.0f) { // Farbe des positiven Tons (normiert)
+                cr = posR / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+                cg = posG / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+                cb = posB / ((posR + posG + posB) > 0.0f ? (posR + posG + posB) : 1.0f);
+            }
+            const float sep = 0.20f; // Sepia-Grau
+            const float mr = (cr * wPos + 0.0f * wNeg + sep * wGray);
+            const float mg = (cg * wPos + 0.0f * wNeg + (sep * 0.85f) * wGray);
+            const float mb = (cb * wPos + 0.0f * wNeg + (sep * 0.65f) * wGray);
+            const float inv = 1.0f / wSum;
+            dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
+                IM_COL32((int)(std::clamp(mr * inv, 0.0f, 1.0f) * 255.0f),
+                         (int)(std::clamp(mg * inv, 0.0f, 1.0f) * 255.0f),
+                         (int)(std::clamp(mb * inv, 0.0f, 1.0f) * 255.0f),
+                         (int)(std::clamp(wSum, 0.0f, 0.92f) * 255.0f)));
+        }
+    }
+    if (hasFlash) {
+        const float k = fx.flashTimer / fx.flashDuration; // 1 -> 0
+        const Color& c = fx.flashColor;
+        dl->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
+            IM_COL32((int)(std::clamp(c.r, 0.0f, 1.0f) * 255.0f),
+                     (int)(std::clamp(c.g, 0.0f, 1.0f) * 255.0f),
+                     (int)(std::clamp(c.b, 0.0f, 1.0f) * 255.0f),
+                     (int)(std::clamp(c.a * k, 0.0f, 1.0f) * 255.0f)));
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
+}
+
+// XP-Wetter (Befehl 236): Regen/Sturm = schraege Streifen, Schnee =
+// treibende Flocken; Partikel deterministisch aus Index+Zeit (kein rand()).
+// Laeuft als globales Overlay — auf der Karte UND im Kampf.
+void GameUI::DrawWeather() {
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    const auto& fx = GetScreenEffects();
+    const int type = fx.weatherType;
+    const float power = fx.weatherPower; // gelerpt, 0..9
+    if (type <= 0 || power < 0.05f) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    const float W = io.DisplaySize.x, H = io.DisplaySize.y;
+    ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
+    ImGui::SetNextWindowSize(io.DisplaySize);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::Begin("##WeatherFx", nullptr,
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBackground |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float t = (float)ImGui::GetTime();
+
+    if (type == 1 || type == 2) { // Regen / Sturm
+        const bool storm = (type == 2);
+        const int drops = (int)(power * (storm ? 26.0f : 14.0f));
+        const float slant = storm ? 0.45f : 0.18f;
+        const float speed = storm ? 1450.0f : 950.0f;
+        const ImU32 col = IM_COL32(170, 190, 255, (int)std::clamp(90.0f + power * 14.0f, 0.0f, 255.0f));
+        for (int i = 0; i < drops; ++i) {
+            const float hx = WeatherHash01((unsigned)(i * 37 + 1));
+            const float hy = WeatherHash01((unsigned)(i * 57 + 7));
+            const float len = 14.0f + WeatherHash01((unsigned)(i * 11)) * 16.0f;
+            const float vmul = 0.75f + 0.5f * WeatherHash01((unsigned)(i * 17));
+            const float y = fmodf(hy * H + t * speed * vmul, H + 40.0f) - 20.0f;
+            const float x = fmodf(hx * W - t * speed * slant * 0.35f + W * 8.0f, W + 80.0f) - 40.0f;
+            dl->AddLine(ImVec2(x, y), ImVec2(x + len * slant, y + len), col, storm ? 1.6f : 1.1f);
+        }
+    } else if (type == 3) { // Schnee
+        const int flakes = (int)(power * 10.0f);
+        const ImU32 col = IM_COL32(255, 255, 255, (int)std::clamp(120.0f + power * 13.0f, 0.0f, 255.0f));
+        for (int i = 0; i < flakes; ++i) {
+            const float hx = WeatherHash01((unsigned)(i * 41 + 3));
+            const float hy = WeatherHash01((unsigned)(i * 67 + 13));
+            const float y = fmodf(hy * H + t * (45.0f + 55.0f * WeatherHash01((unsigned)(i * 19))), H + 20.0f) - 10.0f;
+            const float x = hx * W + sinf(t * (1.5f + WeatherHash01((unsigned)(i * 23))) + (float)i) * 22.0f;
+            const float r = 1.2f + 2.2f * WeatherHash01((unsigned)(i * 29));
+            dl->AddCircleFilled(ImVec2(x, y), r, col);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
 }
 void GameUI::ShowMessage(const std::string& text) {
     mMessage.Show(text);
@@ -186,15 +435,1247 @@ void GameUI::ShowMessage(const std::string& text) {
 void GameUI::ShowMessage(const std::string& text, const std::string& speaker, int position, const std::string& face) {
     mMessage.Show(text, speaker, position, face);
 }
-void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback) {
+void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback, bool cancelAllowed) {
     std::vector<ChoiceOption> choices;
     for (size_t i=0;i<options.size();++i) choices.push_back({options[i], (int)i});
     mMessage.onChoice = callback;
+    mChoiceCancelAllowed = cancelAllowed;
     mMessage.ShowWithChoices(text, choices);
+}
+
+// === Zahleneingabe (Event-Befehl 103) ===
+void GameUI::ShowNumberInput(const std::string& prompt, int digits, int initial, std::function<void(int)> onDone) {
+    mNumberActive = true;
+    mNumberPrompt = prompt;
+    mNumberDigits = digits > 0 && digits <= 8 ? digits : 4;
+    mNumberCursor = mNumberDigits - 1; // rechteste Ziffer zuerst (wie XP)
+    // Wert auf Ziffernzahl begrenzen
+    int maxVal = 1;
+    for (int i = 0; i < mNumberDigits; ++i) maxVal *= 10;
+    mNumberValue = initial % maxVal;
+    if (mNumberValue < 0) mNumberValue = 0;
+    mNumberDone = std::move(onDone);
+    RPG_LOG_INFO("[UI] Zahleneingabe aktiv (" + std::to_string(mNumberDigits) + " Stellen)");
+}
+
+// === Namenseingabe (Event-Befehl 303) ===
+void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial, int maxChars, std::function<void(const std::string&)> onDone) {
+    mNameActive = true;
+    mNamePrompt = prompt;
+    mNameInitial = initial;
+    mNameText = initial;
+    mNameMaxChars = maxChars > 0 && maxChars <= 16 ? maxChars : 8;
+    if ((int)mNameText.size() > mNameMaxChars) mNameText.resize(mNameMaxChars);
+    mNameDone = std::move(onDone);
+    RPG_LOG_INFO("[UI] Namenseingabe aktiv (max " + std::to_string(mNameMaxChars) + " Zeichen)");
+}
+
+// ============================================================================
+// XP-Spielmenue (Esc) / Speicherbildschirm / Laden - alles ueber MenuWindow
+// ============================================================================
+
+namespace {
+// --- Ausruestungs-Helfer --------------------------------------------------
+// (Max-HP/MP/-Kurven sind inzwischen GameActor-Methoden in Game.cpp -
+// dieselbe Formel nutzt auch das Kampfsystem.)
+const char* kArmorSlotNames[4] = {"Schild", "Helm", "Körper", "Accessoire"};
+
+const ArmorData* FindArmorDef(int id) {
+    if (id <= 0) return nullptr;
+    for (const auto& d : Database::Get().Armors())
+        if (d.id == id) return &d;
+    return nullptr;
+}
+const WeaponData* FindWeaponDef(int id) {
+    if (id <= 0) return nullptr;
+    for (const auto& w : Database::Get().Weapons())
+        if (w.id == id) return &w;
+    return nullptr;
+}
+} // namespace
+
+void GameUI::OpenGameMenu() {
+    // XP: "Menueaufruf verboten" respektieren
+    if (!Game::Get().System().HasMenuAccess()) return;
+
+    std::vector<MenuWindow::Entry> items;
+    const bool hasMembers = !Game::Get().Party().Members().empty();
+    items.push_back({"Gegenstände", true});
+    items.push_back({"Fertigkeiten", hasMembers});
+    items.push_back({"Ausrüstung", hasMembers});
+    items.push_back({"Status", hasMembers});
+    items.push_back({"Speichern", Game::Get().System().HasSaveAccess()});
+    items.push_back({"Spiel beenden", true});
+    items.push_back({"Zurück", true});
+
+    mMenu.Show("Menü", items, [this](int idx) {
+        switch (idx) {
+            case 0: OpenItemsMenu(); break;
+            case 1: OpenSkillsMenu(); break;
+            case 2: OpenEquipMenu(); break;
+            case 3: OpenStatusMenu(); break;
+            case 4:
+                // Nach dem Speichern/Abbruch wieder ins Menue (XP-Verhalten)
+                ShowSaveScreen(true, [this]() { OpenGameMenu(); });
+                break;
+            case 5: {
+                // XP „Spiel beenden": Zum Titelbildschirm / Verlassen / Abbrechen
+                std::vector<MenuWindow::Entry> q = {
+                    {"Zum Titelbildschirm", true},
+                    {"Spiel verlassen", true},
+                    {"Zurück", true}};
+                auto& pause = mPause;
+                mMenu.Show("Spiel beenden?", q,
+                    [this, &pause](int a) {
+                        if (a == 0) {
+                            mMenu.Hide();
+                            auto cb = pause.onExitToTitle;
+                            if (cb) cb();
+                        } else if (a == 1) {
+                            mMenu.Hide();
+                            auto cb = pause.onQuitGame ? pause.onQuitGame
+                                                       : pause.onExitToTitle;
+                            if (cb) cb();
+                        } else {
+                            OpenGameMenu();
+                        }
+                    });
+                mMenu.onCancel = [this]() { OpenGameMenu(); };
+                break;
+            }
+            default: mMenu.Hide(); break; // Zurück
+        }
+    });
+    mMenu.onCancel = [this]() {
+        mMenu.Hide();
+        auto cb = mPause.onResume;
+        if (cb) cb();
+    };
+}
+
+namespace {
+// PAKET 22: XP plus/minus_state_set im Menue auf ein Gruppenmitglied
+// anwenden (verhaengt und heilt direkt — kein Resistenz-Wurf, wie bei
+// XP-Inventar-Items); sammelt die Meldungszeilen in stateMsg.
+void ApplyMenuStateSets(GameActor& a, const std::vector<int>& plus,
+                        const std::vector<int>& minus, std::string& stateMsg) {
+    for (int sid : plus) {
+        if (std::find(a.states.begin(), a.states.end(), sid) != a.states.end())
+            continue;
+        a.states.push_back(sid);
+        if (const StateData* sd = Database::Get().GetState(sid))
+            stateMsg += "\n" + a.name + " erleidet \"" + sd->name + "\"!";
+    }
+    for (int sid : minus) {
+        const auto pos = std::find(a.states.begin(), a.states.end(), sid);
+        if (pos == a.states.end()) continue;
+        a.states.erase(pos);
+        if (const StateData* sd = Database::Get().GetState(sid))
+            stateMsg += "\n" + a.name + " ist nicht mehr \"" + sd->name + "\".";
+    }
+}
+} // namespace
+
+void GameUI::OpenItemsMenu() {
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> itemIds; // Index -> Item-ID (fuer Beschreibung)
+    auto& party = Game::Get().Party();
+
+    // sortiert nach ID, damit die Liste stabil bleibt
+    std::vector<std::pair<int,int>> bag(party.Items().begin(), party.Items().end());
+    std::sort(bag.begin(), bag.end());
+    for (const auto& kv : bag) {
+        const auto* it = Database::Get().GetItem(kv.first);
+        const std::string name = it ? it->name : ("Gegenstand #" + std::to_string(kv.first));
+        items.push_back({name + "   x " + std::to_string(kv.second), true});
+        itemIds.push_back(kv.first);
+    }
+    if (items.empty()) items.push_back({"(leer)", false});
+
+    mMenu.Show("Gegenstände  (Gold: " + std::to_string(party.GetGold()) + " G)",
+        items, [this, itemIds](int idx) {
+            if (idx < 0 || idx >= (int)itemIds.size()) return;
+            const auto* it = Database::Get().GetItem(itemIds[idx]);
+            if (!it) return;
+            // XP: Verbrauchsgueter mit Wirkung auf die eigene Gruppe werden
+            // BENUTZT; gegner-zielende Items gehoeren in den Kampf, alle
+            // anderen zeigen ihren Beschreibungstext.
+            const bool hasStateEffect = !it->minusStates.empty() || !it->plusStates.empty(); // PAKET 20
+            const bool hasEffect = it->hpRecovery != 0 || it->mpRecovery != 0 || hasStateEffect;
+            const int sc = (int)it->scope;
+            if (it->consumable && hasEffect && sc >= 3) {
+                // PAKET 22: XP-Scope-Unterscheidung (Zielwahl / Gruppe / tot)
+                if (sc == 5)           OpenItemTargetMenu(it->id, true);
+                else if (sc == 4 || sc == 6) UseMenuItemOnGroup(it->id, sc == 6);
+                else                   OpenItemTargetMenu(it->id, false);
+            } else if (!it->description.empty()) {
+                ShowMessage(it->description);
+            }
+        });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::OpenItemTargetMenu(int itemId, bool deadOnly) {
+    const auto* it = Database::Get().GetItem(itemId);
+    if (!it) { OpenItemsMenu(); return; }
+
+    // PAKET 22: Ziel-Liste je nach Scope — Lebende ODER Gefallene
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> memberIdx;
+    auto& members = Game::Get().Party().Members();
+    for (size_t i = 0; i < members.size(); ++i) {
+        const auto& a = members[i];
+        const bool dead = a.hp <= 0;
+        if (dead != deadOnly) continue;
+        items.push_back({a.name + (deadOnly ? "   GEFALLEN"
+                         : "   HP " + std::to_string(a.hp) +
+                           " | MP " + std::to_string(a.mp)), true});
+        memberIdx.push_back((int)i);
+    }
+    if (items.empty())
+        items.push_back({deadOnly ? "(niemand gefallen)" : "(kein Gruppenmitglied)", false});
+
+    mMenu.Show(it->name + (deadOnly ? ": Wen wiederbeleben?" : " benutzen: Ziel wählen"),
+        items, [this, itemId, deadOnly, memberIdx](int idx) {
+            if (idx >= 0 && idx < (int)memberIdx.size())
+                UseMenuItemOnMember(itemId, memberIdx[(size_t)idx], deadOnly);
+            OpenItemsMenu(); // zurueck zur Liste (Anzahl wird aktualisiert)
+        });
+    mMenu.onCancel = [this]() { OpenItemsMenu(); };
+}
+
+// PAKET 22: Item im Menue auf EIN Mitglied anwenden (Heilung, Zustaende
+// oder Wiederbelebung — XP: Genesung gilt bei Toten als Prozent der max. HP)
+void GameUI::UseMenuItemOnMember(int itemId, int targetIndex, bool revive) {
+    const auto* it2 = Database::Get().GetItem(itemId);
+    auto& party = Game::Get().Party();
+    if (!it2 || targetIndex < 0 || targetIndex >= (int)party.Members().size()) return;
+    auto& a = party.Members()[(size_t)targetIndex];
+    if (revive) {
+        const int amt = std::min(std::max(1, it2->hpRecovery * a.MaxHp() / 100), a.MaxHp());
+        a.hp = amt;
+        party.GainItem(itemId, -1);
+        EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+        ShowMessage(a.name + " wurde wiederbelebt (+" + std::to_string(amt) + " HP)!");
+        return;
+    }
+    // Heil-Obergrenzen aus den Datenbank-Werten (initialStats + Kurve)
+    a.hp = std::min(a.hp + it2->hpRecovery, a.MaxHp());
+    a.mp = std::min(a.mp + it2->mpRecovery, a.MaxMp());
+    // PAKET 20/22: XP-Zustands-Effekte auch im Menue (Antidot-Art)
+    std::string stateMsg;
+    ApplyMenuStateSets(a, it2->plusStates, it2->minusStates, stateMsg);
+    party.GainItem(itemId, -1);
+    EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+    std::string msg = a.name + " erholt sich: +" + std::to_string(it2->hpRecovery) +
+                      " HP, +" + std::to_string(it2->mpRecovery) + " MP";
+    if (it2->hpRecovery <= 0 && it2->mpRecovery <= 0)
+        msg = a.name + " benutzt " + it2->name + ".";
+    ShowMessage(msg + stateMsg);
+}
+
+// PAKET 22: Item im Menue auf die ganze Gruppe (XP scope 4 = alle
+// Lebenden) bzw. auf alle Gefallenen (scope 6 = Massenwiederbelebung)
+void GameUI::UseMenuItemOnGroup(int itemId, bool deadOnly) {
+    const auto* it2 = Database::Get().GetItem(itemId);
+    auto& party = Game::Get().Party();
+    if (!it2) { OpenItemsMenu(); return; }
+    std::string msg, stateMsg;
+    bool any = false;
+    for (auto& a : party.Members()) {
+        if ((a.hp <= 0) != deadOnly) continue;
+        if (deadOnly) {
+            const int amt = std::min(std::max(1, it2->hpRecovery * a.MaxHp() / 100), a.MaxHp());
+            a.hp = amt;
+            msg += (msg.empty() ? "" : "\n") + a.name + " wurde wiederbelebt (+" +
+                   std::to_string(amt) + " HP)!";
+        } else {
+            a.hp = std::min(a.hp + it2->hpRecovery, a.MaxHp());
+            a.mp = std::min(a.mp + it2->mpRecovery, a.MaxMp());
+            msg += (msg.empty() ? "" : "\n") + a.name + " +" +
+                   std::to_string(it2->hpRecovery) + " HP";
+        }
+        ApplyMenuStateSets(a, it2->plusStates, it2->minusStates, stateMsg);
+        any = true;
+    }
+    if (!any) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        ShowMessage(deadOnly ? "Niemand ist gefallen." : "Kein passendes Ziel vorhanden.");
+    } else {
+        party.GainItem(itemId, -1);
+        EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+        ShowMessage(msg + stateMsg);
+    }
+    OpenItemsMenu();
+}
+
+void GameUI::OpenStatusMenu() {
+    std::vector<MenuWindow::Entry> items;
+    const auto members = Game::Get().Party().Members(); // Snapshot
+    for (const auto& a : members)
+        items.push_back({a.name + "   Lv " + std::to_string(a.level), true});
+    if (items.empty()) items.push_back({"(kein Gruppenmitglied)", false});
+
+    mMenu.Show("Status", items, [this, members](int idx) {
+        if (idx < 0 || idx >= (int)members.size()) return;
+        const auto& a = members[(size_t)idx];
+        ShowMessage(a.name + "  –  Level " + std::to_string(a.level) +
+                    "\nHP " + std::to_string(a.hp) + " / " + std::to_string(a.MaxHp()) +
+                    " | MP " + std::to_string(a.mp) + " / " + std::to_string(a.MaxMp()) +
+                    "\nEXP " + std::to_string(a.exp));
+    });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+// ============================================================================
+// Fertigkeiten (XP: Heil-Skills aus dem Menue benutzbar, kostet MP)
+// ============================================================================
+void GameUI::OpenSkillsMenu() {
+    auto& party = Game::Get().Party();
+    if (party.Members().empty()) {
+        ShowMessage("Keine Gruppenmitglieder.");
+        OpenGameMenu();
+        return;
+    }
+    std::vector<MenuWindow::Entry> mem;
+    for (const auto& a : party.Members())
+        mem.push_back({a.name + "   MP " + std::to_string(a.mp) +
+                       " / " + std::to_string(a.MaxMp()), true});
+    mMenu.Show("Fertigkeiten: Mitglied wählen", mem,
+        [this](int mi) { OpenSkillListMenu(mi); });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::OpenSkillListMenu(int memberIndex) {
+    auto& party = Game::Get().Party();
+    if (memberIndex < 0 || memberIndex >= (int)party.Members().size()) {
+        OpenSkillsMenu();
+        return;
+    }
+    const auto& actor = party.Members()[(size_t)memberIndex];
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> skillIds;
+    for (int sid : actor.skills) {
+        const auto* sk = Database::Get().GetSkill(sid);
+        const std::string name = sk ? sk->name : ("Fertigkeit #" + std::to_string(sid));
+        const int cost = sk ? sk->mpCost : 0;
+        // Aus dem Menue benutzbar (XP Game_Actor#skill_can_use?): eigene
+        // Seite zielend, wirksam (Staerke oder Zustands-Sets, PAKET 21),
+        // Anlass 0=immer oder 2=nur Menue, MP vorhanden.
+        const bool menuOk = sk && sk->scope >= 3 &&
+                            sk->occasion != 1 && sk->occasion != 3 &&
+                            (sk->power > 0 || !sk->plusStates.empty() ||
+                             !sk->minusStates.empty());
+        items.push_back({name + "   " + std::to_string(cost) + " MP",
+                         menuOk && actor.mp >= cost});
+        skillIds.push_back(sid);
+    }
+    if (items.empty()) items.push_back({"(keine Fertigkeiten)", false});
+
+    mMenu.Show(actor.name + ": Fertigkeiten   (MP " + std::to_string(actor.mp) +
+               " / " + std::to_string(actor.MaxMp()) + ")", items,
+        [this, memberIndex, skillIds](int idx) {
+            if (idx < 0 || idx >= (int)skillIds.size()) return;
+            const int sid = skillIds[(size_t)idx];
+            const auto* sk = Database::Get().GetSkill(sid);
+            const int sc = sk ? sk->scope : 3;
+            // PAKET 22: XP-Scope-Unterscheidung (Zielwahl/Gruppe/tot/Anwender)
+            if (sc == 5)                OpenSkillTargetMenu(memberIndex, sid, true);
+            else if (sc == 4 || sc == 6) UseMenuSkillOnGroup(memberIndex, sid, sc == 6);
+            else if (sc == 7)           UseMenuSkillOnMember(memberIndex, sid, memberIndex, false);
+            else                        OpenSkillTargetMenu(memberIndex, sid, false);
+        });
+    mMenu.onCancel = [this]() { OpenSkillsMenu(); };
+}
+
+void GameUI::OpenSkillTargetMenu(int memberIndex, int skillId, bool deadOnly) {
+    const auto* sk = Database::Get().GetSkill(skillId);
+    if (!sk) { OpenSkillsMenu(); return; }
+    // PAKET 22: Ziel-Liste je nach Scope — Lebende ODER Gefallene
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> memberIdx;
+    auto& members = Game::Get().Party().Members();
+    for (size_t i = 0; i < members.size(); ++i) {
+        const auto& a = members[i];
+        const bool dead = a.hp <= 0;
+        if (dead != deadOnly) continue;
+        items.push_back({a.name + (deadOnly ? "   GEFALLEN"
+                         : "   HP " + std::to_string(a.hp) +
+                           " / " + std::to_string(a.MaxHp())), true});
+        memberIdx.push_back((int)i);
+    }
+    if (items.empty())
+        items.push_back({deadOnly ? "(niemand gefallen)" : "(kein Gruppenmitglied)", false});
+
+    mMenu.Show(sk->name + (deadOnly ? ": Wen wiederbeleben?" : ": Ziel wählen"), items,
+        [this, memberIndex, skillId, deadOnly, memberIdx](int ti) {
+            if (ti >= 0 && ti < (int)memberIdx.size())
+                UseMenuSkillOnMember(memberIndex, skillId, memberIdx[(size_t)ti], deadOnly);
+            OpenSkillListMenu(memberIndex);
+        });
+    mMenu.onCancel = [this, memberIndex]() { OpenSkillListMenu(memberIndex); };
+}
+
+// PAKET 22: Skill im Menue auf EIN Mitglied anwenden (Heilung, Zustaende
+// oder Wiederbelebung — XP: power gilt bei Toten als Prozent der max. HP)
+void GameUI::UseMenuSkillOnMember(int memberIndex, int skillId, int targetIndex, bool revive) {
+    const auto* sk2 = Database::Get().GetSkill(skillId);
+    auto& party = Game::Get().Party();
+    if (!sk2 || memberIndex < 0 || memberIndex >= (int)party.Members().size() ||
+        targetIndex < 0 || targetIndex >= (int)party.Members().size()) return;
+    auto& caster = party.Members()[(size_t)memberIndex];
+    auto& target = party.Members()[(size_t)targetIndex];
+    if (caster.mp < sk2->mpCost) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        return;
+    }
+    caster.mp -= sk2->mpCost;
+    EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+    std::string msg;
+    if (revive) {
+        const int amt = std::min(std::max(1, sk2->power * target.MaxHp() / 100), target.MaxHp());
+        target.hp = amt;
+        msg = target.name + " wurde wiederbelebt (+" + std::to_string(amt) + " HP)!";
+    } else {
+        target.hp = std::min(target.hp + sk2->power, target.MaxHp());
+        if (sk2->power > 0)
+            msg = target.name + " erholt sich um " + std::to_string(sk2->power) + " HP.";
+        else
+            msg = caster.name + " setzt " + sk2->name + " bei " + target.name + " ein.";
+    }
+    // PAKET 21/22: XP minus/plus_state_set wirkt auch aus dem Menue
+    std::string stateMsg;
+    ApplyMenuStateSets(target, sk2->plusStates, sk2->minusStates, stateMsg);
+    ShowMessage(msg + stateMsg + "  (-" + std::to_string(sk2->mpCost) + " MP)");
+}
+
+// PAKET 22: Skill im Menue auf die ganze Gruppe (XP scope 4 = alle
+// Lebenden) bzw. alle Gefallenen (scope 6 = Massenwiederbelebung)
+void GameUI::UseMenuSkillOnGroup(int memberIndex, int skillId, bool deadOnly) {
+    const auto* sk2 = Database::Get().GetSkill(skillId);
+    auto& party = Game::Get().Party();
+    if (!sk2 || memberIndex < 0 || memberIndex >= (int)party.Members().size()) return;
+    auto& caster = party.Members()[(size_t)memberIndex];
+    if (caster.mp < sk2->mpCost) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        return;
+    }
+    std::string msg, stateMsg;
+    bool any = false;
+    for (auto& a : party.Members()) {
+        if ((a.hp <= 0) != deadOnly) continue;
+        if (deadOnly) {
+            const int amt = std::min(std::max(1, sk2->power * a.MaxHp() / 100), a.MaxHp());
+            a.hp = amt;
+            msg += (msg.empty() ? "" : "\n") + a.name + " wurde wiederbelebt (+" +
+                   std::to_string(amt) + " HP)!";
+        } else {
+            a.hp = std::min(a.hp + sk2->power, a.MaxHp());
+            if (sk2->power > 0)
+                msg += (msg.empty() ? "" : "\n") + a.name + ": +" +
+                       std::to_string(sk2->power) + " HP";
+        }
+        ApplyMenuStateSets(a, sk2->plusStates, sk2->minusStates, stateMsg);
+        any = true;
+    }
+    if (!any) {
+        EventSystem_PlayAudio(Database::Get().System().buzzerSe, 3, false);
+        ShowMessage(deadOnly ? "Niemand ist gefallen." : "Kein passendes Ziel vorhanden.");
+    } else {
+        caster.mp -= sk2->mpCost;
+        EventSystem_PlayAudio(Database::Get().System().decisionSe, 3, false);
+        const std::string head = msg.empty() ? (caster.name + " setzt " + sk2->name + " ein.") : msg;
+        ShowMessage(head + stateMsg + "  (-" + std::to_string(sk2->mpCost) + " MP)");
+    }
+    OpenSkillListMenu(memberIndex);
+}
+
+// ============================================================================
+// Ausruestung (XP: Waffe + Schild/Helm/Koerper/Accessoire wechseln)
+// ============================================================================
+void GameUI::OpenEquipMenu() {
+    auto& party = Game::Get().Party();
+    if (party.Members().empty()) {
+        ShowMessage("Keine Gruppenmitglieder.");
+        OpenGameMenu();
+        return;
+    }
+    std::vector<MenuWindow::Entry> mem;
+    for (const auto& a : party.Members()) mem.push_back({a.name, true});
+    mMenu.Show("Ausrüstung: Mitglied wählen", mem,
+        [this](int mi) { OpenEquipSlotMenu(mi, -1); });
+    mMenu.onCancel = [this]() { OpenGameMenu(); };
+}
+
+void GameUI::OpenEquipSlotMenu(int memberIndex, int slotKind) {
+    auto& party = Game::Get().Party();
+    if (memberIndex < 0 || memberIndex >= (int)party.Members().size()) {
+        OpenEquipMenu();
+        return;
+    }
+    auto& actor = party.Members()[(size_t)memberIndex];
+
+    if (slotKind == -1) {
+        // Uebersicht: Waffe + Ruestungs-Slots (Schild/Helm/Koerper/Accessoire)
+        std::vector<MenuWindow::Entry> items;
+        const auto* w = FindWeaponDef(actor.weaponId);
+        items.push_back({std::string("Waffe: ") + (w ? w->name : "—"), true});
+        for (int t = 0; t < 4; ++t) {
+            std::string nm = "—";
+            for (int aid : actor.armors) {
+                if (const auto* ad = FindArmorDef(aid);
+                    ad && (int)ad->armorType == t) { nm = ad->name; break; }
+            }
+            items.push_back({std::string(kArmorSlotNames[t]) + ": " + nm, true});
+        }
+        mMenu.Show(actor.name + ": Ausrüstung", items, [this, memberIndex](int idx) {
+            if (idx == 0) OpenEquipSlotMenu(memberIndex, -2); // Waffe
+            else OpenEquipSlotMenu(memberIndex, idx - 1);      // 0..3 Ruestungstyp
+        });
+        mMenu.onCancel = [this]() { OpenEquipMenu(); };
+        return;
+    }
+
+    // Slot-Auswahl: Inventar-Kandidaten + „(abnehmen)"
+    const bool isWeapon = (slotKind == -2);
+    int curId = 0;
+    if (isWeapon) {
+        curId = actor.weaponId;
+    } else {
+        for (int aid : actor.armors) {
+            if (const auto* ad = FindArmorDef(aid);
+                ad && (int)ad->armorType == slotKind) { curId = aid; break; }
+        }
+    }
+
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> cand; // Index -> Gegenstands-ID (0 = abnehmen)
+    if (curId > 0) { items.push_back({"(abnehmen)", true}); cand.push_back(0); }
+
+    // PAKET 23: XP-Ausruestungs-Set der Klasse (leer = alles erlaubt) —
+    // unerlaubte Kandidaten bleiben sichtbar, aber deaktiviert.
+    const ClassData* cls = nullptr;
+    if (const auto* ad0 = Database::Get().GetActor(actor.actorId))
+        cls = Database::Get().GetClass(ad0->className);
+
+    if (isWeapon) {
+        std::vector<std::pair<int,int>> bag(
+            party.Weapons().begin(), party.Weapons().end());
+        std::sort(bag.begin(), bag.end());
+        for (const auto& kv : bag) {
+            const auto* wd = FindWeaponDef(kv.first);
+            if (!wd) continue;
+            const bool clsOk = !cls || cls->weaponSet.empty() ||
+                std::find(cls->weaponSet.begin(), cls->weaponSet.end(),
+                          kv.first) != cls->weaponSet.end();
+            std::string label = wd->name + "   ATK " + std::to_string(wd->atk);
+            if (kv.first == curId) { label += "   [angelegt]"; }
+            if (!clsOk) label += "   [falsche Klasse]";
+            items.push_back({label, clsOk && kv.first != curId});
+            cand.push_back(kv.first);
+        }
+        if (items.empty()) items.push_back({"(keine Waffen im Inventar)", false});
+    } else {
+        std::vector<std::pair<int,int>> bag(
+            party.Armors().begin(), party.Armors().end());
+        std::sort(bag.begin(), bag.end());
+        for (const auto& kv : bag) {
+            const auto* ad = FindArmorDef(kv.first);
+            if (!ad || (int)ad->armorType != slotKind) continue;
+            const bool clsOk = !cls || cls->armorSet.empty() ||
+                std::find(cls->armorSet.begin(), cls->armorSet.end(),
+                          kv.first) != cls->armorSet.end();
+            std::string label = ad->name + "   ABW " + std::to_string(ad->def) +
+                                " / GABW " + std::to_string(ad->mdf);
+            if (kv.first == curId) { label += "   [angelegt]"; }
+            if (!clsOk) label += "   [falsche Klasse]";
+            items.push_back({label, clsOk && kv.first != curId});
+            cand.push_back(kv.first);
+        }
+        if (items.empty())
+            items.push_back({std::string("(") + kArmorSlotNames[slotKind] +
+                             " im Inventar leer)", false});
+    }
+
+    const std::string what = isWeapon ? "Waffe" : kArmorSlotNames[slotKind];
+    mMenu.Show(actor.name + ": " + what + " wählen", items,
+        [this, memberIndex, slotKind, isWeapon, cand](int idx) {
+            if (idx < 0 || idx >= (int)cand.size()) {
+                OpenEquipSlotMenu(memberIndex, -1);
+                return;
+            }
+            auto& party2 = Game::Get().Party();
+            auto& a = party2.Members()[(size_t)memberIndex];
+            const int newId = cand[(size_t)idx];
+            if (isWeapon) {
+                if (a.weaponId > 0) party2.GainWeapon(a.weaponId, +1);
+                if (newId > 0) party2.GainWeapon(newId, -1);
+                a.weaponId = newId;
+            } else {
+                // vorhandene Ruestung dieses Typs ablegen
+                for (size_t i = 0; i < a.armors.size(); ++i) {
+                    if (const auto* ad = FindArmorDef(a.armors[i]);
+                        ad && (int)ad->armorType == slotKind) {
+                        party2.GainArmor(a.armors[i], +1);
+                        a.armors.erase(a.armors.begin() + (ptrdiff_t)i);
+                        break;
+                    }
+                }
+                if (newId > 0) {
+                    party2.GainArmor(newId, -1);
+                    a.armors.push_back(newId);
+                }
+            }
+            // PAKET 23: Ruestungs-Passivzustaende (XP auto_state) nachziehen
+            a.SyncArmorStates();
+            EventSystem_PlayAudio(Database::Get().System().equipSe, 3, false);
+            OpenEquipSlotMenu(memberIndex, -1);
+        });
+    mMenu.onCancel = [this, memberIndex]() { OpenEquipSlotMenu(memberIndex, -1); };
+}
+
+void GameUI::ShowSaveScreen(bool saveMode, std::function<void()> onClosed) {
+    // XP: "Speichern verboten" (Event-Befehl 134) respektieren
+    if (saveMode && !Game::Get().System().HasSaveAccess()) {
+        ShowMessage("Speichern ist zur Zeit nicht möglich.");
+        if (onClosed) onClosed();
+        return;
+    }
+    // Abschluss genau einmal melden (Pick ODER Abbruch)
+    auto closed = std::make_shared<std::function<void()>>(std::move(onClosed));
+    auto finish = [this, closed]() {
+        mMenu.Hide();
+        if (*closed) {
+            auto cb = std::move(*closed);
+            *closed = nullptr;
+            cb();
+        }
+    };
+
+    std::vector<MenuWindow::Entry> items;
+    for (int slot = 1; slot <= 4; ++slot) {
+        Game::SaveSlotInfo info;
+        Game::Get().GetSaveSlotInfo(slot, info);
+        std::string line = "Datei " + std::to_string(slot) + ":  ";
+        if (info.exists) {
+            line += info.mapName;
+            if (!info.actorName.empty())
+                line += "  –  " + info.actorName + " Lv " + std::to_string(info.actorLevel);
+            line += "   (" + std::to_string(info.gold) + " G, " +
+                    std::to_string(info.saveCount) + "x gespeichert)";
+        } else {
+            line += "— leer —";
+        }
+        items.push_back({line, saveMode || info.exists});
+    }
+
+    mMenu.Show(saveMode ? "Spielstand speichern" : "Spielstand laden", items,
+        [this, saveMode, finish](int idx) {
+            const int slot = idx + 1;
+            const bool ok = saveMode ? Game::Get().Save(slot) : Game::Get().Load(slot);
+            const auto& sys = Database::Get().System();
+            EventSystem_PlayAudio(ok ? (saveMode ? sys.saveSe : sys.loadSe)
+                                     : sys.buzzerSe, 3, false);
+            if (!ok)
+                ShowMessage(saveMode ? "Speichern fehlgeschlagen." : "Laden fehlgeschlagen.");
+            finish(); // XP: Bildschirm schliesst nach der Aktion
+        });
+    mMenu.onCancel = finish;
+}
+
+void GameUI::ShowShop(const std::vector<int>& itemIds, std::function<void()> onClosed) {
+    // Kompatibilitaets-Variante: nur Items -> ShopGood{Item, id}
+    std::vector<ShopGood> goods;
+    goods.reserve(itemIds.size());
+    for (int id : itemIds) goods.push_back({ShopGood::Kind::Item, id});
+    ShowShopGoods(goods, std::move(onClosed));
+}
+
+void GameUI::ShowShopGoods(const std::vector<ShopGood>& goods, std::function<void()> onClosed) {
+    mShopGoods = goods;
+    mShopOnClosed = std::move(onClosed);
+    mShopActive = true;
+
+    auto closeShop = [this]() {
+        mShopActive = false;
+        mMenu.Hide();
+        auto cb = std::move(mShopOnClosed);
+        mShopOnClosed = nullptr;
+        if (cb) cb();
+    };
+
+    // Ware aufloesen: Name/Preis je nach Art (Item/Waffe/Ruestung)
+    auto goodInfo = [](const ShopGood& g, std::string& name, int& price) -> bool {
+        switch (g.kind) {
+            case ShopGood::Kind::Item:
+                if (const auto* d = Database::Get().GetItem(g.id)) {
+                    name = d->name; price = d->price; return true;
+                }
+                break;
+            case ShopGood::Kind::Weapon:
+                if (const auto* d = FindWeaponDef(g.id)) {
+                    name = "[Waffe] " + d->name; price = d->price; return true;
+                }
+                break;
+            case ShopGood::Kind::Armor:
+                if (const auto* d = FindArmorDef(g.id)) {
+                    name = "[Rüstung] " + d->name; price = d->price; return true;
+                }
+                break;
+        }
+        name = "Ware #" + std::to_string(g.id); price = 0;
+        return false;
+    };
+
+    // 3 Phasen (Hauptauswahl / Kaufen / Verkaufen) als shared-Functions,
+    // damit sie sich gegenseitig und selbst wieder aufrufen koennen.
+    auto phaseMain = std::make_shared<std::function<void()>>();
+    auto phaseBuy = std::make_shared<std::function<void()>>();
+    auto phaseSell = std::make_shared<std::function<void()>>();
+
+    *phaseMain = [this, closeShop, phaseBuy, phaseSell]() {
+        std::vector<MenuWindow::Entry> items = {
+            {"Kaufen", !mShopGoods.empty()},
+            {"Verkaufen", true},
+            {"Abbrechen", true}};
+        mMenu.Show("Laden   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
+            items, [closeShop, phaseBuy, phaseSell](int idx) {
+                if (idx == 0) (*phaseBuy)();
+                else if (idx == 1) (*phaseSell)();
+                else closeShop();
+            });
+        mMenu.onCancel = closeShop;
+    };
+
+    *phaseBuy = [this, phaseMain, phaseBuy, goodInfo]() {
+        std::vector<MenuWindow::Entry> items;
+        for (const auto& g : mShopGoods) {
+            std::string name; int price = 0;
+            const bool ok = goodInfo(g, name, price);
+            items.push_back({name + "   –   " + std::to_string(price) + " G", ok});
+        }
+        if (items.empty()) items.push_back({"(leer)", false});
+        mMenu.Show("Kaufen   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
+            items, [this, phaseBuy, goodInfo](int idx) {
+                if (idx < 0 || idx >= (int)mShopGoods.size()) return;
+                const ShopGood& g = mShopGoods[(size_t)idx];
+                std::string name; int price = 0;
+                if (!goodInfo(g, name, price)) return;
+                auto& party = Game::Get().Party();
+                const auto& sys = Database::Get().System();
+                if (party.GetGold() >= price) {
+                    party.GainGold(-price);
+                    switch (g.kind) {
+                        case ShopGood::Kind::Item:   party.GainItem(g.id, 1); break;
+                        case ShopGood::Kind::Weapon: party.GainWeapon(g.id, 1); break;
+                        case ShopGood::Kind::Armor:  party.GainArmor(g.id, 1); break;
+                    }
+                    EventSystem_PlayAudio(sys.shopSe, 3, false);
+                } else {
+                    EventSystem_PlayAudio(sys.buzzerSe, 3, false);
+                }
+                (*phaseBuy)(); // Neuaufbau: Gold-Anzeige aktualisieren
+            });
+        mMenu.onCancel = [phaseMain]() { (*phaseMain)(); };
+    };
+
+    *phaseSell = [this, phaseMain, phaseSell, goodInfo]() {
+        // Alles Verkaeufliche: Items + Waffen + Ruestungen (mit Anzahl)
+        struct SellEntry { ShopGood good; int count; };
+        std::vector<SellEntry> bag;
+        for (const auto& kv : Game::Get().Party().Items())
+            if (kv.second > 0) bag.push_back({{ShopGood::Kind::Item, kv.first}, kv.second});
+        for (const auto& kv : Game::Get().Party().Weapons())
+            if (kv.second > 0) bag.push_back({{ShopGood::Kind::Weapon, kv.first}, kv.second});
+        for (const auto& kv : Game::Get().Party().Armors())
+            if (kv.second > 0) bag.push_back({{ShopGood::Kind::Armor, kv.first}, kv.second});
+        std::sort(bag.begin(), bag.end(), [](const SellEntry& a, const SellEntry& b) {
+            if (a.good.kind != b.good.kind) return a.good.kind < b.good.kind;
+            return a.good.id < b.good.id;
+        });
+        std::vector<MenuWindow::Entry> items;
+        for (const auto& e : bag) {
+            std::string name; int price = 0;
+            const bool ok = goodInfo(e.good, name, price);
+            const int sell = price / 2; // XP: Verkauf = halber Preis
+            items.push_back({name + " x " + std::to_string(e.count) +
+                "   –   " + std::to_string(sell) + " G", ok && sell > 0});
+        }
+        if (items.empty()) items.push_back({"(leer)", false});
+        mMenu.Show("Verkaufen   (Gold: " + std::to_string(Game::Get().Party().GetGold()) + " G)",
+            items, [this, bag, phaseSell, goodInfo](int idx) {
+                if (idx < 0 || idx >= (int)bag.size()) return;
+                const ShopGood& g = bag[(size_t)idx].good;
+                std::string name; int price = 0;
+                if (!goodInfo(g, name, price) || price <= 0) return;
+                auto& party = Game::Get().Party();
+                switch (g.kind) {
+                    case ShopGood::Kind::Item:   party.GainItem(g.id, -1); break;
+                    case ShopGood::Kind::Weapon: party.GainWeapon(g.id, -1); break;
+                    case ShopGood::Kind::Armor:  party.GainArmor(g.id, -1); break;
+                }
+                party.GainGold(price / 2);
+                EventSystem_PlayAudio(Database::Get().System().shopSe, 3, false);
+                (*phaseSell)(); // Neuaufbau (Anzahl/Gold)
+            });
+        mMenu.onCancel = [phaseMain]() { (*phaseMain)(); };
+    };
+
+    (*phaseMain)();
+}
+
+// ============================================================================
+// XP-Kampfmenue: Aktionswahl ueber MenuWindow (ersetzt die Zifferntasten 1-4)
+// Ablauf: Befehle -> (Skill/Item-Liste) -> Zielwahl. Esc geht einen Schritt
+// zurueck; das Befehlsmenue selbst ist - wie in XP - nicht abbrechbar.
+// ============================================================================
+bool GameUI::IsBattleMenuOpen() const { return mMenu.IsVisible(); }
+
+void GameUI::ConfirmBattleAction(int actorIndex, BattleActionType type, int id,
+                                 int targetIndex, bool targetIsActor) {
+    BattleAction act;
+    act.type = type;
+    act.subjectIndex = actorIndex;
+    act.skillId = (type == BattleActionType::Skill) ? id : 0;
+    act.itemId = (type == BattleActionType::Item) ? id : 0;
+    act.targetIndex = targetIndex;
+    act.targetIsActor = targetIsActor;
+    mMenu.onCancel = nullptr; // ab jetzt ist die Aktion entschieden
+    mMenu.Hide();
+    BattleSystem::Get().SetAction(act);
+}
+
+void GameUI::OpenBattleCommands() {
+    auto& bs = BattleSystem::Get();
+    if (bs.Actors().empty()) return;
+    int ai = bs.GetInputActorIndex();
+    if (ai < 0 || ai >= (int)bs.Actors().size()) ai = 0;
+    const Battler& actor = bs.Actors()[(size_t)ai];
+
+    // Fertigkeiten des zugehoerigen Party-Mitglieds (per actorId abgesichert)
+    bool hasSkills = false;
+    for (const auto& m : Game::Get().Party().Members())
+        if (m.actorId == actor.id) { hasSkills = !m.skills.empty(); break; }
+    // Im Kampf benutzbare Gegenstaende (Heil- oder Schadens-Items)?
+    bool hasItems = false;
+    for (const auto& kv : Game::Get().Party().Items()) {
+        if (kv.second <= 0) continue;
+        if (const auto* it = Database::Get().GetItem(kv.first))
+            if (it->hpRecovery != 0 || it->mpRecovery > 0) { hasItems = true; break; }
+    }
+
+    std::vector<MenuWindow::Entry> items;
+    items.push_back({"Angriff", true});
+    items.push_back({"Fertigkeit", hasSkills});
+    items.push_back({"Gegenstand", hasItems});
+    items.push_back({"Verteidigen", true});
+    items.push_back({"Flucht", bs.CanEscape()});
+
+    const std::string title = actor.name +
+        "   HP " + std::to_string(actor.hp) + " / " + std::to_string(actor.maxHp) +
+        "   MP " + std::to_string(actor.mp) + " / " + std::to_string(actor.maxMp);
+    mMenu.Show(title, items, [this, ai](int idx) {
+        switch (idx) {
+            case 0: { // Angriff -> Ziel (bei nur einem Gegner direkt)
+                int alive = 0, last = 0;
+                auto& bs2 = BattleSystem::Get();
+                for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                    if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(ai, BattleActionType::Attack, 0, last, false);
+                else
+                    OpenBattleTargetMenu(ai, 0, 0);
+                break;
+            }
+            case 1: OpenBattleSkillMenu(ai); break;
+            case 2: OpenBattleItemMenu(ai); break;
+            case 3: ConfirmBattleAction(ai, BattleActionType::Guard, 0, 0, false); break;
+            case 4: ConfirmBattleAction(ai, BattleActionType::Escape, 0, 0, false); break;
+            default: break;
+        }
+    }, false); // nicht abbrechbar - in XP waehlt jeder Kaempfer zwingend
+}
+
+void GameUI::OpenBattleSkillMenu(int actorIndex) {
+    auto& bs = BattleSystem::Get();
+    if (actorIndex < 0 || actorIndex >= (int)bs.Actors().size()) {
+        OpenBattleCommands();
+        return;
+    }
+    const Battler& battler = bs.Actors()[(size_t)actorIndex];
+    const GameActor* member = nullptr;
+    for (const auto& m : Game::Get().Party().Members())
+        if (m.actorId == battler.id) { member = &m; break; }
+
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> skillIds;
+    if (member) {
+        for (int sid : member->skills) {
+            const auto* sk = Database::Get().GetSkill(sid);
+            const std::string name = sk ? sk->name : ("Fertigkeit #" + std::to_string(sid));
+            const int cost = sk ? sk->mpCost : 0;
+            // PAKET 21: XP occasion — im Kampf nur Anlass 0=immer / 1=nur
+            // Kampf (Eintrag bleibt sichtbar, aber deaktiviert; XP).
+            const bool occOk = sk && sk->occasion != 2 && sk->occasion != 3;
+            items.push_back({name + "   " + std::to_string(cost) + " MP",
+                             occOk && battler.mp >= cost});
+            skillIds.push_back(sid);
+        }
+    }
+    if (items.empty()) items.push_back({"(keine Fertigkeiten)", false});
+
+    mMenu.Show(battler.name + ": Welche Fertigkeit?", items,
+        [this, actorIndex, skillIds](int idx) {
+            if (idx < 0 || idx >= (int)skillIds.size()) return;
+            const int sid = skillIds[(size_t)idx];
+            const auto* sk = Database::Get().GetSkill(sid);
+            const int scope = sk ? sk->scope : 1;
+            auto& bs2 = BattleSystem::Get();
+            // PAKET 22: vollstaendiges XP-Scope-Routing (0..7)
+            switch (scope) {
+                case 0: // Kein Ziel — direkt bestaetigen
+                case 2: // Alle Gegner
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, -1, false);
+                    break;
+                case 1: { // Ein Gegner (auto, wenn nur einer lebt)
+                    int alive = 0, last = 0;
+                    for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                        if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                    if (alive <= 1)
+                        ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, last, false);
+                    else
+                        OpenBattleTargetMenu(actorIndex, 1, sid);
+                    break;
+                }
+                case 3: { // Ein Verbuendeter (auto, wenn nur einer lebt)
+                    int alive = 0, last = 0;
+                    for (size_t i = 0; i < bs2.Actors().size(); ++i)
+                        if (!bs2.Actors()[i].isDead) { ++alive; last = (int)i; }
+                    if (alive <= 1)
+                        ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, last, true);
+                    else
+                        OpenBattleAllyMenu(actorIndex, 1, sid);
+                    break;
+                }
+                case 4: // Alle Verbuendeten
+                case 6: // Alle Verbuendeten (tot)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, -1, true);
+                    break;
+                case 5: // Ein Verbuendeter (tot) — Wiederbelebung
+                    OpenBattleAllyMenu(actorIndex, 1, sid, true);
+                    break;
+                case 7: // Anwender selbst
+                default:
+                    ConfirmBattleAction(actorIndex, BattleActionType::Skill, sid, actorIndex, true);
+                    break;
+            }
+        });
+    mMenu.onCancel = [this]() { OpenBattleCommands(); };
+}
+
+void GameUI::OpenBattleItemMenu(int actorIndex) {
+    // Im Kampf benutzbar: Items mit Wirkung (Heilung, Schaden ODER
+    // Zustands-Sets — PAKET 22; vorher fehlten zustands-basierte Items)
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> itemIds;
+    for (const auto& kv : Game::Get().Party().Items()) {
+        if (kv.second <= 0) continue;
+        const auto* it = Database::Get().GetItem(kv.first);
+        if (!it) continue;
+        const bool usable = (it->hpRecovery != 0 || it->mpRecovery > 0 ||
+                             !it->plusStates.empty() || !it->minusStates.empty());
+        items.push_back({it->name + "   x" + std::to_string(kv.second), usable});
+        itemIds.push_back(kv.first);
+    }
+    if (items.empty()) items.push_back({"(keine Gegenstände)", false});
+
+    mMenu.Show("Welchen Gegenstand?", items, [this, actorIndex, itemIds](int idx) {
+        if (idx < 0 || idx >= (int)itemIds.size()) return;
+        const int iid = itemIds[(size_t)idx];
+        const auto* it = Database::Get().GetItem(iid);
+        if (!it) return;
+        auto& bs2 = BattleSystem::Get();
+        // PAKET 22: XP-Scope-Routing — Kompatibilitaet wie im BattleSystem:
+        // Schadens-Items ohne gesetzten Scope wirken auf Gegner.
+        int scope = (int)it->scope;
+        if (it->hpRecovery < 0 && scope >= 3) scope = 1;
+        switch (scope) {
+            case 0: // Kein Ziel
+            case 2: // Alle Gegner
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, -1, false);
+                break;
+            case 1: { // Ein Gegner
+                int alive = 0, last = 0;
+                for (size_t i = 0; i < bs2.Enemies().size(); ++i)
+                    if (!bs2.Enemies()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, false);
+                else
+                    OpenBattleTargetMenu(actorIndex, 2, iid);
+                break;
+            }
+            case 3: { // Ein Verbuendeter
+                int alive = 0, last = 0;
+                for (size_t i = 0; i < bs2.Actors().size(); ++i)
+                    if (!bs2.Actors()[i].isDead) { ++alive; last = (int)i; }
+                if (alive <= 1)
+                    ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, last, true);
+                else
+                    OpenBattleAllyMenu(actorIndex, 2, iid);
+                break;
+            }
+            case 4: // Alle Verbuendeten
+            case 6: // Alle Verbuendeten (tot)
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, -1, true);
+                break;
+            case 5: // Ein Verbuendeter (tot) — Wiederbelebung
+                OpenBattleAllyMenu(actorIndex, 2, iid, true);
+                break;
+            case 7: // Anwender selbst
+            default:
+                ConfirmBattleAction(actorIndex, BattleActionType::Item, iid, actorIndex, true);
+                break;
+        }
+    });
+    mMenu.onCancel = [this]() { OpenBattleCommands(); };
+}
+
+void GameUI::OpenBattleTargetMenu(int actorIndex, int mode, int id) {
+    // Gegner-Zielwahl (mode: 0=Angriff, 1=Skill, 2=Item)
+    auto& bs = BattleSystem::Get();
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> targets;
+    for (size_t i = 0; i < bs.Enemies().size(); ++i) {
+        const auto& e = bs.Enemies()[i];
+        items.push_back({e.name + "   HP " + std::to_string(e.hp) + " / " +
+                         std::to_string(e.maxHp), !e.isDead});
+        targets.push_back((int)i);
+    }
+    if (items.empty()) items.push_back({"(keine Gegner)", false});
+
+    mMenu.Show("Welchen Gegner?", items, [this, actorIndex, mode, id, targets](int idx) {
+        if (idx < 0 || idx >= (int)targets.size()) return;
+        const BattleActionType t = (mode == 1) ? BattleActionType::Skill
+                                 : (mode == 2) ? BattleActionType::Item
+                                               : BattleActionType::Attack;
+        ConfirmBattleAction(actorIndex, t, id, targets[(size_t)idx], false);
+    });
+    mMenu.onCancel = [this, actorIndex, mode]() {
+        if (mode == 1) OpenBattleSkillMenu(actorIndex);
+        else if (mode == 2) OpenBattleItemMenu(actorIndex);
+        else OpenBattleCommands();
+    };
+}
+
+void GameUI::OpenBattleAllyMenu(int actorIndex, int mode, int id, bool deadOnly) {
+    // Verbuendeten-Zielwahl fuer Heilungen (mode: 1=Skill, 2=Item);
+    // deadOnly=true listet nur Gefallene (XP-Scope „Verbuendeter (tot)")
+    auto& bs = BattleSystem::Get();
+    std::vector<MenuWindow::Entry> items;
+    std::vector<int> targets;
+    for (size_t i = 0; i < bs.Actors().size(); ++i) {
+        const auto& a = bs.Actors()[i];
+        if (a.isDead != deadOnly) continue; // PAKET 22: Lebende ODER Gefallene
+        items.push_back({a.name + (deadOnly ? "   GEFALLEN"
+                         : "   HP " + std::to_string(a.hp) + " / " +
+                           std::to_string(a.maxHp)), true});
+        targets.push_back((int)i);
+    }
+    if (items.empty())
+        items.push_back({deadOnly ? "(niemand gefallen)" : "(keine Mitglieder)", false});
+
+    mMenu.Show(deadOnly ? "Wen wiederbeleben?" : "Auf wen?", items,
+        [this, actorIndex, mode, id, targets](int idx) {
+        if (idx < 0 || idx >= (int)targets.size()) return;
+        const BattleActionType t = (mode == 1) ? BattleActionType::Skill
+                                               : BattleActionType::Item;
+        ConfirmBattleAction(actorIndex, t, id, targets[(size_t)idx], true);
+    });
+    mMenu.onCancel = [this, actorIndex, mode]() {
+        if (mode == 1) OpenBattleSkillMenu(actorIndex);
+        else OpenBattleItemMenu(actorIndex);
+    };
+}
+
+void GameUI::UpdateModalInput(Input& input) {
+    // --- Menue (Spielmenue/Speicherbildschirm/Laden) hat oberste Prioritaet ---
+    if (mMenu.IsVisible()) {
+        if (input.IsKeyPressed(Key::Up) || input.IsKeyPressed(Key::W)) mMenu.MoveCursor(-1);
+        if (input.IsKeyPressed(Key::Down) || input.IsKeyPressed(Key::S)) mMenu.MoveCursor(+1);
+        if (input.IsKeyPressed(Key::Enter) || input.IsKeyPressed(Key::E) || input.IsKeyPressed(Key::Space))
+            mMenu.Confirm();
+        if (input.IsKeyPressed(Key::Escape)) mMenu.Cancel();
+        return;
+    }
+
+    // --- Choices haben oberste Prioritaet ---
+    if (mMessage.IsVisible() && mMessage.HasChoices() && mMessage.IsTextComplete()) {
+        const int count = mMessage.GetChoiceCount();
+        if (count > 0) {
+            int sel = mMessage.GetSelectedChoice();
+            if (input.IsKeyPressed(Key::Up) || input.IsKeyPressed(Key::W))
+                mMessage.SetSelectedChoice((sel + count - 1) % count);
+            if (input.IsKeyPressed(Key::Down) || input.IsKeyPressed(Key::S))
+                mMessage.SetSelectedChoice((sel + 1) % count);
+            if (input.IsKeyPressed(Key::Enter) || input.IsKeyPressed(Key::E) || input.IsKeyPressed(Key::Space))
+                mMessage.ConfirmChoice(); // aktuelle Auswahl
+            if (input.IsKeyPressed(Key::Escape) && mChoiceCancelAllowed)
+                mMessage.ConfirmChoice(-1); // Abbruch (nur wenn erlaubt, XP)
+        }
+        return;
+    }
+
+    // --- Zahleneingabe ---
+    if (mNumberActive) {
+        auto digitAt = [&](int pos) {
+            int div = 1;
+            for (int i = 0; i < pos; ++i) div *= 10;
+            return (mNumberValue / div) % 10;
+        };
+        auto setDigit = [&](int pos, int d) {
+            int div = 1;
+            for (int i = 0; i < pos; ++i) div *= 10;
+            mNumberValue += (d - digitAt(pos)) * div;
+        };
+        if (input.IsKeyPressed(Key::Left))
+            mNumberCursor = (mNumberCursor + 1) % mNumberDigits; // XP: Cursor wandert in Zehner-Richtung
+        if (input.IsKeyPressed(Key::Right))
+            mNumberCursor = (mNumberCursor + mNumberDigits - 1) % mNumberDigits;
+        if (input.IsKeyPressed(Key::Up))
+            setDigit(mNumberCursor, (digitAt(mNumberCursor) + 1) % 10);
+        if (input.IsKeyPressed(Key::Down))
+            setDigit(mNumberCursor, (digitAt(mNumberCursor) + 9) % 10);
+        // Direkte Zifferneingabe 0-9
+        for (int k = 0; k <= 9; ++k) {
+            Key key = static_cast<Key>(static_cast<int>(Key::Num0) + k);
+            if (input.IsKeyPressed(key)) {
+                setDigit(mNumberCursor, k);
+                mNumberCursor = (mNumberCursor + mNumberDigits - 1) % mNumberDigits; // weiter nach links->rechts
+            }
+        }
+        if (input.IsKeyPressed(Key::Enter) || input.IsKeyPressed(Key::E) || input.IsKeyPressed(Key::Space)) {
+            mNumberActive = false;
+            auto cb = std::move(mNumberDone);
+            if (cb) cb(mNumberValue);
+        }
+        return;
+    }
+
+    // --- Namenseingabe ---
+    if (mNameActive) {
+        const bool shift = input.IsKeyDown(Key::LShift);
+        // Buchstaben A-Z (inkl. deutscher Umlaute ueber Compose ist nicht moeglich;
+        // Umlaute sind per Alt+U/O/A vorgesehen)
+        for (int k = 0; k < 26; ++k) {
+            Key key = static_cast<Key>(static_cast<int>(Key::A) + k);
+            if (input.IsKeyPressed(key) && (int)mNameText.size() < mNameMaxChars) {
+                char c = (char)('A' + k);
+                if (!shift) c = (char)std::tolower(c);
+                mNameText.push_back(c);
+            }
+        }
+        // Ziffern
+        for (int k = 0; k <= 9; ++k) {
+            Key key = static_cast<Key>(static_cast<int>(Key::Num0) + k);
+            if (input.IsKeyPressed(key) && (int)mNameText.size() < mNameMaxChars)
+                mNameText.push_back((char)('0' + k));
+        }
+        // Umlaute (Alt+U = ue etc.): UTF-8 zwei Bytes
+        if (input.IsKeyDown(Key::LAlt) && (int)mNameText.size() + 1 < mNameMaxChars) {
+            if (input.IsKeyPressed(Key::A)) mNameText += "\xC3\x84"; // Ae
+            if (input.IsKeyPressed(Key::O)) mNameText += "\xC3\x96"; // Oe
+            if (input.IsKeyPressed(Key::U)) mNameText += "\xC3\x9C"; // Ue
+        }
+        if (input.IsKeyPressed(Key::Space) && (int)mNameText.size() < mNameMaxChars)
+            mNameText.push_back(' ');
+        if (input.IsKeyPressed(Key::Backspace)) {
+            if (!mNameText.empty()) {
+                // UTF-8-sicher: ggf. Fortsetzungsbytes (0x80..0xBF) mitentfernen
+                do { mNameText.pop_back(); }
+                while (!mNameText.empty() && ((unsigned char)mNameText.back() & 0xC0) == 0x80);
+            }
+        }
+        if (input.IsKeyPressed(Key::Enter)) {
+            mNameActive = false;
+            if (mNameText.empty()) mNameText = mNameInitial;
+            auto cb = std::move(mNameDone);
+            if (cb) cb(mNameText);
+        }
+        if (input.IsKeyPressed(Key::Escape)) {
+            mNameActive = false;
+            auto cb = std::move(mNameDone);
+            if (cb) cb(mNameInitial); // Abbruch = Name bleibt
+        }
+        return;
+    }
+}
+
+// PAKET 10: Modale Fenster im ImGui-Overlay. Prioritaet wie in
+// UpdateModalInput: Menue zuerst, dann Zahleneingabe, dann Namenseingabe;
+// Choices zeichnet MessageWindow::Draw direkt im Nachrichtenfenster.
+void GameUI::DrawModalWindows() {
+    if (mMenu.IsVisible()) { mMenu.Draw(); return; }
+    if (mNumberActive)     { DrawNumberInput(); return; }
+    if (mNameActive)       { DrawNameInput(); return; }
+}
+
+void GameUI::DrawNumberInput() {
+    if (!mNumberActive) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = io.DisplaySize.x * 0.32f;
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - io.DisplaySize.x * 0.04f,
+                                   io.DisplaySize.y * 0.12f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f)); // Hoehe nach Inhalt
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##NumberInput", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s",
+        mNumberPrompt.empty() ? "Zahleneingabe" : mNumberPrompt.c_str());
+    ImGui::Separator();
+    // Ziffernzeile, aktuelle Stelle in Klammern (links = hoechste Stelle, XP)
+    std::string line;
+    for (int pos = mNumberDigits - 1; pos >= 0; --pos) {
+        int div = 1;
+        for (int i = 0; i < pos; ++i) div *= 10;
+        const int d = (mNumberValue / div) % 10;
+        if (!line.empty()) line += " ";
+        line += (pos == mNumberCursor) ? "(" + std::to_string(d) + ")"
+                                       : std::to_string(d);
+    }
+    ImGui::Text("%s", line.c_str());
+    ImGui::TextDisabled("links/rechts Stelle | hoch/runter Ziffer | 0-9 | Enter");
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
+}
+
+void GameUI::DrawNameInput() {
+    if (!mNameActive) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = io.DisplaySize.x * 0.32f;
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - w - io.DisplaySize.x * 0.04f,
+                                   io.DisplaySize.y * 0.12f));
+    ImGui::SetNextWindowSize(ImVec2(w, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
+    ImGui::Begin("##NameInput", nullptr,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
+    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s",
+        mNamePrompt.empty() ? "Namenseingabe" : mNamePrompt.c_str());
+    ImGui::Separator();
+    ImGui::Text("%s_", mNameText.c_str()); // Unterstrich als Cursor
+    ImGui::TextDisabled("A-Z tippen | Alt+A/O/U Umlaute | Enter fertig | Esc Abbruch");
+    ImGui::End();
+    ImGui::PopStyleColor();
+#endif
 }
 
 void GameUI::DrawPlayHud(bool playtest) {
     if (mTitle.IsVisible() || mPause.IsVisible()) return;
+    if (!mHudVisible) return; // PAKET 10: F9-Toggle
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(12, 12));
@@ -221,6 +1702,7 @@ void GameUI::DrawPlayHud(bool playtest) {
     } else if (EventSystem::Get().IsWaitingForMessage()) {
         ImGui::TextColored(ImVec4(1,0.9f,0.4f,1), "Dialog...");
     }
+    ImGui::TextDisabled("%.0f FPS  |  F9 HUD ein/aus", io.Framerate);
     ImGui::End();
     (void)io;
     (void)maxhp;
@@ -266,6 +1748,11 @@ int GameUI::AddWorldText(const std::string& text, Vec3 worldPos, Color color, fl
 void GameUI::RemoveScreenText(int id) {
     mScreenTexts.erase(std::remove_if(mScreenTexts.begin(), mScreenTexts.end(),
         [id](const ScreenText& s){ return s.id == id; }), mScreenTexts.end());
+}
+
+void GameUI::SetScreenText(int id, const std::string& text) {
+    for (auto& t : mScreenTexts)
+        if (t.id == id) { t.text = text; return; }
 }
 
 void GameUI::ClearScreenTexts() {
@@ -388,7 +1875,15 @@ void GameUI::DrawScreenTexts() {
 namespace {
     std::unordered_map<std::string, std::shared_ptr<Texture>> s_PictureCache;
 
+    std::function<std::string(const std::string&)> s_pictureResolver;
+
     std::string ResolvePicturePath(const std::string& filename) {
+        // 1) Engine-injizierter Resolver: <Projekt>/Graphics/Pictures|Titles/…
+        if (s_pictureResolver) {
+            const std::string r = s_pictureResolver(filename);
+            if (!r.empty()) return r;
+        }
+        // 2) Engine-Asset-Fallbacks
         std::vector<std::string> tryPaths = {
             filename,
             "assets/textures/" + filename,
@@ -403,12 +1898,76 @@ namespace {
         }
         return filename;
     }
+
+    // --- PAKET 9: battlerHue (XP-Farbton 0..360 Grad) ---------------------
+    // CPU-Pixelshift als HSL-Drehung; Alpha-Kanal und farbton-neutrale
+    // (graue) Pixel bleiben unberuehrt — wie beim XP-Datenbankregler.
+    float HueToRgb(float p, float q, float t) {
+        if (t < 0.0f) t += 1.0f;
+        if (t > 1.0f) t -= 1.0f;
+        if (t < 1.0f / 6.0f) return p + (q - p) * 6.0f * t;
+        if (t < 1.0f / 2.0f) return q;
+        if (t < 2.0f / 3.0f) return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+        return p;
+    }
+
+    void ApplyHueShiftRGBA(std::vector<unsigned char>& px, int hue) {
+        hue %= 360;
+        if (hue < 0) hue += 360;
+        if (hue == 0) return;
+        auto to8 = [](float v) {
+            return (unsigned char)std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f);
+        };
+        for (size_t i = 0; i + 3 < px.size(); i += 4) {
+            if (px[i + 3] == 0) continue; // transparent: nicht anfassen
+            const float r = px[i + 0] / 255.0f;
+            const float g = px[i + 1] / 255.0f;
+            const float b = px[i + 2] / 255.0f;
+            const float mx = std::max(r, std::max(g, b));
+            const float mn = std::min(r, std::min(g, b));
+            const float l = (mx + mn) * 0.5f;
+            float h = 0.0f, s = 0.0f;
+            if (mx != mn) {
+                const float d = mx - mn;
+                s = (l > 0.5f) ? d / (2.0f - mx - mn) : d / (mx + mn);
+                if (mx == r)      h = (g - b) / d + (g < b ? 6.0f : 0.0f);
+                else if (mx == g) h = (b - r) / d + 2.0f;
+                else              h = (r - g) / d + 4.0f;
+                h *= 60.0f;
+            }
+            if (s <= 0.0f) continue; // Grau: kein Farbton vorhanden
+            h = std::fmod(h + (float)hue, 360.0f);
+            if (h < 0.0f) h += 360.0f;
+            const float q = (l < 0.5f) ? l * (1.0f + s) : l + s - l * s;
+            const float p = 2.0f * l - q;
+            const float hn = h / 360.0f;
+            px[i + 0] = to8(HueToRgb(p, q, hn + 1.0f / 3.0f));
+            px[i + 1] = to8(HueToRgb(p, q, hn));
+            px[i + 2] = to8(HueToRgb(p, q, hn - 1.0f / 3.0f));
+        }
+    }
+}
+
+void GameUI::SetPicturePathResolver(
+    std::function<std::string(const std::string&)> fn) {
+    s_pictureResolver = std::move(fn);
+}
+
+std::string GameUI::ResolvePicturePath(const std::string& filename) { // static
+    return rpg::ResolvePicturePath(filename);
 }
 
 bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
     if (pic.filename.empty()) return false;
-    std::string path = ResolvePicturePath(pic.filename);
-    auto it = s_PictureCache.find(path);
+    const std::string path = ResolvePicturePath(pic.filename);
+    // PAKET 9 (battlerHue): dasselbe Bild kann in mehreren Farbtoenen
+    // vorkommen — der Cache-Key traegt den Farbton (0 = Originalpfad,
+    // bestehende Cache-Eintraege und Suchpfade bleiben unberuehrt).
+    const int hue = ((pic.hue % 360) + 360) % 360;
+    const std::string cacheKey = (hue != 0)
+        ? path + "|hue=" + std::to_string(hue)
+        : path;
+    auto it = s_PictureCache.find(cacheKey);
     std::shared_ptr<Texture> tex;
     if (it != s_PictureCache.end()) {
         tex = it->second;
@@ -418,8 +1977,15 @@ bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
             // Try fallback checkerboard
             tex->CreateCheckerboard();
             RPG_LOG_WARN("Picture not found, using checkerboard: " + path);
+        } else if (hue != 0) {
+            // CPU-Farbton-Drehung (HSL), Alpha bleibt erhalten.
+            std::vector<unsigned char> px;
+            if (tex->ReadPixelsRGBA(px)) {
+                ApplyHueShiftRGBA(px, hue);
+                tex->CreateFromRGBA(tex->GetWidth(), tex->GetHeight(), px.data());
+            }
         }
-        s_PictureCache[path] = tex;
+        s_PictureCache[cacheKey] = tex;
     }
     pic.textureId = tex->GetID();
     pic.loaded = (pic.textureId != 0);
@@ -428,11 +1994,11 @@ bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
     return pic.loaded;
 }
 
-int GameUI::ShowPicture(const std::string& filename, Vec2 screenPos, float scale, float opacity, float duration, const std::string& name) {
-    return ShowPicture(filename, name, screenPos, scale, opacity, duration);
+int GameUI::ShowPicture(const std::string& filename, Vec2 screenPos, float scale, float opacity, float duration, const std::string& name, int hue) {
+    return ShowPicture(filename, name, screenPos, scale, opacity, duration, hue);
 }
 
-int GameUI::ShowPicture(const std::string& filename, const std::string& name, Vec2 screenPos, float scale, float opacity, float duration) {
+int GameUI::ShowPicture(const std::string& filename, const std::string& name, Vec2 screenPos, float scale, float opacity, float duration, int hue) {
     ScreenPicture pic;
     pic.id = mNextPictureId++;
     pic.filename = filename;
@@ -443,6 +2009,7 @@ int GameUI::ShowPicture(const std::string& filename, const std::string& name, Ve
     pic.duration = duration;
     pic.elapsed = 0.0f;
     pic.centered = true;
+    pic.hue = hue; // PAKET 9: XP-Farbton (Battler), wirkt beim Textur-Laden
     LoadPictureTexture(pic);
     mPictures.push_back(pic);
     RPG_LOG_INFO("ShowPicture id=" + std::to_string(pic.id) + " name=" + pic.name + " file=" + filename);
@@ -613,6 +2180,37 @@ void GameUI::RemovePicture(const std::string& name) {
         [&name](const ScreenPicture& p){ return p.name == name; }), mPictures.end());
 }
 
+// PAKET 9: XP-Battler-Feedback — Flash + Ziel-Blinken
+void GameUI::FlashPicture(int id, const Color& color, float duration) {
+    for (auto& pic : mPictures) {
+        if (pic.id == id) {
+            pic.flashColor = color;
+            pic.flashDuration = duration > 0.01f ? duration : 0.01f;
+            pic.flashTimer = pic.flashDuration;
+            return;
+        }
+    }
+}
+
+void GameUI::FlashPicture(const std::string& name, const Color& color, float duration) {
+    for (auto& pic : mPictures) {
+        if (pic.name == name) {
+            FlashPicture(pic.id, color, duration);
+            return;
+        }
+    }
+}
+
+void GameUI::SetPictureBlinking(const std::string& name, bool on) {
+    for (auto& pic : mPictures) {
+        if (pic.name == name) {
+            pic.blinking = on;
+            if (on) pic.blinkTime = 0.0f;
+            return;
+        }
+    }
+}
+
 void GameUI::ClearPictures() {
     mPictures.clear();
 }
@@ -629,9 +2227,21 @@ void GameUI::SetPictureRotation(int id, float degrees) {
     for (auto& pic : mPictures) if (pic.id == id) pic.rotation = degrees;
 }
 
+void GameUI::SetPictureSize(int id, float sizeX, float sizeY) {
+    for (auto& pic : mPictures) if (pic.id == id) pic.size = Vec2(sizeX, sizeY);
+}
+
 void GameUI::UpdatePictures(float dt) {
     for (auto& pic : mPictures) {
         pic.elapsed += dt;
+
+        // PAKET 9: Treffer-Flash ablaufen lassen / Blink-Uhr weiterdrehen
+        if (pic.flashTimer > 0.0f) {
+            pic.flashTimer -= dt;
+            if (pic.flashTimer < 0.0f) pic.flashTimer = 0.0f;
+        }
+        if (pic.blinking) pic.blinkTime += dt;
+        else pic.blinkTime = 0.0f;
 
         // Tween handling
         if (pic.isTweening) {
@@ -668,6 +2278,167 @@ void GameUI::UpdatePictures(float dt) {
         [](const ScreenPicture& p){ return p.duration > 0.0f && p.elapsed >= p.duration; }), mPictures.end());
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 9: XP-Kampf-Statusfenster (Party unten im Kampf)
+// ---------------------------------------------------------------------------
+// Datenfluss: Engine (Status-Tick) -> SetBattleStatusEntries (Schnappschuss)
+// -> DrawBattleStatus pro Frame (ImGui-Overlay, Stil wie MessageWindow).
+// Gesichter: Graphics/Faces/<faceName>; Sheets im 4x2-Raster (VX-Stil,
+// erkannt am Seitenverhaeltnis 2:1), sonst Einzelbild. faceIndex waehlt die
+// Zelle (0..7). Fehlende Dateien sind gecacht (kein Lade-Spam) und zeigen
+// schlicht kein Gesicht.
+void GameUI::SetBattleStatusEntries(std::vector<BattleStatusEntry> entries) {
+    mBattleStatusEntries = std::move(entries);
+    mBattleStatusActive = !mBattleStatusEntries.empty();
+}
+
+void GameUI::ClearBattleStatus() {
+    mBattleStatusEntries.clear();
+    mBattleStatusActive = false;
+}
+
+unsigned int GameUI::GetFaceTexture(const std::string& faceName, int& outW, int& outH) {
+    outW = 0; outH = 0;
+    if (faceName.empty()) return 0;
+    auto it = mFaceCache.find(faceName);
+    if (it != mFaceCache.end()) {
+        if (it->second) {
+            outW = it->second->GetWidth();
+            outH = it->second->GetHeight();
+            return it->second->GetID();
+        }
+        return 0; // Negativ-Eintrag
+    }
+    std::shared_ptr<Texture> tex;
+    const std::string path = ResolvePicturePath(faceName);
+    if (!path.empty()) {
+        auto t = std::make_shared<Texture>();
+        if (t->LoadFromFile(path)) tex = std::move(t);
+    }
+    if (tex) {
+        outW = tex->GetWidth();
+        outH = tex->GetHeight();
+        const unsigned int id = tex->GetID();
+        mFaceCache.emplace(faceName, std::move(tex));
+        return id;
+    }
+    mFaceCache.emplace(faceName, nullptr);
+    return 0;
+}
+
+void GameUI::DrawBattleStatus() {
+    if (!mBattleStatusActive || mBattleStatusEntries.empty()) return;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    ImGuiIO& io = ImGui::GetIO();
+    const float w = io.DisplaySize.x;
+    float h = io.DisplaySize.y * 0.20f;      // XP: Statuszeile ~1/5 unten
+    if (h < 110.0f) h = 110.0f;              // Mindesthoehe fuer 2 Balkenzeilen
+    ImGui::SetNextWindowPos(ImVec2(0.0f, io.DisplaySize.y - h));
+    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.07f, 0.16f, 0.90f));
+    if (ImGui::Begin("##BattleStatus", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse)) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 origin = ImGui::GetWindowPos();
+        const int n = (int)mBattleStatusEntries.size();
+        const int cols = std::max(4, n);     // XP: 4 Slots nebeneinander
+        const float slotW = w / (float)cols;
+        const float faceSz = h - 62.0f;      // Platz: Name + 2 Zeilen
+        const float pad = 10.0f;
+
+        // Kleiner lokaler Balkenzeichner (Hintergrund, Fuellung, Rahmen)
+        auto drawBar = [dl](float x, float y, float bw, float bh, float t,
+                            ImU32 fillCol) {
+            if (t < 0.0f) t = 0.0f;
+            if (t > 1.0f) t = 1.0f;
+            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw, y + bh),
+                              IM_COL32(18, 18, 22, 230));
+            if (t > 0.0f)
+                dl->AddRectFilled(ImVec2(x, y), ImVec2(x + bw * t, y + bh), fillCol);
+            dl->AddRect(ImVec2(x, y), ImVec2(x + bw, y + bh),
+                        IM_COL32(200, 200, 210, 160), 0.0f, 0, 1.0f);
+        };
+
+        for (int i = 0; i < n; ++i) {
+            const BattleStatusEntry& e = mBattleStatusEntries[(size_t)i];
+            const float x0 = origin.x + slotW * (float)i + pad;
+            const float y0 = origin.y + 8.0f;
+
+            // Gesicht (links), bei Bedarf aus dem Face-Sheet
+            float textX = x0;
+            int fw = 0, fh = 0;
+            const unsigned int faceTex = GetFaceTexture(e.faceName, fw, fh);
+            if (faceTex != 0 && faceSz > 8.0f) {
+                float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
+                if (fh > 0 && fw == fh * 2) {         // 4x2-Sheet (VX-Stil)
+                    const int idx = std::clamp(e.faceIndex, 0, 7);
+                    u0 = (float)(idx % 4) * 0.25f;
+                    v0 = (float)(idx / 4) * 0.5f;
+                    u1 = u0 + 0.25f;
+                    v1 = v0 + 0.5f;
+                }
+                const float a = e.dead ? 0.45f : 1.0f;
+                dl->AddImage((ImTextureID)(intptr_t)faceTex,
+                             ImVec2(x0, y0), ImVec2(x0 + faceSz, y0 + faceSz),
+                             ImVec2(u0, v0), ImVec2(u1, v1),
+                             IM_COL32(255, 255, 255, (int)(a * 255.0f)));
+                dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + faceSz, y0 + faceSz),
+                            IM_COL32(0, 0, 0, 160), 0.0f, 0, 1.0f);
+                textX = x0 + faceSz + 8.0f;
+            }
+
+            // Name (K.O. rot markiert)
+            const ImU32 nameCol = e.dead ? IM_COL32(255, 90, 80, 255)
+                                         : IM_COL32(235, 240, 255, 255);
+            dl->AddText(ImVec2(textX, y0), nameCol, e.name.c_str());
+            // PAKET 17: aktiver Zustand unter dem Namen (XP-Statusfenster)
+            if (!e.dead && !e.stateName.empty())
+                dl->AddText(ImVec2(textX, y0 + 13.0f), IM_COL32(255, 205, 90, 255),
+                            e.stateName.c_str());
+            if (e.dead)
+                dl->AddText(ImVec2(x0 + slotW - pad - 30.0f, y0),
+                            IM_COL32(255, 90, 80, 255), "K.O.");
+
+            const float barX = textX + 36.0f;
+            const float barW = slotW - (barX - x0) - pad - 74.0f;
+            const float rowY1 = y0 + 26.0f;
+            const float rowY2 = y0 + 50.0f;
+
+            // HP (XP: gruen -> gelb -> rot je nach Fuellstand)
+            const float hpT = e.maxHp > 0 ? (float)e.hp / (float)e.maxHp : 0.0f;
+            const ImU32 hpCol = e.dead ? IM_COL32(90, 90, 95, 255)
+                : hpT > 0.5f ? IM_COL32(64, 224, 88, 255)
+                : hpT > 0.25f ? IM_COL32(255, 200, 64, 255)
+                              : IM_COL32(240, 80, 70, 255);
+            dl->AddText(ImVec2(textX, rowY1 - 4.0f), IM_COL32(255, 190, 110, 255), "HP");
+            drawBar(barX, rowY1, barW, 7.0f, hpT, hpCol);
+            char buf[24];
+            std::snprintf(buf, sizeof(buf), "%d/%d", e.hp, e.maxHp);
+            dl->AddText(ImVec2(barX + barW + 8.0f, rowY1 - 4.0f),
+                        IM_COL32(220, 225, 240, 255), buf);
+
+            // MP (blaeulich)
+            const float mpT = e.maxMp > 0 ? (float)e.mp / (float)e.maxMp : 0.0f;
+            const ImU32 mpCol = e.dead ? IM_COL32(90, 90, 95, 255)
+                                       : IM_COL32(96, 150, 240, 255);
+            dl->AddText(ImVec2(textX, rowY2 - 4.0f), IM_COL32(150, 190, 255, 255), "MP");
+            drawBar(barX, rowY2, barW, 7.0f, mpT, mpCol);
+            std::snprintf(buf, sizeof(buf), "%d/%d", e.mp, e.maxMp);
+            dl->AddText(ImVec2(barX + barW + 8.0f, rowY2 - 4.0f),
+                        IM_COL32(220, 225, 240, 255), buf);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+#else
+    (void)0; // Ohne ImGui: Status nur als interne Datenhalde (wie uebliche No-Op-Draws)
+#endif
+}
+
 void GameUI::DrawPictures() {
     if (mPictures.empty()) return;
 #ifdef RPGMAKER3D_ENABLE_IMGUI
@@ -682,6 +2453,22 @@ void GameUI::DrawPictures() {
             if (remaining < 1.0f) alpha *= remaining;
         }
         if (alpha <= 0.01f) continue;
+
+        // PAKET 9: Ziel-Blinken (Flackern als Alpha-Puls) + Treffer-Flash
+        // (Tint wird kurzzeitig in Richtung flashColor verschoben)
+        if (pic.blinking) {
+            const float phase = std::fmod(pic.blinkTime * 5.0f, 1.0f);
+            alpha *= (phase < 0.6f) ? 1.0f : 0.22f;
+        }
+        ImVec4 tint(1.0f, 1.0f, 1.0f, alpha);
+        if (pic.flashTimer > 0.0f && pic.flashDuration > 1.0e-4f) {
+            float ft = pic.flashTimer / pic.flashDuration;
+            if (ft > 1.0f) ft = 1.0f;
+            const float mix = ft * pic.flashColor.a;
+            tint.x = 1.0f + (pic.flashColor.r - 1.0f) * mix;
+            tint.y = 1.0f + (pic.flashColor.g - 1.0f) * mix;
+            tint.z = 1.0f + (pic.flashColor.b - 1.0f) * mix;
+        }
 
         ImVec2 center(pic.screenPos.x * io.DisplaySize.x, pic.screenPos.y * io.DisplaySize.y);
         float baseSize = 128.0f * pic.scale;
@@ -701,7 +2488,7 @@ void GameUI::DrawPictures() {
                                      ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoSavedSettings;
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0,0));
             ImGui::Begin(windowName.c_str(), nullptr, flags);
-            ImGui::Image((ImTextureID)(intptr_t)pic.textureId, size, ImVec2(0,0), ImVec2(1,1), ImVec4(1,1,1,alpha), ImVec4(0,0,0,0));
+            ImGui::Image((ImTextureID)(intptr_t)pic.textureId, size, ImVec2(0,0), ImVec2(1,1), tint, ImVec4(0,0,0,0));
             ImGui::End();
             ImGui::PopStyleVar();
         } else {
@@ -726,7 +2513,7 @@ void GameUI::DrawPictures() {
             fg->AddImageQuad((ImTextureID)(intptr_t)pic.textureId,
                 corners[0], corners[1], corners[2], corners[3],
                 uvs[0], uvs[1], uvs[2], uvs[3],
-                ImGui::GetColorU32(ImVec4(1,1,1,alpha)));
+                ImGui::GetColorU32(tint));
         }
     }
 #endif

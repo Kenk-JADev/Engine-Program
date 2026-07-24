@@ -9,11 +9,13 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QListWidget>
+#include <QMenu>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QLabel>
 #include <QComboBox>
 #include <QSplitter>
-#include <QToolBar>
+#include <QToolButton>
 #include <QAction>
 #include <QMessageBox>
 #include <QInputDialog>
@@ -26,6 +28,8 @@
 #include <QUrl>
 #include <QFileInfo>
 #include <QDir>
+#include <QFile>
+#include <QRegularExpression>
 #include <QTextCursor>
 
 namespace qt_editor {
@@ -53,6 +57,114 @@ const char* kRubySnippets[][2] = {
      "SceneManager.goto(Scene_Map)\n"},
     {"Audio BGM",
      "Audio.bgm_play(\"town.ogg\")\n"},
+    // --- XP-Spielobjekte ($game_*): Das Spiel direkt aus Skripten steuern ---
+    {"Schalter setzen (XP)",
+     "$game_switches[1] = true  # Event-Seiten reagieren sofort\n"},
+    {"Schalter abfragen (XP)",
+     "if $game_switches[3]\n"
+     "  UI.show_message(\"Schalter 3 ist AN\")\n"
+     "end\n"},
+    {"Variable erhoehen (XP)",
+     "$game_variables[2] += 1  # Zaehler hochsetzen, Seiten pruefen neu\n"},
+    {"Self-Switch setzen (XP)",
+     "key = [$game_map.id, 1, \"A\"]  # [Karten-ID, Event-ID, Buchstabe]\n"
+     "$game_self_switches[key] = true\n"},
+    {"Gold geben / nehmen (XP)",
+     "$game_party.gain_gold(100)\n"
+     "$game_party.lose_gold(50)\n"},
+    {"Gegenstand geben (XP)",
+     "$game_party.gain_item(1, 3)  # Gegenstand 1, 3 Stueck\n"},
+    {"Akteur in die Gruppe (XP)",
+     "$game_party.add_actor(2)\n"
+     "if $game_party.has_actor(2)\n"
+     "  UI.show_message(\"Akteur 2 ist dabei!\")\n"
+     "end\n"},
+    {"Gruppen-Mitglieder auflisten (XP)",
+     "for m in $game_party.members\n"
+     "  UI.show_screen_text(m[:name], 0.05, 0.15, 1.0, 1.0, 1.0, 0.0)\n"
+     "end\n"},
+    {"Spieler teleportieren",
+     "$game_player.move_to(10.0, 0.0, 10.0)  # x, y, z\n"},
+    {"HUD ein-/ausblenden",
+     "UI.hud_visible = false  # true blendet es wieder ein\n"},
+    {"Speichern / Laden",
+     "Game.save(1)  # Slot 1 (Datei <Projekt>/saves/save1.json)\n"
+     "Game.load(1)\n"},
+    {"Speicherbildschirm (XP)",
+     "UI.open_save_screen(true)  # 4 Slots mit Info, wie in XP\n"},
+    {"Spielmenue oeffnen (XP)",
+     "UI.open_menu()  # Gegenstaende / Speichern / Beenden\n"},
+    // --- "Alles custom": eigene Oberflaechen / Szenen statt der eingebauten ---
+    {"Eigenes Menue (custom)",
+     "# Beliebiges Listenmenue mit Block (Index oder -1 bei Esc)\n"
+     "UI.open_list_menu(\"Lager\", [\"Trank\", \"Elixier\", [\"Schluessel\", false], \"Zurueck\"]) do |i|\n"
+     "  if i == 0\n"
+     "    UI.show_message(\"Trank benutzt!\")\n"
+     "  elsif i == 3 || i == -1\n"
+     "    # zurueck / abgebrochen\n"
+     "  end\n"
+     "end\n"},
+    {"Eigene Kampfszene (custom)",
+     "# In Game.ini: NativeBattleMenu=0 (eingebautes Menue aus), dann z. B. in\n"
+     "# $game.update(dt) oder einer eigenen Scene die Eingabe selbst machen:\n"
+     "if Battle.needs_input? && !@battle_menu_open\n"
+     "  @battle_menu_open = true\n"
+     "  UI.open_list_menu(\"Was tun?\", [\"Angriff\", \"Verteidigen\", \"Flucht\"]) do |i|\n"
+     "    @battle_menu_open = false\n"
+     "    Battle.set_action(Battle::ATTACK, 0, 0, 0, false) if i == 0\n"
+     "    Battle.set_action(Battle::GUARD, 0, 0, 0, false)  if i == 1\n"
+     "    if i == 2 && Battle.can_escape?\n"
+     "      Battle.set_action(Battle::ESCAPE, 0, 0, 0, false)\n"
+     "    end\n"
+     "  end\n"
+     "end\n"},
+    {"Kampf mit eigener Gegnerliste (Battle-API)",
+     "# Startet einen Kampf OHNE Trupp (freie Gegnerliste aus dem Skript):\n"
+     "Battle.setup([1, 1, 2], true, false)  # 2x Gegner 1, 1x Gegner 2\n"
+     "# Status auslesen: Battle.enemies -> [{\"hp\"=>.., \"dead\"=>..}, ...]\n"},
+    {"Eigener Titel (custom)",
+     "# In Game.ini: NativeTitle=0 -> die Engine ruft diesen Hook statt dem\n"
+     "# eingebauten Titelbildschirm auf:\n"
+     "class Game\n"
+     "  def self.custom_title\n"
+     "    UI.hud_visible = false\n"
+     "    UI.open_list_menu(\"MEIN SPIEL\", [\"Start\", \"Beenden\"]) do |i|\n"
+     "      Game.start_game if i == 0   # NewGame + Spielmodus an\n"
+     "    end\n"
+     "  end\n"
+     "end\n"},
+    {"RGSS-Fenster (XP-Stil)",
+     "# Fenster wie im RPG Maker XP (volles RGSS-Fenstersystem aus Ruby):\n"
+     "@win = Window.new\n"
+     "@win.x = 80; @win.y = 120; @win.width = 480; @win.height = 200\n"
+     "@win.windowskin = RPG::Cache.windowskin(\"001-Blue01\")  # XP: Bitmap!\n"
+     "@win.contents.font.color.set(255, 255, 0)              # Referenz-Semantik\n"
+     "@win.contents.draw_text(4, 4, 440, 32, \"Hallo RGSS!\")\n"
+     "@win.z = 100\n"
+     "# openness (0..255), active, pause, opacity, back_opacity,\n"
+     "# contents_opacity, stretch, cursor_rect, ox/oy (Scrollen)\n"
+     "# Aufraeumen: @win.dispose\n"},
+    {"RGSS: Bitmap & Sprite",
+     "# Grafik laden und als Sprite anzeigen (640x480-Raum):\n"
+     "@bmp = RPG::Cache.picture(\"titel_hintergrund\")   # Graphics/Pictures/\n"
+     "@spr = Sprite.new\n"
+     "@spr.bitmap = @bmp\n"
+     "@spr.src_rect = Rect.new(0, 0, @bmp.width, @bmp.height)\n"
+     "@spr.x = 40; @spr.y = 60; @spr.z = 10\n"
+     "# zoom_x/zoom_y, angle, mirror, opacity, blend_type (0 normal/1 add/2 sub),\n"
+     "# bush_depth, color (mischen), tone (Farbton), flash(Color.new(..), dauer)\n"
+     "# Bitmap-Pixel: bmp.fill_rect, gradient_fill_rect, blt, stretch_blt,\n"
+     "# get_pixel/set_pixel, hue_change, blur/radial_blur, draw_text, text_size\n"},
+    {"RGSS: Viewport & Tilemap",
+     "# Viewport = Ausschnitt mit eigener Ebene (Clip + Scroll-Offset):\n"
+     "@vp = Viewport.new(0, 0, 640, 480)\n"
+     "@spr2 = Sprite.new(@vp)\n"
+     "# Vollwertige Karte (Editordaten wie im XP: 3 Ebenen + Autotiles):\n"
+     "@tm = Tilemap.new(@vp)\n"
+     "@tm.tileset = RPG::Cache.tileset(\"001-Grossstadt01\")\n"
+     "@tm.map_data = Table.new(20, 15, 3)\n"
+     "# Spalten/Zeilen fuellen: @tm.map_data[x, y, ebene] = tile_id\n"
+     "# tile_id < 384: Autotile (48er-Muster wie XP), sonst tileset-Kachel.\n"},
 };
 
 const char* kCppSnippets[][2] = {
@@ -84,52 +196,39 @@ QtCodeWorkspace::QtCodeWorkspace(rpg::Engine* engine, QWidget* parent)
 }
 
 void QtCodeWorkspace::buildUi() {
+    // Neuer XP-Look (PAKET 28): links Skriptliste, rechts grosser Editor,
+    // oben nur eine schlanke Kopfzeile (Ansicht + Suche), unten zwei Buttons.
+    // Alle Dateiaktionen liegen im RECHTSKLICK-Menue der Skriptliste (XP-Stil),
+    // nicht in einer ueberladenen Buttonleiste.
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
 
-    auto* tb = new QToolBar(this);
-    tb->setMovable(false);
-
-    mLangCombo = new QComboBox(tb);
-    mLangCombo->addItem("Ruby (Spiellogik)");
-    mLangCombo->addItem("C++ (Engine API)");
+    // ---- Kopfzeile: Ansicht + Suche (mehr nicht) -------------------------
+    auto* top = new QWidget(this);
+    auto* topLay = new QHBoxLayout(top);
+    topLay->setContentsMargins(6, 4, 6, 4);
+    topLay->setSpacing(6);
+    topLay->addWidget(new QLabel(QStringLiteral("Ansicht:"), top));
+    mLangCombo = new QComboBox(top);
+    mLangCombo->addItem(QStringLiteral("Ruby (Spiellogik)"));
+    mLangCombo->addItem(QStringLiteral("C++ (Engine API-Referenz)"));
     connect(mLangCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &QtCodeWorkspace::setLanguage);
-    tb->addWidget(new QLabel("  Sprache: ", tb));
-    tb->addWidget(mLangCombo);
-    tb->addSeparator();
-
-    mNewAction = tb->addAction("Neu", this, &QtCodeWorkspace::onNewRubyScript);
-    mSaveAction = tb->addAction("Speichern", this, [this]() { saveCurrent(); });
-    tb->addAction("Alle speichern", this, [this]() { saveAll(); });
-    mDeleteAction = tb->addAction("Loeschen", this, &QtCodeWorkspace::onDeleteRubyScript);
-    tb->addAction("Neu laden", this, &QtCodeWorkspace::onReloadFromDisk);
-    tb->addSeparator();
-    mRunAction = tb->addAction("Ausfuehren", this, &QtCodeWorkspace::runCurrent);
-    tb->addAction("Alle ausfuehren", this, &QtCodeWorkspace::runAll);
-    tb->addAction("Hot-Reload", this, &QtCodeWorkspace::onHotReload);
-    tb->addSeparator();
-    tb->addAction("Extern oeffnen", this, &QtCodeWorkspace::onOpenExternal);
-    tb->addSeparator();
-    tb->addWidget(new QLabel(" Suchen: ", tb));
-    mFindEdit = new QLineEdit(tb);
-    mFindEdit->setPlaceholderText("Ctrl+F");
-    mFindEdit->setMaximumWidth(180);
-    tb->addWidget(mFindEdit);
-    tb->addAction("Find", this, &QtCodeWorkspace::onFind);
-    tb->addAction("Next", this, &QtCodeWorkspace::onFindNext);
+    topLay->addWidget(mLangCombo);
+    topLay->addStretch(1);
+    topLay->addWidget(new QLabel(QStringLiteral("Suchen:"), top));
+    mFindEdit = new QLineEdit(top);
+    mFindEdit->setPlaceholderText(QStringLiteral("Suchbegriff [Enter = finden]"));
+    mFindEdit->setMaximumWidth(220);
     connect(mFindEdit, &QLineEdit::returnPressed, this, &QtCodeWorkspace::onFind);
-
-    tb->addSeparator();
-    tb->addWidget(new QLabel(" Snippet: ", tb));
-    mSnippetCombo = new QComboBox(tb);
-    mSnippetCombo->setMinimumWidth(160);
-    connect(mSnippetCombo, QOverload<int>::of(&QComboBox::activated),
-            this, &QtCodeWorkspace::onInsertSnippet);
-    tb->addWidget(mSnippetCombo);
-
-    root->addWidget(tb);
+    topLay->addWidget(mFindEdit);
+    auto* nextBtn = new QToolButton(top);
+    nextBtn->setText(QStringLiteral("Weiter"));
+    nextBtn->setToolTip(QStringLiteral("Nächsten Treffer suchen"));
+    connect(nextBtn, &QToolButton::clicked, this, &QtCodeWorkspace::onFindNext);
+    topLay->addWidget(nextBtn);
+    root->addWidget(top);
 
     auto* split = new QSplitter(Qt::Horizontal, this);
 
@@ -138,6 +237,79 @@ void QtCodeWorkspace::buildUi() {
     mFileList->setMaximumWidth(360);
     connect(mFileList, &QListWidget::currentRowChanged, this, [this](int) {
         onFileSelected();
+    });
+    // XP: Doppelklick/Enter auf den Listeneintrag benennt das Script um
+    connect(mFileList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
+        if (mLanguage == CodeLanguage::Ruby) onRenameRubyScript();
+    });
+
+    // ---- Dateiaktionen: Rechtsklick-Kontextmenue + Tasten (statt Buttons) ---
+    mNewAction = new QAction(QStringLiteral("Neues Skript …"), this);
+    mNewAction->setToolTip(QStringLiteral("Leeres Ruby-Skript anlegen"));
+    connect(mNewAction, &QAction::triggered, this, &QtCodeWorkspace::onNewRubyScript);
+
+    auto* renameAction = new QAction(QStringLiteral("Umbenennen"), this);
+    renameAction->setShortcut(QKeySequence(Qt::Key_F2));
+    renameAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(renameAction, &QAction::triggered, this, &QtCodeWorkspace::onRenameRubyScript);
+
+    mDeleteAction = new QAction(QStringLiteral("Löschen"), this);
+    mDeleteAction->setShortcut(QKeySequence(Qt::Key_Delete));
+    mDeleteAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(mDeleteAction, &QAction::triggered, this, &QtCodeWorkspace::onDeleteRubyScript);
+
+    auto* reloadAction = new QAction(QStringLiteral("Von Datenträger neu laden"), this);
+    connect(reloadAction, &QAction::triggered, this, &QtCodeWorkspace::onReloadFromDisk);
+
+    auto* externalAction = new QAction(QStringLiteral("Im externen Editor öffnen"), this);
+    connect(externalAction, &QAction::triggered, this, &QtCodeWorkspace::onOpenExternal);
+
+    mSaveAction = new QAction(QStringLiteral("Speichern"), this);
+    mSaveAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+S")));
+    mSaveAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(mSaveAction, &QAction::triggered, this, [this]() { saveCurrent(); });
+
+    auto* saveAllAction = new QAction(QStringLiteral("Alle speichern"), this);
+    connect(saveAllAction, &QAction::triggered, this, [this]() { saveAll(); });
+
+    // XP-Paritaet: KEIN "Skript ausfuehren" - Skripte laufen im Spiel, nicht
+    // einzeln aus dem Editor. Nur Hot-Reload bleibt als Dev-Werkzeug.
+    auto* hotReloadAction = new QAction(QStringLiteral("Speichern + Hot-Reload"), this);
+    hotReloadAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+R")));
+    hotReloadAction->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(hotReloadAction, &QAction::triggered, this, &QtCodeWorkspace::onHotReload);
+
+    // Tasten direkt auf der Skriptliste (F2/Entf bleiben listenlokal, damit
+    // Entf im Textfeld normal Zeichen loescht)
+    mFileList->addAction(renameAction);
+    mFileList->addAction(mDeleteAction);
+    addAction(mSaveAction);         // Ctrl+S im ganzen Skriptfenster
+    addAction(hotReloadAction);     // Ctrl+R im ganzen Skriptfenster
+
+    // Rechtsklick auf Skripte (XP: Einfügen/Umbenennen/Löschen …)
+    mFileList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(mFileList, &QListWidget::customContextMenuRequested, this,
+            [this, renameAction, reloadAction, externalAction,
+             saveAllAction, hotReloadAction](const QPoint& pos) {
+        const bool ruby = (mLanguage == CodeLanguage::Ruby);
+        QMenu menu(mFileList);
+        menu.addAction(mNewAction);
+        menu.addAction(renameAction);
+        menu.addAction(mDeleteAction);
+        menu.addSeparator();
+        menu.addAction(reloadAction);
+        menu.addAction(externalAction);
+        menu.addSeparator();
+        menu.addAction(mSaveAction);
+        menu.addAction(saveAllAction);
+        menu.addAction(hotReloadAction);
+        mNewAction->setEnabled(ruby);
+        renameAction->setEnabled(ruby);
+        mDeleteAction->setEnabled(ruby);
+        mSaveAction->setEnabled(ruby);
+        saveAllAction->setEnabled(ruby);
+        hotReloadAction->setEnabled(ruby);
+        menu.exec(mFileList->viewport()->mapToGlobal(pos));
     });
 
     auto* right = new QWidget(split);
@@ -177,6 +349,26 @@ void QtCodeWorkspace::buildUi() {
     split->setSizes({240, 800});
 
     root->addWidget(split, 1);
+
+    // ---- Fusszeile: Snippets + nur zwei Buttons (XP-artig schlank) --------
+    auto* bottom = new QWidget(this);
+    auto* botLay = new QHBoxLayout(bottom);
+    botLay->setContentsMargins(6, 2, 6, 4);
+    botLay->setSpacing(6);
+    botLay->addWidget(new QLabel(QStringLiteral("Snippet:"), bottom));
+    mSnippetCombo = new QComboBox(bottom);
+    mSnippetCombo->setMinimumWidth(200);
+    connect(mSnippetCombo, QOverload<int>::of(&QComboBox::activated),
+            this, &QtCodeWorkspace::onInsertSnippet);
+    botLay->addWidget(mSnippetCombo, 1);
+    auto* saveBtn = new QPushButton(QStringLiteral("Speichern"), bottom);
+    saveBtn->setToolTip(QStringLiteral("Aktuelles Skript speichern [Strg+S]"));
+    connect(saveBtn, &QPushButton::clicked, this, [this]() { saveCurrent(); });
+    botLay->addWidget(saveBtn);
+    auto* saveAllBtn = new QPushButton(QStringLiteral("Alle speichern"), bottom);
+    connect(saveAllBtn, &QPushButton::clicked, this, [this]() { saveAll(); });
+    botLay->addWidget(saveAllBtn);
+    root->addWidget(bottom);
 
     // Snippets initial (Ruby)
     mSnippetCombo->clear();
@@ -406,7 +598,6 @@ void QtCodeWorkspace::setLanguage(int index) {
     mNewAction->setEnabled(mLanguage == CodeLanguage::Ruby);
     mDeleteAction->setEnabled(mLanguage == CodeLanguage::Ruby);
     mSaveAction->setEnabled(mLanguage == CodeLanguage::Ruby);
-    mRunAction->setEnabled(mLanguage == CodeLanguage::Ruby);
 
     mSnippetCombo->blockSignals(true);
     mSnippetCombo->clear();
@@ -457,7 +648,7 @@ void QtCodeWorkspace::populateRubyList() {
         mFileList->addItem(label);
     }
     if (scripts.empty()) {
-        mFileList->addItem("(keine Scripts – Projekt oeffnen oder Neu)");
+        mFileList->addItem("(keine Skripte – Projekt öffnen oder Neu)");
     }
     mFileList->blockSignals(false);
 
@@ -470,7 +661,7 @@ void QtCodeWorkspace::populateRubyList() {
         mEditor->setPlainText(
             "# Ruby Code Workspace\n"
             "#\n"
-            "# Oeffne ein Projekt (Datei -> Projekt oeffnen)\n"
+            "# Öffne ein Projekt (Datei -> Projekt öffnen)\n"
             "# oder lege ein neues Script an (Neu).\n"
             "# Scripts liegen unter <Projekt>/scripts/*.rb\n"
             "# und werden beim Playtest in Dateiname-Reihenfolge geladen.\n");
@@ -582,10 +773,10 @@ void QtCodeWorkspace::updateDirtyLabel() {
         return;
     }
     if (mEngine && mEngine->IsPlaying()) {
-        mDirtyLabel->setText("PLAYTEST (read-only)");
+        mDirtyLabel->setText("PLAYTEST (schreibgeschützt)");
         return;
     }
-    mDirtyLabel->setText(mDirty ? "geaendert *" : "");
+    mDirtyLabel->setText(mDirty ? "geändert *" : "");
 }
 
 bool QtCodeWorkspace::hasUnsavedChanges() const {
@@ -609,7 +800,7 @@ bool QtCodeWorkspace::saveCurrent() {
     if (ok) {
         mDirty = false;
         updateDirtyLabel();
-        emit logMessage(QString("Script gespeichert: %1").arg(mCurrentName));
+        emit logMessage(QString("Skript gespeichert: %1").arg(mCurrentName));
         // Liste ohne Stern
         if (mCurrentIndex < mFileList->count()) {
             QString label = mCurrentName;
@@ -633,37 +824,6 @@ bool QtCodeWorkspace::saveAll() {
     refresh();
     emit scriptsChanged();
     return true;
-}
-
-void QtCodeWorkspace::runCurrent() {
-    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
-    flushCurrentToManager();
-    auto& scripts = mEngine->GetScriptManager().GetScripts();
-    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
-    auto& script = scripts[static_cast<size_t>(mCurrentIndex)];
-    const bool ok = mEngine->GetRubyVM().ExecuteString(script->content, script->name);
-    if (ok) {
-        emit logMessage(QString("Ruby OK: %1").arg(mCurrentName));
-        showRubyError(QString());
-    } else {
-        const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
-        emit logMessage(QString("Ruby-Fehler in %1: %2").arg(mCurrentName, err));
-        showRubyError(err);
-    }
-}
-
-void QtCodeWorkspace::runAll() {
-    if (!mEngine) return;
-    if (mLanguage == CodeLanguage::Ruby) flushCurrentToManager();
-    mEngine->GetScriptManager().ExecuteAllScripts();
-    if (mEngine->GetRubyVM().HasError()) {
-        const QString err = QString::fromStdString(mEngine->GetRubyVM().GetLastError());
-        emit logMessage("Ruby-Fehler beim Ausfuehren aller Scripts: " + err);
-        showRubyError(err);
-    } else {
-        emit logMessage("Alle Ruby-Scripts ausgefuehrt (Load-Order).");
-        showRubyError(QString());
-    }
 }
 
 void QtCodeWorkspace::hotReloadAll() {
@@ -728,25 +888,70 @@ void QtCodeWorkspace::onFindNext() {
 void QtCodeWorkspace::onNewRubyScript() {
     if (!mEngine || mLanguage != CodeLanguage::Ruby) return;
     if (mEngine->GetProject().GetProjectPath().empty()) {
-        QMessageBox::information(this, "Neues Script",
-            "Bitte zuerst ein Projekt anlegen oder oeffnen.");
+        QMessageBox::information(this, "Neues Skript",
+            "Bitte zuerst ein Projekt anlegen oder öffnen.");
         return;
     }
     bool ok = false;
-    QString name = QInputDialog::getText(this, "Neues Ruby-Script",
+    QString name = QInputDialog::getText(this, "Neues Ruby-Skript",
         "Dateiname:", QLineEdit::Normal, "custom_logic.rb", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
     name = name.trimmed();
     if (!name.endsWith(".rb")) name += ".rb";
     auto script = mEngine->GetScriptManager().CreateScript(name.toStdString());
     if (!script) {
-        QMessageBox::warning(this, "Neues Script", "Konnte Script nicht anlegen.");
+        QMessageBox::warning(this, "Neues Skript", "Konnte Skript nicht anlegen.");
         return;
     }
-    emit logMessage("Script angelegt: " + name);
+    emit logMessage("Skript angelegt: " + name);
     mCurrentIndex = static_cast<int>(mEngine->GetScriptManager().GetScripts().size()) - 1;
     refresh();
     emit scriptsChanged();
+}
+
+void QtCodeWorkspace::onRenameRubyScript() {
+    if (!mEngine || mLanguage != CodeLanguage::Ruby || mCurrentIndex < 0) return;
+    auto& sm = mEngine->GetScriptManager();
+    auto& scripts = sm.GetScripts();
+    if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
+    auto& s = scripts[static_cast<size_t>(mCurrentIndex)];
+
+    bool ok = false;
+    QString name = QInputDialog::getText(this, "Skript umbenennen",
+        "Neuer Dateiname:", QLineEdit::Normal, QString::fromStdString(s->name), &ok);
+    if (!ok) return;
+    name = name.trimmed();
+    if (name.isEmpty() || name == QString::fromStdString(s->name)) return;
+    if (!name.endsWith(".rb")) name += ".rb";
+    if (name.contains(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")))) {
+        QMessageBox::warning(this, "Umbenennen",
+            QStringLiteral("Der Dateiname enthält ungültige Zeichen (\\ / : * ? \" < > |)."));
+        return;
+    }
+    for (const auto& o : scripts) {
+        if (o != s && o->name == name.toStdString()) {
+            QMessageBox::warning(this, "Umbenennen",
+                QStringLiteral("Ein Skript mit diesem Namen existiert bereits."));
+            return;
+        }
+    }
+
+    // aktuellen Text sicher im Manager ablegen, dann Datei umbenennen
+    flushCurrentToManager();
+    const QString oldPath = QString::fromStdString(s->path);
+    const QString dir = QFileInfo(oldPath).absolutePath();
+    const QString newPath = dir + "/" + name;
+    if (QFile::exists(oldPath))
+        QFile::rename(oldPath, newPath); // scheitert nur, wenn Ziel existiert (oben geprüft)
+
+    s->name = name.toStdString();
+    s->path = newPath.toStdString();
+    s->modified = true;
+    sm.SaveScript(s); // schreibt Inhalt unter neuem Pfad
+
+    refresh();
+    emit scriptsChanged();
+    emit logMessage(QStringLiteral("Skript umbenannt: %1").arg(name));
 }
 
 void QtCodeWorkspace::onDeleteRubyScript() {
@@ -754,18 +959,18 @@ void QtCodeWorkspace::onDeleteRubyScript() {
     auto& scripts = mEngine->GetScriptManager().GetScripts();
     if (mCurrentIndex >= static_cast<int>(scripts.size())) return;
     if (scripts[mCurrentIndex]->isCore) {
-        QMessageBox::information(this, "Loeschen", "Core-Scripts koennen nicht geloescht werden.");
+        QMessageBox::information(this, "Löschen", "Kern-Skripte können nicht gelöscht werden.");
         return;
     }
     const QString name = QString::fromStdString(scripts[mCurrentIndex]->name);
-    if (QMessageBox::question(this, "Script loeschen",
-            QString("\"%1\" wirklich loeschen?").arg(name)) != QMessageBox::Yes) {
+    if (QMessageBox::question(this, "Skript löschen",
+            QString("\"%1\" wirklich löschen?").arg(name)) != QMessageBox::Yes) {
         return;
     }
     mEngine->GetScriptManager().DeleteScript(scripts[mCurrentIndex]->name);
     mCurrentIndex = -1;
     mDirty = false;
-    emit logMessage("Script geloescht: " + name);
+    emit logMessage("Skript gelöscht: " + name);
     refresh();
     emit scriptsChanged();
 }
@@ -774,14 +979,14 @@ void QtCodeWorkspace::onReloadFromDisk() {
     if (!mEngine) return;
     if (hasUnsavedChanges()) {
         const auto r = QMessageBox::question(this, "Neu laden",
-            "Ungespeicherte Aenderungen verwerfen und von Disk laden?",
+            "Ungespeicherte Änderungen verwerfen und von der Festplatte laden?",
             QMessageBox::Yes | QMessageBox::No);
         if (r != QMessageBox::Yes) return;
     }
     mEngine->GetScriptManager().ReloadFromDisk();
     mDirty = false;
     mCurrentIndex = -1;
-    emit logMessage("Scripts von Disk neu geladen.");
+    emit logMessage("Skripte von der Festplatte neu geladen.");
     refresh();
     emit scriptsChanged();
 }
@@ -795,11 +1000,11 @@ void QtCodeWorkspace::onOpenExternal() {
             const QString hint = mCppDocs[static_cast<size_t>(mCurrentIndex)].pathHint;
             if (QFileInfo::exists(hint)) {
                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(hint).absoluteFilePath()));
-                emit logMessage("Extern geoeffnet: " + hint);
+                emit logMessage("Extern geöffnet: " + hint);
                 return;
             }
         }
-        emit logMessage("Keine Datei zum Oeffnen (Referenz ist eingebettet).");
+        emit logMessage("Keine Datei zum Öffnen (Referenz ist eingebettet).");
         return;
     }
     if (!QFileInfo::exists(mCurrentPath)) {
