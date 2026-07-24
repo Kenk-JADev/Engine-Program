@@ -86,6 +86,46 @@ Fertig:
 - [x] **Event-Editor-Dock**: Events / Seiten / Befehle
 - [x] **Database**: Skills / Weapons / Classes
 - [x] **Code**: Suche, Hot-Reload, Ruby-Fehleranzeige
+- [x] **Theme „XP Classic“** (PAKET 35): helle MAKER-Werkzeug-Optik
+- [x] **Radierer-Bugfix** (PAKET 35): Radierer loescht wirklich (siehe unten)
+
+## Theme & Fehler-Audit (PAKET 35)
+
+### Theme „XP Classic“
+
+`QtMain.cpp` — `ApplyXPEditorTheme()` ersetzt das fruehere dunkle
+„Fusion Dark“-Theme durch eine helle Redaktions-Oberflaeche im Stil
+klassischer MAKER-Werkzeuge:
+
+- **Palette**: helles Werkzeuggrau-Blau (Window `222,229,241`),
+  weisse Eingabeflaechen, XP-Blau als Akzent (`62,110,175`).
+  Eigenes Farbset — **kein** Nachbau fremder Skin-/Ressourcen-Dateien.
+- **QSS** fuer MenuBar, Menues, TabBar, Dock-Titel (Verlauf),
+  ToolBar `#mainToolBar` (Check-Markierung XP-blau), Buttons
+  (`:checked` = gedrueckter Werkzeug-Button), GroupBox, Eingabefelder
+  mit Fokus-Rahmen, Baum-/Listenselektion, Scrollbars, StatusBar,
+  Splitter.
+- **Ausnahme bewusst**: Der Code-Editor (`QtCodeWorkspace`) behaelt
+  seinen dunklen Hintergrund (`#1e1e1e`), weil die
+  Syntax-Farbtabelle dafuer abgestimmt ist.
+
+### Gefundene und behobene Fehler
+
+- **Radierer malte statt zu loeschen** (`QtMapTab.cpp`):
+  Der Radierer setzt `paintTile = -1`, aber `paintCell()` und
+  `applyFloodAt()` mappen `< 0` auf `0` — es wurde also Tile 0
+  (linkes oberes Tile des Sets) gemalt bzw. gefuellt, statt Zellen zu
+  leeren. Beide Stellen schreiben jetzt den Wert unveraendert
+  (`-1` = leer). `QtGameViewWidget` war nicht betroffen (nutzt
+  `mPaintTile` direkt).
+
+### Auditiert und fuer gut befunden
+
+- Flutfuellung: durch Seen-Set begrenzt (kein Endloslauf).
+- Undo/Verlauf: `paintCell` erzeugt bei „keine echte Aenderung“
+  keinen Verlaufseintrag.
+- Alle `std::stoi`-Stellen im Editor try/catch-abgesichert.
+- `Map::Load` besitzt seit PAKET 27 Validierung.
 
 Offen (spaeter):
 - [ ] Gizmo-Transform im Game View

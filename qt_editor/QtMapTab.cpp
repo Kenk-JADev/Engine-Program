@@ -294,7 +294,10 @@ private:
         if (!mEngine || !mEngine->IsInitialized()) return false;
         auto& map = mEngine->GetMap();
         if (x < 0 || z < 0 || x >= map.GetWidth() || z >= map.GetHeight()) return false;
-        const int nv = tileId < 0 ? 0 : tileId;
+        // PAKET 35 (Bugfix): -1 = Radierer -> LEER (-1) schreiben. Vorher
+        // wurde <0 auf 0 gemappt und der Radierer malte damit Tile 0
+        // (das linke obere Tile des Sets) statt zu loeschen.
+        const int nv = tileId;
         const int before = map.GetTile(layer, x, z);
         if (before == nv) return false; // keine echte Änderung -> auch kein Verlauf
         map.SetTile(layer, x, z, nv); // setzt mDirty -> 3D baut neu
@@ -342,7 +345,9 @@ private:
         if (!mEngine || !mEngine->IsInitialized()) return;
         auto& map = mEngine->GetMap();
         if (sx < 0 || sz < 0 || sx >= map.GetWidth() || sz >= map.GetHeight()) return;
-        const int nv = tileId < 0 ? 0 : tileId;
+        // PAKET 35 (Bugfix): -1 = Radierer -> leere Felder fuellen, siehe
+        // paintCell (vorher: <0 -> 0, Flufuellung mit Tile 0).
+        const int nv = tileId;
         const int target = map.GetTile(layer, sx, sz);
         if (target == nv) return;
 
