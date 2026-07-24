@@ -72,6 +72,61 @@ const WeaponData* ActorEquippedWeaponData(int actorId) {
     }
     return nullptr;
 }
+
+/// PAKET 24: XP element_raten — Schadensfaktor in Prozent.
+/// Rang A..F = 200/150/100/50/0/-100 % (fehlender Eintrag = C = 100).
+/// Traegt das Ziel (Akteur) eine Ruestung mit guard_element_set auf
+/// dieses Element, halbiert sich der Faktor (XP-Ruestungsschutz).
+int ElementDamagePercent(const Battler& target, int elementId) {
+    static const int kPct[6] = {200, 150, 100, 50, 0, -100}; // A B C D E F
+    int rank = 2; // C
+    if (elementId > 0) {
+        const std::vector<int>* ranks = nullptr;
+        if (target.isActor) {
+            if (const auto* a = Database::Get().GetActor(target.id)) ranks = &a->elementRanks;
+        } else {
+            if (const auto* e = Database::Get().GetEnemy(target.id)) ranks = &e->elementRanks;
+        }
+        if (ranks && (size_t)(elementId - 1) < ranks->size())
+            rank = std::clamp((*ranks)[(size_t)(elementId - 1)], 0, 5);
+    }
+    int pct = kPct[rank];
+    if (target.isActor && pct > 0) {
+        if (auto* ga = Game::Get().Party().GetActor(target.id)) {
+            for (int armorId : ga->armors) {
+                const ArmorData* ad = nullptr;
+                for (const auto& a : Database::Get().Armors())
+                    if (a.id == armorId) { ad = &a; break; }
+                if (ad && std::find(ad->guardElements.begin(), ad->guardElements.end(),
+                                    elementId) != ad->guardElements.end()) {
+                    pct /= 2;
+                    break; // XP: Ruestungsschutz stapelt nicht
+                }
+            }
+        }
+    }
+    return pct;
+}
+
+/// PAKET 24: wirksamstes Element der Waffe gegen das Ziel (XP: bei
+/// mehreren element_set-Eintraegen gilt das beste).
+void ChooseBestWeaponElement(const WeaponData& w, const Battler& target,
+                             int& outId, int& outPct) {
+    outId = w.elementSet.front();
+    outPct = ElementDamagePercent(target, outId);
+    for (int eid : w.elementSet) {
+        const int p = ElementDamagePercent(target, eid);
+        if (p > outPct) { outPct = p; outId = eid; }
+    }
+}
+
+/// PAKET 24: Elementname aus dem System-Tab (fuer Meldungen)
+std::string ElementName(int elementId) {
+    const auto& els = Database::Get().System().elements;
+    if (elementId > 0 && (size_t)(elementId - 1) < els.size())
+        return els[(size_t)(elementId - 1)];
+    return "Element #" + std::to_string(elementId);
+}
 } // namespace
 
 BattleSystem& BattleSystem::Get() {
@@ -768,20 +823,44 @@ void BattleSystem::ProcessTurn() {
             } else {
                 int dmg = std::max(1, subject->atk - target->def/2);
                 if (target->isGuarding) dmg = std::max(1, dmg/2);
-                const bool crit = uni(BattleRng()) < 0.0625f;
-                if (crit) dmg *= 3;
-                target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
-                std::string msg = subject->name + " greift " + target->name + " an: " +
-                                  std::to_string(dmg) + " Schaden!";
-                if (crit) msg += " Kritischer Treffer!";
-                if (target->isDead) msg += " " + target->name + " wurde besiegt!";
-                if (onMessage) onMessage(msg);
-                if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
-                // PAKET 22: XP plus/minus_state_set der Waffe (nur bei Treffer;
-                // ApplyStateSets ignoriert bereits Tote automatisch)
+                // PAKET 24: Element des Waffenangriffs — bei gesetztem
+                // element_set der Waffe wirksamstes Element gegen den Rang
+                // des Ziels (XP), inkl. Immun (E) und Absorption (F).
+                int elemPct = 100, elemId = 0;
                 if (subject->isActor) {
                     if (const WeaponData* w = ActorEquippedWeaponData(subject->id))
-                        ApplyStateSets(*target, w->plusStates, w->minusStates);
+                        if (!w->elementSet.empty())
+                            ChooseBestWeaponElement(*w, *target, elemId, elemPct);
+                }
+                const bool crit = uni(BattleRng()) < 0.0625f;
+                if (crit) dmg *= 3;
+                dmg = dmg * elemPct / 100;
+                std::string msg = subject->name + " greift " + target->name + " an:";
+                if (elemPct == 0) {
+                    msg += " Immun gegen " + ElementName(elemId) + "!";
+                    if (onMessage) onMessage(msg);
+                } else if (elemPct < 0) {
+                    const int amt = std::max(1, -dmg);
+                    target->Recover(amt, 0);
+                    msg += " absorbiert " + std::to_string(amt) + " HP (" +
+                           ElementName(elemId) + ")!";
+                    if (onMessage) onMessage(msg);
+                } else {
+                    dmg = std::max(1, dmg);
+                    target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
+                    msg += " " + std::to_string(dmg) + " Schaden!";
+                    if (crit) msg += " Kritischer Treffer!";
+                    if (elemPct >= 150) msg += " Sehr effektiv!";
+                    else if (elemPct <= 50) msg += " Kaum effektiv...";
+                    if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                    if (onMessage) onMessage(msg);
+                    if (target->isDead && onEnemyDefeated && !target->isActor) onEnemyDefeated(target->id);
+                    // PAKET 22: XP plus/minus_state_set der Waffe (nur bei
+                    // Treffer; ApplyStateSets ignoriert Tote automatisch)
+                    if (subject->isActor) {
+                        if (const WeaponData* w = ActorEquippedWeaponData(subject->id))
+                            ApplyStateSets(*target, w->plusStates, w->minusStates);
+                    }
                 }
             }
         } else if (onMessage) onMessage(subject->name + " greift an... aber da ist niemand!");
@@ -819,14 +898,33 @@ void BattleSystem::ProcessTurn() {
                 }
                 int dmg = std::max(1, power + subject->atk/2 - target->def/2);
                 if (target->isGuarding) dmg = std::max(1, dmg/2);
+                // PAKET 24: XP element_id des Skills gegen den Element-Rang
+                // des Ziels (A..F), inkl. Immun (E) und Absorption (F).
+                const int elemPct = (sk->elementId > 0)
+                    ? ElementDamagePercent(*target, sk->elementId) : 100;
                 const bool crit = uni(BattleRng()) < 0.0625f;
                 if (crit) dmg *= 3;
-                target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
-                msg += "\n" + target->name + ": " + std::to_string(dmg) + " Schaden!" +
-                       (crit ? " Kritischer Treffer!" : "");
-                if (target->isDead) msg += " " + target->name + " wurde besiegt!";
-                if (target->isDead && onEnemyDefeated && !target->isActor)
-                    onEnemyDefeated(target->id);
+                dmg = dmg * elemPct / 100;
+                if (elemPct == 0) {
+                    msg += "\n" + target->name + ": Immun gegen " +
+                           ElementName(sk->elementId) + "!";
+                } else if (elemPct < 0) {
+                    const int amt = std::max(1, -dmg);
+                    target->Recover(amt, 0);
+                    msg += "\n" + target->name + ": absorbiert " +
+                           std::to_string(amt) + " HP (" +
+                           ElementName(sk->elementId) + ")!";
+                } else {
+                    dmg = std::max(1, dmg);
+                    target->ApplyDamage(dmg, crit ? BattleHitKind::Crit : BattleHitKind::Damage);
+                    msg += "\n" + target->name + ": " + std::to_string(dmg) + " Schaden!" +
+                           (crit ? " Kritischer Treffer!" : "");
+                    if (elemPct >= 150) msg += " Sehr effektiv!";
+                    else if (elemPct <= 50) msg += " Kaum effektiv...";
+                    if (target->isDead) msg += " " + target->name + " wurde besiegt!";
+                    if (target->isDead && onEnemyDefeated && !target->isActor)
+                        onEnemyDefeated(target->id);
+                }
                 // PAKET 17: Zustaende des Skills nur bei Treffer (XP)
                 if (sk) ApplySkillStates(*target, *sk);
             }

@@ -458,6 +458,12 @@ void QtDatabaseDialog::buildActorsTab() {
     rankEdit->setToolTip(QL("Zustands-Resistenz als ID=Rang, kommagetrennt (A..F).\n"
                             "A = 100 % Treffer, F = 0 % (immun). Fehlende Zustände = C (60 %).\n"
                             "Beispiel: 1=C, 2=A, 4=F"));
+    // PAKET 24: XP element_raten — Element-Rang \"ID=Rang(A..F)\"
+    auto* elemRankEdit = makeLine(formHost);
+    elemRankEdit->setToolTip(QL(\"Element-Rang als ID=Rang, kommagetrennt (A..F).\n\"
+                                \"A = 200 % Schaden, B = 150, C = 100, D = 50, E = 0 (immun),\n\"
+                                \"F = -100 % (absorbiert/heilt). Fehlende Elemente = C.\n\"
+                                \"Beispiel: 1=D, 4=E, 7=A\"));
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Klasse"), klass);
@@ -486,6 +492,7 @@ void QtDatabaseDialog::buildActorsTab() {
     form->addRow(QL("Kurve Abwehr"), cvDef);
     form->addRow(QL("Kurve Agilität"), cvAgi);
     form->addRow(QL("Zustands-Ränge (ID=Grad)"), rankEdit); // PAKET 17
+    form->addRow(QL("Element-Ränge (ID=Grad)"), elemRankEdit); // PAKET 24
 
     tp->count = [this]() { return (int)mActors.size(); };
     tp->nameAt = [this](int i) {
@@ -496,7 +503,7 @@ void QtDatabaseDialog::buildActorsTab() {
         for (size_t i = 0; i < mActors.size(); ++i) mActors[i].id = (int)i + 1;
     };
     tp->loadForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                    battlerName, equipsEdit, rankEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                    battlerName, equipsEdit, rankEdit, elemRankEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
                     fmhp, fmmp, fatk, fdef, fagi,
                     cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         auto& a = mActors[(size_t)i];
@@ -515,6 +522,7 @@ void QtDatabaseDialog::buildActorsTab() {
         for (int e : a.equips) eqs << QString::number(e);
         equipsEdit->setText(eqs.join(QLatin1String(", ")));
         rankEdit->setText(RanksToText(a.stateRanks)); // PAKET 17
+        elemRankEdit->setText(RanksToText(a.elementRanks)); // PAKET 24
         mhp->setValue(a.initialStats.mhp);
         mmp->setValue(a.initialStats.mmp);
         atk->setValue(a.initialStats.atk);
@@ -536,12 +544,13 @@ void QtDatabaseDialog::buildActorsTab() {
         cvAgi->setCurrentIndex(curveIdx(a.curveAgi));
     };
     tp->storeForm = [this, tp, name, klass, initLv, maxLv, charName, faceName,
-                     battlerName, equipsEdit, rankEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
+                     battlerName, equipsEdit, rankEdit, elemRankEdit, mhp, mmp, atk, def, mat, mdf, agi, luk,
                      fmhp, fmmp, fatk, fdef, fagi,
                      cvHp, cvMp, cvAtk, cvDef, cvAgi](int i) {
         if ((size_t)i >= mActors.size()) return;
         auto& a = mActors[(size_t)i];
         a.stateRanks = ParseRanksText(rankEdit->text()); // PAKET 17
+        a.elementRanks = ParseRanksText(elemRankEdit->text()); // PAKET 24
         a.name = name->text().toStdString();
         a.className = klass->currentText().toStdString();
         a.initialLevel = initLv->value();
@@ -704,9 +713,14 @@ void QtDatabaseDialog::buildSkillsTab() {
     // PAKET 21: XP occasion (Anlass) — steuert Benutzbarkeit Kampf/Menue
     auto* occ = makeCombo(formHost, {QL("Immer"), QL("Nur im Kampf"),
                                      QL("Nur im Menü"), QL("Nie")}, 0);
+    // PAKET 24: XP element_id (0 = physisch/kein Element)
+    auto* elemSpin = makeSpin(0, 999, 0, formHost);
+    elemSpin->setToolTip(QL("Element-ID des Skills (XP element_id).\n"
+                            "0 = physisch (kein Element). IDs nach System-Tab \"Elemente\"."));
     form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
     form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
     form->addRow(QL("Anlass"), occ);
+    form->addRow(QL("Element (ID, 0 = physisch)"), elemSpin);
 
     tp->count = [this]() { return (int)mSkills.size(); };
     tp->nameAt = [this](int i) {
@@ -717,7 +731,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         for (size_t i = 0; i < mSkills.size(); ++i) mSkills[i].id = (int)i + 1;
     };
     tp->loadForm = [this, name, desc, cost, scope, power, anim, animId,
-                    plusEdit, minusEdit, occ](int i) {
+                    plusEdit, minusEdit, occ, elemSpin](int i) {
         auto& s = mSkills[(size_t)i];
         name->setText(QString::fromStdString(s.name));
         desc->setText(QString::fromStdString(s.description));
@@ -729,9 +743,10 @@ void QtDatabaseDialog::buildSkillsTab() {
         plusEdit->setText(JoinIds(s.plusStates));   // PAKET 17
         minusEdit->setText(JoinIds(s.minusStates)); // PAKET 17
         occ->setCurrentIndex(qBound(0, s.occasion, 3)); // PAKET 21
+        elemSpin->setValue(s.elementId); // PAKET 24
     };
     tp->storeForm = [this, tp, name, desc, cost, scope, power, anim, animId,
-                     plusEdit, minusEdit, occ](int i) {
+                     plusEdit, minusEdit, occ, elemSpin](int i) {
         if ((size_t)i >= mSkills.size()) return;
         auto& s = mSkills[(size_t)i];
         s.name = name->text().toStdString();
@@ -744,6 +759,7 @@ void QtDatabaseDialog::buildSkillsTab() {
         s.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 17
         s.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 17
         s.occasion = occ->currentIndex();               // PAKET 21
+        s.elementId = elemSpin->value();                // PAKET 24
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);
@@ -853,6 +869,11 @@ void QtDatabaseDialog::buildWeaponsTab() {
     auto* minusEdit = makeLine(formHost);
     minusEdit->setToolTip(QL("Zustände, die ein Treffer mit dieser Waffe heilt (XP minus_state_set).\n"
                              "IDs kommagetrennt."));
+    // PAKET 24: XP element_set — Element-IDs des Waffenangriffs
+    auto* elemEdit = makeLine(formHost);
+    elemEdit->setToolTip(QL("Elemente des Waffenangriffs (XP element_set).\n"
+                            "IDs kommagetrennt nach System-Tab \"Elemente\";\n"
+                            "LEER = physisch. Gegen das Ziel wirkt das wirksamste."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
@@ -862,6 +883,7 @@ void QtDatabaseDialog::buildWeaponsTab() {
     form->addRow(QL("Animations-ID"), animId);
     form->addRow(QL("Verhängt Zustände (IDs)"), plusEdit);
     form->addRow(QL("Heilt Zustände (IDs)"), minusEdit);
+    form->addRow(QL("Elemente (IDs)"), elemEdit);
 
     tp->count = [this]() { return (int)mWeapons.size(); };
     tp->nameAt = [this](int i) {
@@ -872,7 +894,7 @@ void QtDatabaseDialog::buildWeaponsTab() {
         for (size_t i = 0; i < mWeapons.size(); ++i) mWeapons[i].id = (int)i + 1;
     };
     tp->loadForm = [this, name, desc, price, atk, defPlus, agiPlus, animId,
-                    plusEdit, minusEdit](int i) {
+                    plusEdit, minusEdit, elemEdit](int i) {
         auto& w = mWeapons[(size_t)i];
         name->setText(QString::fromStdString(w.name));
         desc->setText(QString::fromStdString(w.description));
@@ -883,9 +905,10 @@ void QtDatabaseDialog::buildWeaponsTab() {
         animId->setValue(w.animationId);
         plusEdit->setText(JoinIds(w.plusStates));   // PAKET 22
         minusEdit->setText(JoinIds(w.minusStates)); // PAKET 22
+        elemEdit->setText(JoinIds(w.elementSet));   // PAKET 24
     };
     tp->storeForm = [this, tp, name, desc, price, atk, defPlus, agiPlus, animId,
-                     plusEdit, minusEdit](int i) {
+                     plusEdit, minusEdit, elemEdit](int i) {
         if ((size_t)i >= mWeapons.size()) return;
         auto& w = mWeapons[(size_t)i];
         w.name = name->text().toStdString();
@@ -897,6 +920,7 @@ void QtDatabaseDialog::buildWeaponsTab() {
         w.animationId = animId->value();
         w.plusStates = ParseIdsCsv(plusEdit->text());   // PAKET 22
         w.minusStates = ParseIdsCsv(minusEdit->text()); // PAKET 22
+        w.elementSet = ParseIdsCsv(elemEdit->text());   // PAKET 24
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);
@@ -922,6 +946,10 @@ void QtDatabaseDialog::buildArmorsTab() {
     guardEdit->setToolTip(QL("Zustände, die der Träger dauerhaft hat, solange die Rüstung\n"
                              "angelegt ist (XP guard_state_set / auto_state, z. B. Fluch).\n"
                              "IDs kommagetrennt, z. B. 1 (Gift)."));
+    // PAKET 24: XP guard_element_set — halbiert Schaden dieser Elemente
+    auto* guardElemEdit = makeLine(formHost);
+    guardElemEdit->setToolTip(QL("Elemente, deren Schaden am Träger halbiert wird (XP guard_element_set).\n"
+                                 "IDs kommagetrennt nach System-Tab \"Elemente\", z. B. 1 (Feuer)."));
     form->addRow(QL("Name"), name);
     form->addRow(QL("Beschreibung"), desc);
     form->addRow(QL("Preis"), price);
@@ -930,6 +958,7 @@ void QtDatabaseDialog::buildArmorsTab() {
     form->addRow(QL("Geschwindigkeit-Bonus"), agiPlus);
     form->addRow(QL("Rüstungsart"), type);
     form->addRow(QL("Passive Zustände (IDs)"), guardEdit);
+    form->addRow(QL("Element-Schutz (IDs)"), guardElemEdit);
 
     tp->count = [this]() { return (int)mArmors.size(); };
     tp->nameAt = [this](int i) {
@@ -939,7 +968,8 @@ void QtDatabaseDialog::buildArmorsTab() {
         mArmors.resize((size_t)n);
         for (size_t i = 0; i < mArmors.size(); ++i) mArmors[i].id = (int)i + 1;
     };
-    tp->loadForm = [this, name, desc, price, def, mdf, type, agiPlus, guardEdit](int i) {
+    tp->loadForm = [this, name, desc, price, def, mdf, type, agiPlus, guardEdit,
+                    guardElemEdit](int i) {
         auto& a = mArmors[(size_t)i];
         name->setText(QString::fromStdString(a.name));
         desc->setText(QString::fromStdString(a.description));
@@ -948,9 +978,11 @@ void QtDatabaseDialog::buildArmorsTab() {
         mdf->setValue(a.mdf);
         agiPlus->setValue(a.agiPlus); // PAKET 23
         type->setCurrentIndex((int)a.armorType);
-        guardEdit->setText(JoinIds(a.guardStates)); // PAKET 23
+        guardEdit->setText(JoinIds(a.guardStates));     // PAKET 23
+        guardElemEdit->setText(JoinIds(a.guardElements)); // PAKET 24
     };
-    tp->storeForm = [this, tp, name, desc, price, def, mdf, type, agiPlus, guardEdit](int i) {
+    tp->storeForm = [this, tp, name, desc, price, def, mdf, type, agiPlus, guardEdit,
+                     guardElemEdit](int i) {
         if ((size_t)i >= mArmors.size()) return;
         auto& a = mArmors[(size_t)i];
         a.name = name->text().toStdString();
@@ -960,7 +992,8 @@ void QtDatabaseDialog::buildArmorsTab() {
         a.mdf = mdf->value();
         a.agiPlus = agiPlus->value(); // PAKET 23
         a.armorType = (rpg::ArmorData::Type)type->currentIndex();
-        a.guardStates = ParseIdsCsv(guardEdit->text()); // PAKET 23
+        a.guardStates = ParseIdsCsv(guardEdit->text());       // PAKET 23
+        a.guardElements = ParseIdsCsv(guardElemEdit->text()); // PAKET 24
         if (!tp->loading && tp->list) tp->list->item(i)->setText(tp->nameAt(i));
     };
     rebuildList(t, 0);
@@ -993,6 +1026,12 @@ void QtDatabaseDialog::buildEnemiesTab() {
     rankEdit->setToolTip(QL("Zustands-Resistenz als ID=Rang, kommagetrennt (A..F).\n"
                             "A = 100 % Treffer, F = 0 % (immun). Fehlende Zustände = C (60 %).\n"
                             "Beispiel: 1=C, 2=A, 4=F"));
+    // PAKET 24: XP element_raten — Element-Rang "ID=Rang(A..F)"
+    auto* elemRankEdit = makeLine(formHost);
+    elemRankEdit->setToolTip(QL("Element-Rang als ID=Rang, kommagetrennt (A..F).\n"
+                                "A = 200 % Schaden, B = 150, C = 100, D = 50, E = 0 (immun),\n"
+                                "F = -100 % (absorbiert/heilt). Fehlende Elemente = C.\n"
+                                "Beispiel: 1=D, 4=E, 7=A"));
 
     form->addRow(QL("Name"), name);
     form->addRow(QL("Battler-Grafik"), battler);
@@ -1009,6 +1048,7 @@ void QtDatabaseDialog::buildEnemiesTab() {
     form->addRow(QL("Gold"), gold);
     form->addRow(QL("Beute"), drops);
     form->addRow(QL("Zustands-Ränge (ID=Grad)"), rankEdit); // PAKET 17
+    form->addRow(QL("Element-Ränge (ID=Grad)"), elemRankEdit); // PAKET 24
 
     // ------------------------------------------------------------------
     // PAKET 18: XP-Aktionstabelle (RPG::Enemy.actions) — Gegner ohne
@@ -1141,13 +1181,14 @@ void QtDatabaseDialog::buildEnemiesTab() {
         for (size_t i = 0; i < mEnemies.size(); ++i) mEnemies[i].id = (int)i + 1;
     };
     tp->loadForm = [this, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi, luk,
-                    exp, gold, drops, rankEdit, actBuffer, refreshActs](int i) {
+                    exp, gold, drops, rankEdit, elemRankEdit, actBuffer, refreshActs](int i) {
         auto& e = mEnemies[(size_t)i];
         *actBuffer = e.actions;           // PAKET 18: Tabelle uebernehmen
         refreshActs(0);
         name->setText(QString::fromStdString(e.name));
         battler->setText(QString::fromStdString(e.battlerName));
         rankEdit->setText(RanksToText(e.stateRanks)); // PAKET 17
+        elemRankEdit->setText(RanksToText(e.elementRanks)); // PAKET 24
         hue->setValue(e.battlerHue);
         mhp->setValue(e.maxHp);
         mmp->setValue(e.maxMp);
@@ -1164,11 +1205,12 @@ void QtDatabaseDialog::buildEnemiesTab() {
         drops->setText(ids.join(QLatin1Char(',')));
     };
     tp->storeForm = [this, tp, name, battler, hue, mhp, mmp, atk, def, mat, mdf, agi,
-                     luk, exp, gold, drops, rankEdit, actBuffer](int i) {
+                     luk, exp, gold, drops, rankEdit, elemRankEdit, actBuffer](int i) {
         if ((size_t)i >= mEnemies.size()) return;
         auto& e = mEnemies[(size_t)i];
         e.actions = *actBuffer;                        // PAKET 18
         e.stateRanks = ParseRanksText(rankEdit->text()); // PAKET 17
+        e.elementRanks = ParseRanksText(elemRankEdit->text()); // PAKET 24
         e.name = name->text().toStdString();
         e.battlerName = battler->text().toStdString();
         e.battlerHue = hue->value();

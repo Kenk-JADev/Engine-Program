@@ -44,6 +44,9 @@ struct ActorData {
     // PAKET 17: XP state_ranks — index = Zustands-ID - 1, Wert 0..5 =
     // Rang A..F (Trefferchance 100/80/60/40/20/0 %). Fehlender Eintrag = C.
     std::vector<int> stateRanks;
+    // PAKET 24: XP element_raten — index = Element-ID - 1, Wert 0..5 =
+    // Rang A..F (Schadensfaktor 200/150/100/50/0/-100 %). Fehlend = C.
+    std::vector<int> elementRanks;
 };
 
 struct ClassData {
@@ -103,6 +106,10 @@ struct WeaponData {
     // wirken auf GameActor::Def()/Agi() solange die Waffe angelegt ist.
     int defPlus = 0;
     int agiPlus = 0;
+    // PAKET 24: XP element_set — Element-IDs des Waffenangriffs; bei
+    // mehreren wirkt gegen das Ziel das wirksamste (XP). Leer = physisch
+    // (kein Element, keine Raten-Wertung).
+    std::vector<int> elementSet;
 };
 
 struct ArmorData {
@@ -120,6 +127,9 @@ struct ArmorData {
     // Traeger PASSIV hat, solange die Ruestung angelegt ist (klassisch:
     // „verfluchte" Items, die z. B. dauerhaft vergiften).
     std::vector<int> guardStates;
+    // PAKET 24: XP guard_element_set — Element-IDs, deren Schaden am
+    // Traeger halbiert wird (Element-Schutz).
+    std::vector<int> guardElements;
 };
 
 struct SkillData {
@@ -144,6 +154,10 @@ struct SkillData {
     // (XP Game_Actor#skill_can_use?): Kampf filtert 2 und 3 heraus,
     // Menue 1 und 3 (Eintrag bleibt sichtbar, aber deaktiviert).
     int occasion = 0;
+    // PAKET 24: XP element_id — das eine Element des Skills (0 = keines/
+    // physisch). Der Schaden wird gegen den Element-Rang (A..F) des
+    // Ziels gewertet, ggf. halbiert durch Element-Schutz-Ruestung.
+    int elementId = 0;
 };
 
 struct EnemyData {
@@ -165,6 +179,9 @@ struct EnemyData {
     // PAKET 17: XP state_ranks — index = Zustands-ID - 1, Wert 0..5 =
     // Rang A..F (Trefferchance 100/80/60/40/20/0 %). Fehlender Eintrag = C.
     std::vector<int> stateRanks;
+    // PAKET 24: XP element_raten — index = Element-ID - 1, Wert 0..5 =
+    // Rang A..F (Schadensfaktor 200/150/100/50/0/-100 %). Fehlend = C.
+    std::vector<int> elementRanks;
     // PAKET 18: XP RPG::Enemy.actions — Verhaltenstabelle des Gegners.
     // kind 0 = Basis-Aktion (basic: 0 Angriff, 1 Verteidigen, 2 Flucht,
     // 3 Nichtstun), kind 1 = Fertigkeit (skillId). Gegner ohne Eintraege

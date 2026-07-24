@@ -1365,6 +1365,45 @@ nur den Holzstab waehlen (Giftklinge grau „[falsche Klasse]"), Krieger
 weiterhin alles; Status-AGI steigt mit Holzstab um 2; Editor-Sets
 ueberleben Save/Load (Classes.json).
 
+## PAKET 24 — Elementar-System (XP element_raten A..F) ✅ ERLEDIGT 2026-07-24
+
+Die Element-Namen existierten schon (System-Tab), aber nichts wertete
+sie aus. Jetzt das komplette XP-Modell: Element-Sets an Waffe/Skill,
+Rang-Tabelle A..F an Akteur/Gegner und Element-Schutz-Ruestung.
+
+- [x] **Rang-Tabelle (XP element_raten):** `ActorData.elementRanks` /
+  `EnemyData.elementRanks` (Index = Element-ID-1, Wert 0..5 = A..F =
+  Schadensfaktor **200/150/100/50/0/-100 %**, fehlend = C). Persistenz
+  `elementRanks` in Actors/Enemies.json; Editor-Felder im Stil der
+  Zustands-Raenge („1=D, 4=E, 7=A").
+- [x] **Skill-Element (XP element_id):** `SkillData.elementId` (0 =
+  physisch) mit Persistenz + Editor-Spin; Schaden pro Ziel gegen den
+  Rang gewertet — mit **Immun (E: „Immun gegen Feuer!")** und
+  **Absorption (F: heilt, „absorbiert n HP")**; Meldungs-Tags „Sehr
+  effektiv!" (>=150 %) / „Kaum effektiv..." (<=50 %); Crit vor der
+  Multiplikation (XP).
+- [x] **Waffen-Elemente (XP element_set):** `WeaponData.elementSet`
+  (mehrere IDs moeglich — gegen das Ziel wirkt das WIRKSAMSTE, XP);
+  Persistenz + Editor-Feld; greift im Standardangriff.
+- [x] **Element-Schutz (XP guard_element_set):** `ArmorData.
+  guardElements` halbiert den Faktor einmalig (stapelt nicht);
+  Persistenz + Editor-Feld.
+- [x] **Demo:** „Fire" traegt Element 1 (Feuer); Bat im Fallback UND
+  SampleProject „elementRanks":[0] (Feuer-Rang A = 200 %), Slime [3]
+  (Feuer D = 50 %); neue Ruestung „Feuerumhang" (guardElements={1}).
+
+**Bewusst offen:** Feuer-Animations-Hooks pro Element, Elementschaden
+im Menue (Items mit element_get... XP-Items haben kein Element),
+„physical/magical"-Flag der Skills (trennt ATK- vs INT-Formel —
+bisher laeuft alles ueber atk/def), Hit-/Evasionsraten
+(ActorData.hr/er), Guard-Element-Anzeige im Ziel-Hinweis.
+
+**Akzeptanz:** Fire auf Bat -> doppelter Schaden + „Sehr effektiv!";
+Fire auf Slime -> halber Schaden + „Kaum effektiv..."; Held mit
+Feuerumhang erhaelt halbierten Feuerschaden; Waffe mit mehreren
+Elementen waehlt pro Gegner das wirksamste; Editor-Raenge ueberleben
+Save/Load (elementRanks in Actors/Enemies.json).
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

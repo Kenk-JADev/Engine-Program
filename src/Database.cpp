@@ -104,11 +104,17 @@ void Database::CreateDefaults() {
         ArmorData ring; ring.id=2; ring.name="Fluchring"; ring.def=1; ring.price=1;
         ring.armorType=rpg::ArmorData::Type::Accessory; ring.guardStates={1};
         mArmors.push_back(ring);
+        // PAKET 24: Demo fuer XP guard_element_set — halbiert Feuer-Schaden
+        ArmorData cape; cape.id=3; cape.name="Feuerumhang"; cape.def=3; cape.price=250;
+        cape.armorType=rpg::ArmorData::Type::Body; cape.guardElements={1};
+        mArmors.push_back(cape);
     }
 
     // Skills
     if (mSkills.empty()) {
+        // PAKET 24: Demo-Element — Feuer (Element-ID 1 aus System.elements)
         SkillData fire; fire.id=1; fire.name="Fire"; fire.mpCost=5; fire.power=50;
+        fire.elementId=1;
         mSkills.push_back(fire);
         // PAKET 21: Heal hatte scope=1 (Gegner!) — konnte so nie im Menue
         // wirken und „heilte" im Kampf Gegner. XP-konform: scope 3 = ein
@@ -138,6 +144,8 @@ void Database::CreateDefaults() {
         slime.actions.push_back({}); // ein Standardangriff, rating 5
         mEnemies.push_back(slime);
         EnemyData bat; bat.id=2; bat.name="Bat"; bat.maxHp=60; bat.maxMp=10; bat.atk=15; bat.agi=14; bat.exp=15; bat.gold=10;
+        // PAKET 24: Demo — Fledermaus ist feueranfaellig (Rang A = 200 %)
+        bat.elementRanks={0};
         // PAKET 18: Bat nutzt „Giftstich" (Skill 3), wenn HP <= 80 % —
         // Demo fuer die XP-Aktionstabelle (rating 4 < Angriff 5)
         {
@@ -343,6 +351,8 @@ rpg::ActorData ParseActorObject(const std::string& obj) {
 
     // PAKET 17: XP state_ranks [0..5] (Index = Zustands-ID-1, fehlt = C)
     ParseIntArrayInto(obj, "stateRanks", a.stateRanks);
+    // PAKET 24: XP element_raten [0..5=A..F] (Index = Element-ID-1, fehlt = C)
+    ParseIntArrayInto(obj, "elementRanks", a.elementRanks);
 
     return a;
 }
@@ -443,6 +453,8 @@ rpg::EnemyData ParseEnemyObject(const std::string& obj) {
     if (TryParseInt(obj, "battlerHue", 0, v)) e.battlerHue = v;
     // PAKET 17: XP state_ranks [0..5] (Index = Zustands-ID-1, fehlt = C)
     ParseIntArrayInto(obj, "stateRanks", e.stateRanks);
+    // PAKET 24: XP element_raten [0..5=A..F] (Index = Element-ID-1, fehlt = C)
+    ParseIntArrayInto(obj, "elementRanks", e.elementRanks);
     // PAKET 18: XP RPG::Enemy.actions (Objekt-Array, optional)
     {
         std::string arr;
@@ -484,6 +496,8 @@ rpg::WeaponData ParseWeaponObject(const std::string& obj) {
     // PAKET 22: XP plus_state_set / minus_state_set (Zustands-IDs)
     ParseIntArrayInto(obj, "plusStates", w.plusStates);
     ParseIntArrayInto(obj, "minusStates", w.minusStates);
+    // PAKET 24: XP element_set (Element-IDs des Waffenangriffs)
+    ParseIntArrayInto(obj, "elementSet", w.elementSet);
     return w;
 }
 
@@ -507,6 +521,8 @@ rpg::ArmorData ParseArmorObject(const std::string& obj) {
         a.armorType = (rpg::ArmorData::Type)std::clamp(v, 0, 3);
     // PAKET 23: XP guard_state_set (passive Zustaende am Traeger)
     ParseIntArrayInto(obj, "guardStates", a.guardStates);
+    // PAKET 24: XP guard_element_set (Element-Schutz, halbiert Schaden)
+    ParseIntArrayInto(obj, "guardElements", a.guardElements);
     return a;
 }
 
@@ -527,6 +543,8 @@ rpg::SkillData ParseSkillObject(const std::string& obj) {
     if (TryParseInt(obj, "scope", 0, v)) s.scope = v;
     // PAKET 21: XP occasion (0=immer 1=nur Kampf 2=nur Menue 3=nie)
     if (TryParseInt(obj, "occasion", 0, v)) s.occasion = std::clamp(v, 0, 3);
+    // PAKET 24: XP element_id (0 = physisch/kein Element)
+    if (TryParseInt(obj, "elementId", 0, v)) s.elementId = std::max(0, v);
     // PAKET 17: XP plus_state_set / minus_state_set (Zustands-IDs)
     ParseIntArrayInto(obj, "plusStates", s.plusStates);
     ParseIntArrayInto(obj, "minusStates", s.minusStates);
@@ -1069,7 +1087,8 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"faceIndex\":" << a.faceIndex
                   << ",\"battlerName\":\"" << Escape(a.battlerName) << "\""
                   << ",\"equips\":\"" << eq << "\"";
-                WriteIntArray(f, "stateRanks", a.stateRanks); // PAKET 17
+                WriteIntArray(f, "stateRanks", a.stateRanks);   // PAKET 17
+                WriteIntArray(f, "elementRanks", a.elementRanks); // PAKET 24
                 f << "}";
                 if (i+1<mActors.size()) f << ",";
                 f << "\n";
@@ -1152,7 +1171,8 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"luk\":" << e.luk
                   << ",\"exp\":" << e.exp
                   << ",\"gold\":" << e.gold;
-                WriteIntArray(f, "stateRanks", e.stateRanks); // PAKET 17
+                WriteIntArray(f, "stateRanks", e.stateRanks);   // PAKET 17
+                WriteIntArray(f, "elementRanks", e.elementRanks); // PAKET 24
                 // PAKET 18: XP actions-Objekt-Array
                 f << ",\"actions\":[";
                 for (size_t j = 0; j < e.actions.size(); ++j) {
@@ -1255,6 +1275,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"animationId\":" << w.animationId;
                 WriteIntArray(f, "plusStates", w.plusStates);   // PAKET 22
                 WriteIntArray(f, "minusStates", w.minusStates); // PAKET 22
+                WriteIntArray(f, "elementSet", w.elementSet);   // PAKET 24
                 f << "}";
                 if (i+1<mWeapons.size()) f << ",";
                 f << "\n";
@@ -1277,6 +1298,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"armorType\":" << (int)a.armorType // PAKET 23 (war ungespeichert)
                   << ",\"iconIndex\":" << a.iconIndex;
                 WriteIntArray(f, "guardStates", a.guardStates); // PAKET 23
+                WriteIntArray(f, "guardElements", a.guardElements); // PAKET 24
                 f << "}";
                 if (i+1<mArmors.size()) f << ",";
                 f << "\n";
@@ -1297,6 +1319,7 @@ bool Database::Save(const std::string& projectPath) const {
                   << ",\"iconIndex\":" << s.iconIndex
                   << ",\"scope\":" << s.scope
                   << ",\"occasion\":" << s.occasion // PAKET 21 (XP occasion)
+                  << ",\"elementId\":" << s.elementId // PAKET 24 (XP element_id)
                   << ",\"animation\":\"" << Escape(s.animation) << "\""
                   << ",\"animationId\":" << s.animationId;
                 WriteIntArray(f, "plusStates", s.plusStates);   // PAKET 17
