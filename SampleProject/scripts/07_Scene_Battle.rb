@@ -4,7 +4,7 @@ class Scene_Battle < Scene_Base
     super
     UI.clear_texts
     UI.show_screen_text("=== KAMPF ===", 0.5, 0.08, 1.0, 0.3, 0.3, 0.0)
-    UI.show_screen_text("1/A Angriff  2/S Skill  3/I Item  4 Flucht", 0.5, 0.16, 0.95, 0.95, 0.7, 0.0)
+    UI.show_screen_text("Kampfmenue: Pfeiltasten/Maus + Enter - Angriff | Skills | Items | Verteidigen | Flucht", 0.5, 0.16, 0.95, 0.95, 0.7, 0.0)
     Engine.log("Scene_Battle – warte auf Input 1-4")
   end
 

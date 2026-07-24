@@ -1,5 +1,7 @@
-# Esc-Party-Menü (RPG-Maker-Style) – rein in Ruby
-# Items / Status / Save / Ende – steuert das Spiel über Game/UI-API
+# Esc-Party-Menue (RPG-Maker-Style) - rein in Ruby.
+# PAKET 26: Standardmaessig INAKTIV, solange das native Engine-Menue
+# laeuft (00_Config.rb: USE_NATIVE_MENU = true) - sonst doppeltes Menue.
+# Zum Umstellen: USE_NATIVE_MENU = false setzen.
 module PartyMenu
   @open = false
   @index = 0
@@ -12,6 +14,13 @@ module PartyMenu
   end
 
   def self.open
+    # Natives Engine-Menue aktiv? Dann dieses Ruby-Menue nicht oeffnen
+    # (PAKET 26 - doppelte Esc-Menues verhindern)
+    if defined?(RPGMaker3D::Config::USE_NATIVE_MENU) &&
+       RPGMaker3D::Config::USE_NATIVE_MENU
+      @open = false
+      return
+    end
     @open = true
     @index = 0
     @mode = :main

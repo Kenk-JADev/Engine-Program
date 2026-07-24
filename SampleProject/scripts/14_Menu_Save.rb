@@ -1,4 +1,6 @@
-# Hotkeys: F1 Save | F2 Load | F3 Testkampf (Ruby steuert das Spiel)
+# Zusatz-Hotkeys (Debug/Komfort): F1 Save | F2 Load | F3 Testkampf.
+# Primaerer Weg seit PAKET 11/14 ist das native Esc-Menue der Engine
+# (Speichern/Laden/Beenden). Diese Hotkeys bleiben als Ruby-Beispiel.
 module GameMenu
   @lock = 0
   def self.update

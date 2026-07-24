@@ -432,7 +432,8 @@ void QtMapEditorDock::loadSelectedMap() {
     if (fs::exists(scenePath)) {
         mEngine->LoadScene(scenePath);
     } else {
-        mEngine->GetMap().Load(mEngine->GetProject().GetMapPath(mapInfo.id));
+        // PAKET 26: bei fehlender Kartendatei Standardkarte statt leerer Welt
+        mEngine->LoadRuntimeMap(mapInfo.id);
     }
 
     refresh();

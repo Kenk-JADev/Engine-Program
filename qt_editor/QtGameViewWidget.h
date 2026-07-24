@@ -76,7 +76,10 @@ private:
     void flushPaintStroke();
 
     // Gizmo translate
-    int mGizmoMode = 1; // 1=translate
+    // PAKET 26: Standard = AUS (0). Sonst liessen sich Entities in der
+    // Spielansicht sofort versehentlich per Maus verschieben. Aktivierung
+    // nur explizit ueber das Ribbon "Gizmo" (Editor-Tab Werkzeuge).
+    int mGizmoMode = 0; // 0=aus, 1=translate
     int mGizmoAxis = -1; // 0=X 1=Y 2=Z
     bool mGizmoDragging = false;
     float mGizmoStartPos[3] = {0,0,0};

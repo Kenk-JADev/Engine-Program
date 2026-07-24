@@ -1490,6 +1490,52 @@ Lokal nachgeprüft: g++ `-fsyntax-only` (beide ImGui-Varianten) für
 Database/UI; String-/Brace-Checks für beide Qt-Dateien; globaler Scan
 aller src/qt_editor-Dateien auf fehlende `<algorithm>`/`<cstdio>`.
 
+## PAKET 26 — Qt-Editor-Ansicht & Skriptpaket aufgeräumt (komplett) ✅
+
+**Anlass (Nutzer, 2026-07-24, Screenshot):** Die Editor-3D-Ansicht zeigte
+nur ein Schachbrett mit blauem Würfel statt der Karte „Dorfrand“, sah
+durcheinander aus und Objekte liessen sich versehentlich verschieben.
+Ausserdem: „scripts brauchen alle ein Update“.
+
+### Engine/Qt — Ansicht
+- **Legacy-Demo-Entitaeten entfernt** (`Engine::InitializeInternal`):
+  blauer „Demo Cube“ + 20×20-„Floor“-Plane mit Checker-Standardtextur.
+  Die Plane lag auf y=0 und ueberdeckte per Z-Fighting jede geladene
+  Karte; der Wuerfel war selektier-/verschiebbar. Grund fuer das
+  „Schachbrett“: Die Plane benutzt die Renderer-Checkerboard-Fallback-
+  Textur; die echte Karte lag unsichtbar darunter/kaempfte um Tiefe.
+  Der Boden kommt jetzt ausschliesslich aus der Karte
+  (`LoadRuntimeMap`, PAKET 25) — Player und Editor zeigen identisch.
+- **`QtEditorWindow::loadScenePackage` + `QtMapEditorDock::onLoadMap`**
+  nutzen jetzt `LoadRuntimeMap` (fehlende Datei → Standardkarte statt
+  „leere Szene“).
+- **Gizmo standardmaessig AUS** (`QtGameViewWidget::mGizmoMode = 0`):
+  vorher sofort aktiv (1) → Entities liessen sich in der Spielansicht
+  ungewollt per Maus verschieben. Aktivierung explizit ueber das
+  Ribbon „Gizmo“ (Tab Werkzeuge). Tile-Malen bleibt ebenfalls
+  explizit (Ribbon „Karten malen“ / Map-Editor-Dock).
+
+### Skriptpaket SampleProject/scripts (alle 17 Skripte + Plugin geprueft)
+- **RmlUi-Reste entfernt** (05, 06, main.rb) — Verweise auf
+  GameUI-Overlay / RgssUI-Canvas (RmlUi seit PAKET 10 Geschichte).
+- **00_Config.rb:** VERSION an `EngineConfig::VERSION` (0.2.0)
+  angeglichen, Stand-Markierung PAKET 26, neu
+  `Config::USE_NATIVE_MENU = true`.
+- **Doppeltes Esc-Menue behoben:** Ruby-`PartyMenu` (15_Party_Menu.rb)
+  oeffnete bei JEDEM Esc parallel zum nativen XP-Menue der Engine.
+  Das Ruby-Menue ist jetzt per `USE_NATIVE_MENU` deaktiviert (umstellbar),
+  Pruefung per `defined?` (mruby-kompatibel, kein `const_defined?` mit
+  Pfadstring). main.rb ruft `PartyMenu.update` entsprechend nur noch,
+  wenn das native Menue aus ist.
+- **Veraltete Tasten-Hinweise korrigiert:** 06_Scene_Map (HUD +
+  H-Hilfe: „WASD laufen | Shift sprinten | E reden/oeffnen | Esc Menue“
+  statt F5-Stop-Hinweisen), 07_Scene_Battle (Kampfmenue-Navigation
+  Pfeiltasten/Enter/Maus statt „1-4“), 14_Menu_Save (F1/F2/F3 als
+  Debug-Zusatz gekennzeichnet).
+
+**HEAD-Waechter geprueft; Qt-Edits paren-neutral; Engine beide
+ImGui-Varianten sauber.**
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 

@@ -429,22 +429,14 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
 #endif
     }
 
-    // Demo Entitäten
-    EntityID cube = mScene->CreateEntity("Demo Cube");
-    auto* tc = mScene->AddComponent<TransformComponent>(cube);
-    tc->transform.position = Vec3(0, 0.5f, 0);
-    auto* sc = mScene->AddComponent<ModelRendererComponent>(cube);
-    sc->model = std::make_shared<Model>();
-    sc->model->AddMesh(MeshFactory::CreateCube(1.0f));
-    auto* mat = mScene->AddComponent<MaterialComponent>(cube);
-    mat->material.diffuse = Color(0.2f, 0.6f, 1.0f, 1.0f);
-
-    EntityID floor = mScene->CreateEntity("Floor");
-    auto* tf = mScene->AddComponent<TransformComponent>(floor);
-    tf->transform.position = Vec3(0, 0, 0);
-    auto* mf = mScene->AddComponent<ModelRendererComponent>(floor);
-    mf->model = std::make_shared<Model>();
-    mf->model->AddMesh(MeshFactory::CreatePlane(20.0f));
+    // PAKET 26: Keine Legacy-Demo-Entitaeten mehr (blauer "Demo Cube" +
+    // 20x20-"Floor"-Plane mit Checker-Standardtextur). Sie verdeckten die
+    // echte Karte in der Qt-Editor-Ansicht (Z-Fighting auf y=0), liessen
+    // sich per Gizmo versehentlich verschieben und wirkten wie ein
+    // durcheinander gewuerfeltes Schachbrett. Der Boden kommt jetzt
+    // ausschliesslich aus der Karte (LoadRuntimeMap liefert zur Not die
+    // PAKET-25-Standardkarte) - das Verhalten von Player und Editor ist
+    // damit identisch und vorhersagbar.
 
     // Grid
     mGridMesh = MeshFactory::CreateGrid(40, 1.0f);

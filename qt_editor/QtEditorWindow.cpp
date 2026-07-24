@@ -1438,14 +1438,16 @@ void QtEditorWindow::loadScenePackage() {
     const std::string scenePath = proj.GetProjectPath() + "/scene.json";
     if (!mEngine->LoadScene(scenePath)) {
         // Startkarte aus der Datenbank laden (nicht fest Karte 1 – der Player
-        // laedt ebenfalls die Startkarte, so verhalten sich beide gleich)
+        // laedt ebenfalls die Startkarte, so verhalten sich beide gleich).
+        // PAKET 26: LoadRuntimeMap liefert bei fehlender Datei die
+        // PAKET-25-Standardkarte statt einer leeren Welt.
         int startId = rpg::Database::Get().System().startMapId;
         if (startId <= 0) startId = 1;
         const std::string mapPath = proj.GetMapPath(startId);
-        if (mEngine->GetMap().Load(mapPath)) {
+        if (mEngine->LoadRuntimeMap(startId)) {
             log(QStringLiteral("Karte geladen (binär): ") + QString::fromStdString(mapPath));
         } else {
-            log(QStringLiteral("Hinweis: keine scene.json/Karte gefunden – leere Szene."));
+            log(QStringLiteral("Hinweis: keine Kartendatei gefunden – Standardkarte generiert."));
         }
     } else {
         log(QStringLiteral("Szene geladen: ") + QString::fromStdString(scenePath));
