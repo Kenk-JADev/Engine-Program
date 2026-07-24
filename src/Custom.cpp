@@ -17,6 +17,7 @@ void CustomConfig::Reset() {
     nativeGameMenu = true;
     nativeBattleMenu = true;
     nativeBattleStatus = true;
+    nativeMessage = true; // PAKET 42
     xpSceneMode = false; // XP-Szenen-Framework ist Opt-in
 }
 
@@ -64,6 +65,7 @@ void CustomConfig::LoadFromProject(const std::string& projectPath) {
         else if (key == "nativegamemenu")    nativeGameMenu = parseBool(value, nativeGameMenu);
         else if (key == "nativebattlemenu")  nativeBattleMenu = parseBool(value, nativeBattleMenu);
         else if (key == "nativebattlestatus") nativeBattleStatus = parseBool(value, nativeBattleStatus);
+        else if (key == "nativemessage")     nativeMessage = parseBool(value, nativeMessage); // PAKET 42
         else if (key == "xpscenemode")        xpSceneMode = parseBool(value, xpSceneMode);
     }
 
@@ -72,6 +74,7 @@ void CustomConfig::LoadFromProject(const std::string& projectPath) {
                  " GameMenu=" + std::to_string(nativeGameMenu) +
                  " BattleMenu=" + std::to_string(nativeBattleMenu) +
                  " BattleStatus=" + std::to_string(nativeBattleStatus) +
+                 " Message=" + std::to_string(nativeMessage) +
                  " XpSceneMode=" + std::to_string(xpSceneMode));
 }
 

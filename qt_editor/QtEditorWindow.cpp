@@ -1278,10 +1278,14 @@ static void ensureGameIniTemplate(const QString& projectPath) {
             "NativeGameMenu=1     ; 0 = Esc oeffnet NICHT das eingebaute Spielmenue\n"
             "NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenue (Battle-API nutzen)\n"
             "NativeBattleStatus=1 ; 0 = keine eingebaute Gegner-/Gruppenzeile im Kampf\n"
+            "NativeMessage=1      ; 0 = Standard-Dialoge (Text/Auswahl/Zahl/Name)\n"
+            "                         per Ruby-Hooks Game.on_ui_* (Skript-System,\n"
+            "                         Referenz: scripts/18_System_Message.rb)\n"
             "\n"
-            "; UI-Skins: optional eigene Oberflaechen-Dateien in <Projekt>/UI/\n"
-            ";   Skin.rcss = komplettes Stylesheet, Game.rml = HUD-Layout\n"
-            ";   siehe README Abschnitt 'Alles custom'.\n").toUtf8());
+            "; Fenster-Look: eigene Windowskin als PNG nach Graphics/System/\n"
+            ";   legen (windowskin.png), wird automatisch benutzt; per Skript\n"
+            ";   austauschbar (Rui.windowskin=); Themenfarben/-masse via\n"
+            ";   Rui.set_theme_color / Rui.set_theme_metric.\n").toUtf8());
     }
 }
 

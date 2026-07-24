@@ -323,6 +323,75 @@ bool RubyVM::CallGameHook(const std::string& name) {
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 42 (Script-Dialoge, Game.ini NativeMessage=0): die vier Standard-
+// Dialoge (101 Text, 102 Auswahl, 103 Zahl, 303 Name) an Ruby-Hooks geben.
+// Rueckgabe false = Hook fehlt -> GameUI zeigt das eingebaute Fenster.
+// ---------------------------------------------------------------------------
+// Gemeinsamer Game.<name>-Aufruf (Ready-Check + Fehlerfang wie CallGameHook)
+#define RPG3D_CALL_UI_HOOK(HookName, Argc, Argv)                                    \
+    {                                                                               \
+        mrb_sym clsSym = mrb_intern_lit(mMrb, "Game");                              \
+        if (!mrb_const_defined(mMrb, mrb_obj_value(mMrb->object_class), clsSym))    \
+            return false;                                                           \
+        mrb_value gameClass = mrb_const_get(mMrb,                                   \
+            mrb_obj_value(mMrb->object_class), clsSym);                             \
+        if (mrb_nil_p(gameClass)) return false;                                     \
+        mrb_sym hook = mrb_intern_lit(mMrb, HookName);                              \
+        if (!mrb_respond_to(mMrb, gameClass, hook)) return false;                   \
+        RPG_LOG_INFO(std::string("[Custom] Ruby-Hook Game.") + HookName +           \
+                     " wird aufgerufen");                                           \
+        mrb_funcall_argv(mMrb, gameClass, hook, Argc, Argv);                        \
+        if (mMrb->exc) CaptureException(std::string("Game.") + HookName);           \
+        return true;                                                                \
+    }
+
+bool RubyVM::CallUiMessageHook(const std::string& text, const std::string& speaker,
+                               int position, const std::string& face) {
+    if (!mMrb) return false;
+    mrb_value argv[4];
+    argv[0] = mrb_str_new_cstr(mMrb, text.c_str());
+    argv[1] = mrb_str_new_cstr(mMrb, speaker.c_str());
+    argv[2] = mrb_int_value(mMrb, (mrb_int)position);
+    argv[3] = mrb_str_new_cstr(mMrb, face.c_str());
+    RPG3D_CALL_UI_HOOK("on_ui_message", 4, argv);
+}
+
+bool RubyVM::CallUiChoicesHook(const std::string& text,
+                               const std::vector<std::string>& options,
+                               bool cancelAllowed) {
+    if (!mMrb) return false;
+    mrb_value opts = mrb_ary_new_capa(mMrb, (mrb_int)options.size());
+    for (const auto& o : options)
+        mrb_ary_push(mMrb, opts, mrb_str_new_cstr(mMrb, o.c_str()));
+    mrb_value argv[3];
+    argv[0] = mrb_str_new_cstr(mMrb, text.c_str());
+    argv[1] = opts;
+    argv[2] = mrb_bool_value(cancelAllowed);
+    RPG3D_CALL_UI_HOOK("on_ui_choices", 3, argv);
+}
+
+bool RubyVM::CallUiNumberHook(const std::string& prompt, int digits, int initial) {
+    if (!mMrb) return false;
+    mrb_value argv[3];
+    argv[0] = mrb_str_new_cstr(mMrb, prompt.c_str());
+    argv[1] = mrb_int_value(mMrb, (mrb_int)digits);
+    argv[2] = mrb_int_value(mMrb, (mrb_int)initial);
+    RPG3D_CALL_UI_HOOK("on_ui_number", 3, argv);
+}
+
+bool RubyVM::CallUiNameHook(const std::string& prompt, const std::string& initial,
+                            int maxChars) {
+    if (!mMrb) return false;
+    mrb_value argv[3];
+    argv[0] = mrb_str_new_cstr(mMrb, prompt.c_str());
+    argv[1] = mrb_str_new_cstr(mMrb, initial.c_str());
+    argv[2] = mrb_int_value(mMrb, (mrb_int)maxChars);
+    RPG3D_CALL_UI_HOOK("on_ui_name", 3, argv);
+}
+
+#undef RPG3D_CALL_UI_HOOK
+
 void RubyVM::CallListMenuBlock(int index) {
     if (!mMrb) return;
     mrb_sym varSym = mrb_intern_lit(mMrb, "$__rpg3d_menu_block");
@@ -2627,8 +2696,44 @@ DEF_NATIVE_FLAG(hud, nativeHud)
 DEF_NATIVE_FLAG(game_menu, nativeGameMenu)
 DEF_NATIVE_FLAG(battle_menu, nativeBattleMenu)
 DEF_NATIVE_FLAG(battle_status, nativeBattleStatus)
+DEF_NATIVE_FLAG(message, nativeMessage) // PAKET 42: Script-Dialoge (101/102/103/303)
 DEF_NATIVE_FLAG(xp_scene_mode, xpSceneMode) // PAKET 6/h: XP-Szenen-Framework
 #undef DEF_NATIVE_FLAG
+
+// ---------- PAKET 42: Script-Dialog-Ruecklieferung (UI.deliver_*) ----------
+// Ein Ruby-System-Dialog (Game.on_ui_*) signalisiert hier sein Ende; die
+// geparkten C++-Callbacks (Auswahl-/Zahlen-/Namens-Ergebnis) feuern und
+// der Interpreter laeuft weiter (IsBusy/Script-Hold wird geloest).
+static mrb_value rb_ui_deliver_message_done(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    GameUI::Get().ScriptDeliverMessage();
+    return mrb_nil_value();
+}
+static mrb_value rb_ui_deliver_choice(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int idx = -1; // -1 = Abbruch (wie XP: cancel)
+    mrb_get_args(mrb, "i", &idx);
+    GameUI::Get().ScriptDeliverChoice((int)idx);
+    return mrb_nil_value();
+}
+static mrb_value rb_ui_deliver_number(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_int v = 0;
+    mrb_get_args(mrb, "i", &v);
+    GameUI::Get().ScriptDeliverNumber((int)v);
+    return mrb_nil_value();
+}
+static mrb_value rb_ui_deliver_name(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    char* n = nullptr;
+    mrb_get_args(mrb, "z", &n);
+    GameUI::Get().ScriptDeliverName(n ? std::string(n) : std::string());
+    return mrb_nil_value();
+}
+static mrb_value rb_ui_script_dialog_active_get(mrb_state* mrb, mrb_value self) {
+    (void)mrb; (void)self;
+    return mrb_bool_value(GameUI::Get().IsScriptDialogActive());
+}
 // native_hud= schaltet zusaetzlich LIVE die HUD-Sichtbarkeit um
 // (PAKET 10: GameUI-ImGui-HUD statt RmlUi)
 static mrb_value rb_ui_native_hud_set_live(mrb_state* mrb, mrb_value self) {
@@ -3480,6 +3585,14 @@ void RubyVM::BindUI() {
     mrb_define_module_function(mMrb, uiModule, "native_battle_menu?", rb_ui_native_battle_menu_get, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, uiModule, "native_battle_status=", rb_ui_native_battle_status_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, uiModule, "native_battle_status?", rb_ui_native_battle_status_get, MRB_ARGS_NONE());
+    // PAKET 42: Script-Dialoge (Standard-Dialoge per Ruby ersetzen)
+    mrb_define_module_function(mMrb, uiModule, "native_message=", rb_ui_native_message_set, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "native_message?", rb_ui_native_message_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "deliver_message_done", rb_ui_deliver_message_done, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, uiModule, "deliver_choice", rb_ui_deliver_choice, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "deliver_number", rb_ui_deliver_number, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "deliver_name", rb_ui_deliver_name, MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, uiModule, "script_dialog_active?", rb_ui_script_dialog_active_get, MRB_ARGS_NONE());
     // XP-Szenen-Framework (PAKET 6/h, Opt-in): UI.xp_scene_mode = true ->
     // die Engine tickt pro Frame $scene.__engine_frame (Scene_Base).
     mrb_define_module_function(mMrb, uiModule, "xp_scene_mode=", rb_ui_native_xp_scene_mode_set, MRB_ARGS_REQ(1));
@@ -4237,6 +4350,10 @@ bool RubyVM::CheckSyntax(const std::string& code, const std::string& sourceName,
 void RubyVM::CollectGarbage() {} // ScriptManager ruft das ungeschuetzt
 
 bool RubyVM::CallGameHook(const std::string& name) { (void)name; return false; }
+bool RubyVM::CallUiMessageHook(const std::string&, const std::string&, int, const std::string&) { return false; }
+bool RubyVM::CallUiChoicesHook(const std::string&, const std::vector<std::string>&, bool) { return false; }
+bool RubyVM::CallUiNumberHook(const std::string&, int, int) { return false; }
+bool RubyVM::CallUiNameHook(const std::string&, const std::string&, int) { return false; }
 void RubyVM::CallListMenuBlock(int index) { (void)index; }
 void RubyVM::CallRuiBlock(const char* key, int idx, const char* kind) { (void)key; (void)idx; (void)kind; }
 void RubyVM::CallNameInputResult(const std::string& name) { (void)name; }

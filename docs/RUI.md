@@ -118,6 +118,21 @@ PAKET 41 (Robustheits-Nachschub):
 - `RuiGlTarget` sichert/restauriert zusaetzlich Scissor-Rechteck und
   ARRAY_BUFFER-Bindung (volle GL-State-Hygiene zwischen 3D-Pass und UI).
 
+PAKET 42 (Das ganze System ist jetzt Skript — XP-Philosophie):
+- Die vier Standard-Dialoge (Text 101 / Auswahl 102 / Zahl 103 / Name 303)
+  lassen sich komplett durch Ruby-Skripte ersetzen: `Game.ini
+  NativeMessage=0` (bzw. `UI.native_message = false`) routet
+  `GameUI::ShowMessage/ShowChoices/ShowNumberInput/ShowNameInput` ueber
+  eine Dispatch-Schicht (`GameUI::ScriptDialogRequest` +
+  `SetScriptDialogRouter`, verdrahtet in `Engine::Init`) an die Ruby-Hooks
+  `Game.on_ui_*`; die Ruecklieferung erfolgt per `UI.deliver_*`.
+- Die Warte-Semantik des Interpreters bleibt IDENTISCH (Script-Hold in
+  `MessageWindow::IsBusy`); ohne definierte Hooks faellt alles automatisch
+  aufs native Fenster zurueck; Spielstopp/Titelwechsel loesen Hold und
+  geparkte Callbacks sauber (`GameUI::ResetScriptDialog`).
+- Referenz-Implementierung im Script-Editor-Stil als Startpunkt:
+  `SampleProject/scripts/18_System_Message.rb`. Details: `docs/SCRIPT-RUI.md`.
+
 ## 5. Eigener GL-Renderer (PAKET 39 — umgesetzt)
 
 `rpg::RuiGlTarget` (`include/rpgmaker3d/RuiGlTarget.h`, `src/RuiGlTarget.cpp`)

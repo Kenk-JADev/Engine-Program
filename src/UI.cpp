@@ -7,6 +7,7 @@
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
 #include "rpgmaker3d/Rui.h" // PAKET 31/37: Die gesamte Spielanzeige rendert ueber RUI
+#include "rpgmaker3d/Custom.h" // PAKET 42: NativeMessage-Schalter (Script-Dialoge)
 // PAKET 37: UI.cpp ist jetzt ImGui-FREI — alle Fenster/Overlays (Message,
 // Menues, Zahl/Name, Kampfstatus, Pictures, Screen-Texts, Farbton, Wetter,
 // HUD) laufen ueber das eigene RUI-Framework; die Render-Technik steckt
@@ -572,13 +573,86 @@ void GameUI::DrawWeather() {
     };
     win->children.push_back(std::move(part));
 }
+// ----- PAKET 42: Script-Dialog-Router (Ruby uebernimmt 101/102/103/303) ---
+// Die Engine injiziert den Router EINMAL (Engine::Init) — er ruft die
+// Ruby-Hooks Game.on_ui_* auf. Rueckgabe false = kein Hook/Ruby -> nativ.
+namespace {
+    std::function<bool(const GameUI::ScriptDialogRequest&)> s_dialogRouter;
+}
+
+void GameUI::SetScriptDialogRouter(
+    std::function<bool(const ScriptDialogRequest&)> fn) {
+    s_dialogRouter = std::move(fn);
+}
+
+bool GameUI::TryRouteScriptDialog(const ScriptDialogRequest& req) {
+    // Nativ erzwingen: Schalter an, bereits ein Script-Dialog offen
+    // (Reentrancy-Schutz: ein Hook darf nicht verschachtelt routen) oder
+    // kein Router/Hook verdrahtet -> immer das eingebaute Fenster.
+    if (mScriptDialogActive || !s_dialogRouter ||
+        CustomConfig::Get().nativeMessage) return false;
+    if (!s_dialogRouter(req)) return false; // Hook fehlt -> native Anzeige
+    mScriptDialogActive = true;
+    // Warte-Semantik des Interpreters: IsBusy bleibt wahr, bis das Skript
+    // per UI.deliver_* zurueckliefert (native Box bleibt unsichtbar).
+    mMessage.SetScriptHold(true);
+    RPG_LOG_INFO("[UI] Script-Dialog aktiv (Game.on_ui_* uebernimmt)");
+    return true;
+}
+
+void GameUI::ScriptDeliverMessage() {
+    if (!mScriptDialogActive) return;
+    mScriptDialogActive = false;
+    mMessage.SetScriptHold(false);
+}
+
+void GameUI::ScriptDeliverChoice(int index) {
+    auto cb = std::move(mScriptCbInt);
+    mScriptCbInt = nullptr;
+    ScriptDeliverMessage();
+    if (cb) cb(index);
+}
+
+void GameUI::ScriptDeliverNumber(int value) {
+    ScriptDeliverChoice(value); // gleicher Slot (Dialoge sind seriell)
+}
+
+void GameUI::ScriptDeliverName(const std::string& n) {
+    auto cb = std::move(mScriptCbStr);
+    mScriptCbStr = nullptr;
+    ScriptDeliverMessage();
+    if (cb) cb(n);
+}
+
+void GameUI::ResetScriptDialog() {
+    mScriptCbInt = nullptr;
+    mScriptCbStr = nullptr;
+    mScriptDialogActive = false;
+    mMessage.SetScriptHold(false);
+}
+
 void GameUI::ShowMessage(const std::string& text) {
+    if (TryRouteScriptDialog(ScriptDialogRequest{
+            ScriptDialogKind::Message, text, "", 0, ""})) return;
     mMessage.Show(text);
 }
 void GameUI::ShowMessage(const std::string& text, const std::string& speaker, int position, const std::string& face) {
+    if (TryRouteScriptDialog(ScriptDialogRequest{
+            ScriptDialogKind::Message, text, speaker, position, face})) return;
     mMessage.Show(text, speaker, position, face);
 }
 void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>& options, std::function<void(int)> callback, bool cancelAllowed) {
+    {   // PAKET 42: Script-Uebernahme
+        ScriptDialogRequest req;
+        req.kind = ScriptDialogKind::Choices;
+        req.text = text;
+        req.options = options;
+        req.cancelAllowed = cancelAllowed;
+        if (TryRouteScriptDialog(req)) {
+            mScriptCbInt = std::move(callback); // Deliver ueber UI.deliver_choice
+            return;
+        }
+    }
     std::vector<ChoiceOption> choices;
     for (size_t i=0;i<options.size();++i) choices.push_back({options[i], (int)i});
     mMessage.onChoice = callback;
@@ -588,6 +662,17 @@ void GameUI::ShowChoices(const std::string& text, const std::vector<std::string>
 
 // === Zahleneingabe (Event-Befehl 103) ===
 void GameUI::ShowNumberInput(const std::string& prompt, int digits, int initial, std::function<void(int)> onDone) {
+    {   // PAKET 42: Script-Uebernahme
+        ScriptDialogRequest req;
+        req.kind = ScriptDialogKind::Number;
+        req.text = prompt;
+        req.digits = digits;
+        req.initial = initial;
+        if (TryRouteScriptDialog(req)) {
+            mScriptCbInt = std::move(onDone); // Deliver ueber UI.deliver_number
+            return;
+        }
+    }
     mNumberActive = true;
     mNumberPrompt = prompt;
     mNumberDigits = digits > 0 && digits <= 8 ? digits : 4;
@@ -603,6 +688,17 @@ void GameUI::ShowNumberInput(const std::string& prompt, int digits, int initial,
 
 // === Namenseingabe (Event-Befehl 303) ===
 void GameUI::ShowNameInput(const std::string& prompt, const std::string& initial, int maxChars, std::function<void(const std::string&)> onDone) {
+    {   // PAKET 42: Script-Uebernahme
+        ScriptDialogRequest req;
+        req.kind = ScriptDialogKind::Name;
+        req.text = prompt;
+        req.initialText = initial;
+        req.maxChars = maxChars;
+        if (TryRouteScriptDialog(req)) {
+            mScriptCbStr = std::move(onDone); // Deliver ueber UI.deliver_name
+            return;
+        }
+    }
     mNameActive = true;
     mNamePrompt = prompt;
     mNameInitial = initial;

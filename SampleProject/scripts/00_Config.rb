@@ -1,6 +1,6 @@
 # RPG Maker 3D - Config
 # Wird zuerst geladen (Load-Order: Dateiname).
-# Skriptpaket-Stand: PAKET 26 (2026-07-24)
+# Skriptpaket-Stand: PAKET 42 (2026-07-24)
 module RPGMaker3D
   VERSION = "0.2.0" # folgt EngineConfig::VERSION (include/rpgmaker3d/Config.h)
   ENGINE = "RPG Maker 3D"
@@ -15,5 +15,11 @@ module RPGMaker3D
     # true  = natives XP-Menue der Engine (Esc), Ruby-PartyMenue aus
     # false = Ruby-PartyMenue (15_Party_Menu.rb) stattdessen
     USE_NATIVE_MENU = true
+    # PAKET 42: Standard-Dialoge (Text 101, Auswahl 102, Zahl 103,
+    # Name 303) durch das Ruby-System 18_System_Message.rb ersetzen?
+    # false = eingebaute Fenster (Standard), true = Ruby-System aktiv.
+    # (Das Skript setzt dann UI.native_message = false; alternativ geht
+    # das auch projektweit ueber Game.ini: NativeMessage=0)
+    SCRIPT_MESSAGE_SYSTEM = false
   end
 end

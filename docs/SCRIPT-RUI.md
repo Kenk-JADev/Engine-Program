@@ -90,3 +90,53 @@ def show_menu
   Rui.set_focus_list("menu", "m")
 end
 ```
+
+---
+
+# Das ganze Standard-System per Ruby ersetzen (PAKET 42)
+
+XP-Philosophie: Die Engine liefert die Primitive (RUI-Fenster/Widgets +
+diese Dispatch-Schicht), **wie die Standard-Dialoge aussehen und sich
+anfuehlen, ist Spiel-Code** und gehoert in den Script-Editor. Genau deshalb
+lassen sich die vier Standard-Dialoge komplett durch Ruby-Skripte ersetzen:
+
+| Event | Hook (Klasse/Modul `Game`) | Ruecklieferung aus Ruby |
+|---|---|---|
+| Text 101 | `Game.on_ui_message(text, sprecher, position, face)` | `UI.deliver_message_done` |
+| Auswahl 102 | `Game.on_ui_choices(text, optionen, abbruch_erlaubt)` | `UI.deliver_choice(index \|-1)` |
+| Zahl 103 | `Game.on_ui_number(titel, stellen, startwert)` | `UI.deliver_number(wert)` |
+| Name 303 | `Game.on_ui_name(titel, startname, max_zeichen)` | `UI.deliver_name(string)` |
+
+`position` bei 101: `0` = unten, `1` = Mitte, `2` = oben (wie der native
+Befehl). `abbruch_erlaubt` kommt aus Befehl 102 ("Bei Abbruch").
+
+**Aktivierung:** `NativeMessage=0` in der `Game.ini` des Projekts
+oder zur Laufzeit `UI.native_message = false` (Getter: `UI.native_message?`).
+Statusabfrage: `UI.script_dialog_active?` (true, solange ein Script-Dialog
+laeuft — die Engine sperrt dann wie gehabt Interagieren/Menueaufruf).
+
+Semantik im Detail:
+
+- **Warten bleibt identisch.** Der Event-Interpreter wartet wie bisher
+  (`IsBusy` wird per Script-Hold gesetzt) — Events, Kampfereignis-Seiten
+  und Abbruch-Mapping (`deliver_choice(-1)` → Engine mappt das
+  Abbruchverhalten von Befehl 102, wie beim nativen Fenster) funktionieren
+  unveraendert.
+- **Ohne Hook kein Risiko.** Fehlt `Game.on_ui_*`, faellt jeder Aufruf
+  automatisch auf das eingebaute Fenster zurueck (auch mitten im Spiel).
+- **Kein Reentry.** Ein laufender Script-Dialog routet keine weiteren
+  Dialoge (`TryRouteScriptDialog` gibt false) — verschachtelte Hooks
+  koennen sich nicht selbst aufrufen.
+- **Spielstopp/Titel** loesen den Script-Hold und verwerfen geparkte
+  Rueckrufe sauber (`GameUI::ResetScriptDialog`).
+- Vorsicht Schleife: In den Hooks **nicht** `UI.show_message()` aufrufen
+  (das landet wieder bei `on_ui_message`). Fenster direkt aus
+  Rui-Primitiven bauen.
+
+**Referenz-Implementierung** `SampleProject/scripts/18_System_Message.rb`:
+Text mit Typewriter (UTF-8-sicher), Auswahl ueber Rui-Fokusliste, Zahl mit
+Stellencursor (XP-Gefuehl: A/D Stelle, W/S Ziffer), Name ueber Zeichenliste.
+Per Opt-in aktivierbar: `00_Config.rb: SCRIPT_MESSAGE_SYSTEM = true`.
+Einfach kopieren und umbauen — das ist der gedachte Weg, das System an euer
+Spiel anzupassen (Skins, Layout, Gesichter via `UI.show_picture`, Sounds,
+TEMPO etc.).

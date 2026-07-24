@@ -14,6 +14,10 @@
 //   NativeGameMenu=1     ; 0 = Esc oeffnet NICHT das eingebaute Spielmenue
 //   NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenue (Custom via Battle-API)
 //   NativeBattleStatus=1 ; 0 = keine eingebaute Gegner-/Gruppenzeile im Kampf
+//   NativeMessage=1      ; 0 = Standard-Dialoge (101 Text, 102 Auswahl,
+//                          103 Zahl, 303 Name) gehen NICHT ans eingebaute
+//                          Fenster, sondern an Ruby-Hooks Game.on_ui_*
+//                          (PAKET 42: Referenz-Skript 18_System_Message.rb)
 //   XpSceneMode=0        ; 1 = XP-Szenen-Framework aktiv: die Engine tickt
 //                          pro Frame $scene.__engine_frame (Scene_Base aus dem
 //                          RGSS-Prelude) — Opt-in, Default bleibt nativ.
@@ -34,6 +38,7 @@ public:
     bool nativeGameMenu = true;
     bool nativeBattleMenu = true;
     bool nativeBattleStatus = true;
+    bool nativeMessage = true;   // PAKET 42: Standard-Dialoge nativ (Script-Hooks Game.on_ui_* wenn false)
     /// XP-Szenen-Framework (Opt-in, PAKET 6/h): pro Frame $scene.__engine_frame
     /// (Scene_Base-Tick: start -> update -> terminate). Default AUS.
     bool xpSceneMode = false;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 struct mrb_state;
 
@@ -43,6 +44,19 @@ public:
     /// hat (z. B. "custom_title" fuer einen eigenen Titelbildschirm).
     /// Rueckgabe: true wenn die Methode existiert und aufgerufen wurde.
     bool CallGameHook(const std::string& name);
+    /// PAKET 42 (Script-Dialoge, Game.ini NativeMessage=0): die vier
+    /// Standard-Dialoge an Game.on_ui_message / on_ui_choices /
+    /// on_ui_number / on_ui_name routen. Rueckgabe false = Hook fehlt
+    /// -> GameUI faellt aufs eingebaute Fenster zurueck. Die Skripte
+    /// liefern das Ergebnis spaeter per UI.deliver_* zurueck.
+    bool CallUiMessageHook(const std::string& text, const std::string& speaker,
+                           int position, const std::string& face);
+    bool CallUiChoicesHook(const std::string& text,
+                           const std::vector<std::string>& options,
+                           bool cancelAllowed);
+    bool CallUiNumberHook(const std::string& prompt, int digits, int initial);
+    bool CallUiNameHook(const std::string& prompt, const std::string& initial,
+                        int maxChars);
     /// Interne Bruecke fuer UI.open_list_menu: ruft den per Block
     /// uebergebenen Ruby-Callback mit dem gewaehlten Index (-1 = Abbruch).
     void CallListMenuBlock(int index);

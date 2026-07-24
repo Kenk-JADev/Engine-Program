@@ -11,6 +11,9 @@ class Game
 
   def update(delta_time)
     @time += delta_time
+    # PAKET 42: Ruby-System-Dialoge (18_System_Message.rb) pro Frame pumpen
+    # (Typewriter/Zahleneingabe; Auswahl/Name laufen ueber die Rui-Fokusliste)
+    SystemMessage.update if Object.const_defined?(:SystemMessage)
     # Ruby-Party-Menue (Esc) laeuft nur, wenn das native Engine-Menue
     # deaktiviert ist (doppeltes Menue verhindern, PAKET 26).
     if Object.const_defined?(:PartyMenu) &&

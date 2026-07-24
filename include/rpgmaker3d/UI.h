@@ -113,7 +113,16 @@ public:
     void ShowWithChoices(const std::string& text, const std::vector<ChoiceOption>& choices);
     void Hide() { mVisible = false; mText.clear(); mChoices.clear(); mSpeakerName.clear(); mFaceName.clear(); }
     bool IsVisible() const { return mVisible; }
-    bool IsBusy() const { return mVisible; }
+    /// PAKET 42: "Besetzt" umfasst auch einen laufenden RUBY-Dialog
+    /// (Script-Hold). Der Event-Interpreter wartet so wie gehabt auf das
+    /// Ende — egal ob das native Fenster oder ein Skript-Fenster bedient
+    /// wird; Interagieren/Menueaufruf bleiben ebenfalls gesperrt.
+    bool IsBusy() const { return mVisible || mScriptHold; }
+    /// Script-Hold: wahr setzen, solange ein Ruby-Dialog laeuft. Die
+    /// native Box bleibt dabei unsichtbar (mVisible bleibt false) - die
+    /// Warte-Semantik (IsBusy) gilt trotzdem.
+    void SetScriptHold(bool h) { mScriptHold = h; }
+    bool HasScriptHold() const { return mScriptHold; }
     /// Skip typewriter or close when complete (keyboard)
     void AdvanceInput();
 
@@ -153,6 +162,7 @@ private:
     std::string mSpeakerName;
     std::string mFaceName;
     int mPosition = 0; // 0 bottom, 1 mid, 2 top
+    bool mScriptHold = false; // PAKET 42: Ruby-Dialog haelt den Warte-Zustand
 };
 
 class TitleScreen {
@@ -302,6 +312,46 @@ public:
     int GetNameInputMaxChars() const { return mNameMaxChars; }
     const std::string& GetNameInputPrompt() const { return mNamePrompt; }
 
+    // === PAKET 42: Standard-Dialoge per Ruby ersetzbar ("System im Script") ===
+    // XP-Philosophie: die Engine liefert nativ nur die Primitive (RUI-
+    // Fenster/Widgets + diese Dispatch-Schicht); WIE ein Dialog aussieht
+    // und sich anfuehlt, darf das Spiel komplett in Ruby bauen und im
+    // Script-Editor bearbeiten (Referenz: scripts/18_System_Message.rb).
+    //
+    // Ablauf: Game.ini NativeMessage=0 (oder UI.native_message = false)
+    // UND der Router findet den passenden Ruby-Hook (Game.on_ui_*) ->
+    // ShowMessage/ShowChoices/ShowNumberInput/ShowNameInput routen in
+    // den Script-Dialog. Der Interpreter wartet wie gehabt (IsBusy per
+    // Script-Hold); die Ruecklieferung erfolgt per UI.deliver_* aus Ruby.
+    // Fehlt der Hook, faellt alles automatisch aufs native Fenster.
+    enum class ScriptDialogKind { Message, Choices, Number, Name };
+    struct ScriptDialogRequest {
+        ScriptDialogKind kind = ScriptDialogKind::Message;
+        std::string text;                    // 101 Text / 102 Frage / Prompt
+        std::string speaker;                 // 101 Sprecher (leer wenn keiner)
+        int position = 0;                    // 101: 0 unten / 1 Mitte / 2 oben
+        std::string face;                    // 101 Gesichtsgrafik (leer)
+        std::vector<std::string> options;    // 102 Optionen
+        bool cancelAllowed = true;           // 102 Abbruch erlaubt
+        int digits = 4;                      // 103 Stellen
+        int initial = 0;                     // 103 Startwert
+        std::string initialText;             // 303 bisheriger Name
+        int maxChars = 8;                    // 303 Laenge
+    };
+    /// Router-Injektion: die Engine verdrahtet sie EINMAL auf die RubyVM
+    /// (ruft Game.on_ui_* auf; Rueckgabe false = kein Hook -> nativ).
+    static void SetScriptDialogRouter(
+        std::function<bool(const ScriptDialogRequest&)> fn);
+    /// true solange ein Script-Dialog laeuft (modale Eingaben sperren).
+    bool IsScriptDialogActive() const { return mScriptDialogActive; }
+    /// Ruecklieferung aus Ruby (UI.deliver_*):
+    void ScriptDeliverMessage();                  // 101 fertig gelesen
+    void ScriptDeliverChoice(int index);          // 102: -1 = Abbruch
+    void ScriptDeliverNumber(int value);          // 103
+    void ScriptDeliverName(const std::string& n); // 303
+    /// Alles verwerfen (Spielstopp / Rueckkehr zum Titel).
+    void ResetScriptDialog();
+
     /// Tastatursteuerung fuer Choices / Zahlen- / Namenseingabe.
     /// Wird von Engine::Update im PlayMode vor dem Message-Advance aufgerufen.
     void UpdateModalInput(class Input& input);
@@ -448,6 +498,14 @@ private:
 
     std::vector<ScreenPicture> mPictures;
     int mNextPictureId = 1;
+
+    // PAKET 42: Script-Dialog-Zustand (Ruby uebernimmt 101/102/103/303).
+    // Ein Slot pro Callback-Typ reicht: der Interpreter serialisiert die
+    // Dialoge (ein neuer Dialog startet erst, wenn der alte geliefert ist).
+    bool mScriptDialogActive = false;
+    std::function<void(int)> mScriptCbInt;               // 102 Auswahl / 103 Zahl
+    std::function<void(const std::string&)> mScriptCbStr; // 303 Name
+    bool TryRouteScriptDialog(const ScriptDialogRequest& req);
 
     // XP-Kampf-Statusfenster (PAKET 9): Schnappschuss + Face-Cache
     std::vector<BattleStatusEntry> mBattleStatusEntries;

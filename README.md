@@ -412,10 +412,12 @@ NativeHud=1          ; 0 = HUD beim Start aus (UI.hud_visible= steuert)
 NativeGameMenu=1     ; 0 = Esc öffnet NICHT das eingebaute Spielmenü
 NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenü (Battle-API nutzen)
 NativeBattleStatus=1 ; 0 = keine Gegner-/Gruppenzeile oben im Kampf
+NativeMessage=1      ; 0 = Standard-Dialoge (Text/Auswahl/Zahl/Name) per
+                         Ruby-Hooks Game.on_ui_* (Skript-System, PAKET 42)
 ```
 
 Wird bei jedem Spielstart/Playtest neu gelesen (ändern ohne Engine-Neustart).
-Alle fünf Schalter gibt es auch als Ruby-Setter, z. B.
+Alle sechs Schalter gibt es auch als Ruby-Setter, z. B.
 `UI.native_battle_menu = false` (plus `...?`-Getter).
 
 ### 2. Ruby-APIs für eigene Oberflächen
@@ -424,6 +426,21 @@ Alle fünf Schalter gibt es auch als Ruby-Setter, z. B.
   `UI.open_list_menu("Titel", ["A", ["B", false], "C"]) { |i| ... }`:
   Listenmenü mit Block; der Block bekommt den Index (`-1` bei Esc);
   `[text, false]` sperrt einen Eintrag.
+- **Standard-Dialoge im Skript ersetzen** (PAKET 42 – das „System" ist
+  Spiel-Code wie in XP): `NativeMessage=0` (oder `UI.native_message=false`)
+  routet Text (101), Auswahl (102), Zahl (103) und Name (303) an die
+  Ruby-Hooks `Game.on_ui_message(text, sprecher, position, face)` /
+  `Game.on_ui_choices(text, optionen, abbruch_erlaubt)` /
+  `Game.on_ui_number(titel, stellen, start)` /
+  `Game.on_ui_name(titel, start, max_zeichen)`. Das Skript liefert das
+  Ergebnis per `UI.deliver_message_done / deliver_choice(i|-1) /
+  deliver_number(n) / deliver_name(s)` zurück; die Warte-Semantik des
+  Interpreters bleibt identisch (IsBusy hält per Script-Hold). Ohne
+  definierte Hooks fällt alles automatisch auf das eingebaute Fenster.
+  **Referenz-Implementierung**: `scripts/18_System_Message.rb` (Opt-in über
+  `00_Config.rb: SCRIPT_MESSAGE_SYSTEM = true`) – gedacht als editierbarer
+  Startpunkt. Achtung: die Hooks bauen ihre Fenster aus `Rui`-Primitiven
+  und rufen **nicht** `UI.show_message` (Endlosschleife!).
 - **Custom-Titelbildschirm**: `NativeTitle=0` → die Engine ruft
   `Game.custom_title` auf (dort eigene Menüs/Szenen aufbauen; mit
   `Game.start_game` startet „Neues Spiel"). Ohne Hook startet das Spiel direkt.
@@ -442,14 +459,16 @@ Alle fünf Schalter gibt es auch als Ruby-Setter, z. B.
 - **Pro Frame laufen** weiterhin `SceneManager.update` und `$game.update(dt)` –
   dort eigene Szenen aktualisieren (mit `Input.key_pressed?` navigieren).
 
-### 3. Eingebaute Oberflächen – GameUI-ImGui-Overlay (PAKET 10)
+### 3. Eingebaute Oberflächen – eigenes UI-Framework (RUI, PAKET 31–39)
 
 Die gesamte eingebaute Spielanzeige (Nachrichten mit Sprecher, Menüs,
-Zahlen-/Namenseingabe, HUD, Bilder, Bildschirmtexte, Kampf-Statusfenster)
-läuft seit PAKET 10 im **GameUI-ImGui-Overlay** – **RmlUi ist vollständig
-entfernt** (keine RML/RCSS-Skins mehr). Eigene Oberflächen baut man wie in
-XP üblich als **Ruby-Szenen/Fenster** (Punkt 4, RGSS) oder schaltet die
-eingebauten per `Game.ini`-Flags (`NativeTitle/Hud/GameMenu/…`) ab.
+Zahlen-/Namenseingabe, HUD, Bilder, Bildschirmtexte, Kampf-Statusfenster,
+Farbton, Wetter) läuft über das **eigene RUI-Framework** mit eigener
+GL-Renderer-Schicht – **RmlUi ist vollständig entfernt**, Dear ImGui wird
+zur Laufzeit nicht mehr benötigt (nur noch optionaler Fallback). Eigene
+Oberflächen baut man wie in XP üblich als **Ruby-Szenen/Fenster** (Punkt
+4, RGSS; bzw. RUI-Skriptfenster, `docs/SCRIPT-RUI.md`) oder schaltet die
+eingebauten per `Game.ini`-Flags (`NativeTitle/Hud/GameMenu/Message/…`) ab.
 **F9** blendet das HUD ein/aus.
 
 ### 4. RGSS (Ruby Game Scripting System) – komplette XP-Skriptschicht

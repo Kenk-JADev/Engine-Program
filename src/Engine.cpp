@@ -213,6 +213,32 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
             });
         });
 
+    // PAKET 42: Standard-Dialoge (101 Text / 102 Auswahl / 103 Zahl /
+    // 303 Name) an Ruby-Hooks routen — XP-Philosophie: das "System" (wie
+    // ein Dialog aussieht/anfuehlt) gehoert in die Skripte des Projekts
+    // und wird im Script-Editor custom bearbeitet. Der Router laeuft bei
+    // NativeMessage=0 UND vorhandenem Hook Game.on_ui_*; sonst bleibt
+    // alles nativ (Rueckgabe false = eingebautes Fenster).
+    GameUI::SetScriptDialogRouter(
+        [this](const GameUI::ScriptDialogRequest& r) {
+            if (!mRubyVM) return false;
+            switch (r.kind) {
+                case GameUI::ScriptDialogKind::Message:
+                    return mRubyVM->CallUiMessageHook(r.text, r.speaker,
+                                                      r.position, r.face);
+                case GameUI::ScriptDialogKind::Choices:
+                    return mRubyVM->CallUiChoicesHook(r.text, r.options,
+                                                      r.cancelAllowed);
+                case GameUI::ScriptDialogKind::Number:
+                    return mRubyVM->CallUiNumberHook(r.text, r.digits,
+                                                     r.initial);
+                case GameUI::ScriptDialogKind::Name:
+                    return mRubyVM->CallUiNameHook(r.text, r.initialText,
+                                                   r.maxChars);
+            }
+            return false;
+        });
+
     // Spielmenue-Callbacks (XP) EINMAL zentral verdrahten - sie gelten fuer
     // Editor-Playtest UND Player gleichermassen (vorher nur im Editor-Zweig
     // von SetPlaying: im Player tat "Spiel beenden" deshalb nichts).
@@ -481,6 +507,9 @@ void Engine::SetPlaying(bool playing) {
     // PAKET 37: Spielstopp raeumt auch die RUI-Fenster (Menue/Message/HUD
     // aus dem Playtest) — sie wuerden sonst im Editor weitergezeichnet.
     if (!playing) rui::Manager::Get().Clear();
+    // PAKET 42: laufende Script-Dialoge (Game.on_ui_*) zuruecksetzen,
+    // damit kein geparkter Callback/Script-Hold in den Editor laeuft.
+    if (!playing) GameUI::Get().ResetScriptDialog();
 
     // "Alles custom": Game.ini + Projekt-Skins bei jedem Spielstart neu ziehen
     if (playing) LoadCustomConfigForProject();
@@ -651,6 +680,7 @@ void Engine::EndTitleMode() {
 
 void Engine::ReturnToTitle() {
     // Spiel sauber anhalten (analog PLAYTEST STOP), dann Titel zeigen
+    GameUI::Get().ResetScriptDialog(); // PAKET 42 (Hold/Callbacks loesen)
     GameUI::Get().Message().Hide();
     GameUI::Get().Menu().Hide();
     GameUI::Get().ClearScreenTexts(); // u. a. GAME-OVER-/Kampfstatus-Texte
