@@ -380,6 +380,108 @@ bool EventInterpreter::EvalCondition(const EventCommand& cmd) {
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 16: Gemeinsamer XP-Routen-Text-Parser (Event-Befehl 209 + Custom-
+// Seitenroute). Rueckwaertskompatible Tokens — siehe EventSystem.h.
+// ---------------------------------------------------------------------------
+MoveRoute EventSystem_ParseMoveRouteText(const std::string& routeText) {
+    MoveRoute route;
+    std::stringstream ss(routeText);
+    std::string tok;
+    while (ss >> tok) {
+        if (tok.empty()) continue;
+        MoveRouteStep st;
+        const std::string up = [&]() {
+            std::string t = tok;
+            for (auto& ch : t) ch = (char)std::toupper((unsigned char)ch);
+            return t;
+        }();
+        // Volltoken-Matches zuerst (rueckwaertskompatible Sonderzeichen)
+        if (up == "SC") {
+            // Script-Rest der Zeile (letzter erlaubter Schritt)
+            std::string rest;
+            std::getline(ss, rest);
+            // fuehrende Blanks abschneiden
+            const size_t p = rest.find_first_not_of(" \t");
+            st.code = MoveRouteCode::Script;
+            st.text = (p == std::string::npos) ? std::string() : rest.substr(p);
+            route.list.push_back(std::move(st));
+            break;
+        }
+        if (up == "G" || up == "E") {
+            // Grafik/SE-Argument = naechstes Token (namen ohne Leerzeichen)
+            std::string arg;
+            if (!(ss >> arg)) continue;
+            st.code = (up[0] == 'G') ? MoveRouteCode::ChangeGraphic : MoveRouteCode::PlaySE;
+            st.text = arg;
+            route.list.push_back(std::move(st));
+            continue;
+        }
+        const char c = up[0];
+        if (up == "TD") st.code = MoveRouteCode::TurnDown;
+        else if (up == "TL") st.code = MoveRouteCode::TurnLeft;
+        else if (up == "TR") st.code = MoveRouteCode::TurnRight;
+        else if (up == "TU") st.code = MoveRouteCode::TurnUp;
+        else if (up == "TT") st.code = MoveRouteCode::TurnTowardPlayer;
+        else if (up == "TA") st.code = MoveRouteCode::TurnAwayPlayer;
+        else if (up == "R90") st.code = MoveRouteCode::TurnRight90;
+        else if (up == "L90") st.code = MoveRouteCode::TurnLeft90;
+        else if (up == "T180") st.code = MoveRouteCode::Turn180;
+        else if (up == "TX") st.code = MoveRouteCode::TurnRandom;
+        else if (up == "B") st.code = MoveRouteCode::MoveBackward;
+        else if (c == 'U') st.code = MoveRouteCode::MoveUp;
+        else if (c == 'D') st.code = MoveRouteCode::MoveDown;
+        else if (c == 'L') st.code = MoveRouteCode::MoveLeft;
+        else if (c == 'R') st.code = MoveRouteCode::MoveRight;
+        else if (c == 'F') st.code = MoveRouteCode::MoveForward;
+        else if (c == 'T') st.code = MoveRouteCode::TowardPlayer;
+        else if (c == 'A') st.code = MoveRouteCode::AwayFromPlayer;
+        else if (c == 'X') st.code = MoveRouteCode::Random;
+        else if (c == 'W') {
+            st.code = MoveRouteCode::Wait;
+            st.param = tok.size() > 1 ? atoi(tok.c_str() + 1) : 20;
+        }
+        // ---- PAKET 16: Argument-Schritte ----
+        else if (c == 'J') {
+            // Sprung: J(dx,dz) oder Jdx,dz — XP code 14
+            st.code = MoveRouteCode::Jump;
+            std::string arg = tok.substr(1);        // z. B. "2,-1"/"(2,-1)"
+            arg.erase(std::remove(arg.begin(), arg.end(), '('), arg.end());
+            arg.erase(std::remove(arg.begin(), arg.end(), ')'), arg.end());
+            const size_t comma = arg.find(',');
+            try {
+                st.param = comma == std::string::npos ? 0 : std::stoi(arg.substr(0, comma));
+                st.param2 = comma == std::string::npos
+                                ? std::stoi(arg)
+                                : std::stoi(arg.substr(comma + 1));
+            } catch (...) { st.param = st.param2 = 0; }
+            // Ohne Komma gilt "Jn = dz-Sprung" (param=0/param2=n) — die
+            // Zuweisung oben steuert das bereits korrekt.
+        }
+        else if (up.rfind("S+", 0) == 0 || up.rfind("S-", 0) == 0) {
+            st.code = (up[1] == '+') ? MoveRouteCode::SwitchOn : MoveRouteCode::SwitchOff;
+            st.param = atoi(up.c_str() + 2); // Schalter-ID
+            if (st.param <= 0) continue;
+        }
+        else if (c == 'V' && tok.size() > 1) {
+            st.code = MoveRouteCode::ChangeSpeed;
+            st.param = std::clamp(atoi(tok.c_str() + 1), 1, 6);
+        }
+        else if (c == 'Q' && tok.size() > 1) {
+            st.code = MoveRouteCode::ChangeFrequency;
+            st.param = std::clamp(atoi(tok.c_str() + 1), 1, 6);
+        }
+        else if (up == "H1") st.code = MoveRouteCode::ThroughOn;
+        else if (up == "H0") st.code = MoveRouteCode::ThroughOff;
+        else if (up == "P1") st.code = MoveRouteCode::TransparentOn;
+        else if (up == "P0") st.code = MoveRouteCode::TransparentOff;
+        else continue; // unbekanntes Token: ueberspringen (wie bisher)
+        route.list.push_back(std::move(st));
+    }
+    route.list.push_back({MoveRouteCode::End, 0, 0, std::string()});
+    return route;
+}
+
 bool EventInterpreter::ExecuteCommand() {
     const EventCommand& cmd = mList[mIndex];
     using CC = EventCommandCode;
@@ -694,35 +796,11 @@ bool EventInterpreter::ExecuteCommand() {
         Game::Get().Player().SetTransparent(cmd.param1 != 0);
         return true;
     case CC::SetMoveRoute: {
-        MoveRoute route;
+        // PAKET 16: zentraler XP-Routen-Parser (Tokens s. EventSystem.h)
+        MoveRoute route = EventSystem_ParseMoveRouteText(cmd.text);
         route.repeat = (cmd.param2 & 1) != 0;
         route.skippable = (cmd.param2 & 2) != 0;
         const bool wait = (cmd.param2 & 4) != 0;
-        // Routen-Text parsen: U D L R F T A X S(n) W(n) J(x,y) TD TL TR TU
-        std::stringstream ss(cmd.text);
-        std::string tok;
-        while (ss >> tok) {
-            MoveRouteStep st;
-            char c = (char)std::toupper(tok[0]);
-            if (c == 'U') st.code = MoveRouteCode::MoveUp;
-            else if (c == 'D') st.code = MoveRouteCode::MoveDown;
-            else if (c == 'L') st.code = MoveRouteCode::MoveLeft;
-            else if (c == 'R') st.code = MoveRouteCode::MoveRight;
-            else if (c == 'F') st.code = MoveRouteCode::MoveForward;
-            else if (c == 'T' && tok.size() > 1 && std::toupper(tok[1]) == 'D') { st.code = MoveRouteCode::TurnDown; }
-            else if (c == 'T' && tok.size() > 1 && std::toupper(tok[1]) == 'L') { st.code = MoveRouteCode::TurnLeft; }
-            else if (c == 'T' && tok.size() > 1 && std::toupper(tok[1]) == 'R') { st.code = MoveRouteCode::TurnRight; }
-            else if (c == 'T' && tok.size() > 1 && std::toupper(tok[1]) == 'U') { st.code = MoveRouteCode::TurnUp; }
-            else if (c == 'T') st.code = MoveRouteCode::TowardPlayer;
-            else if (c == 'A') st.code = MoveRouteCode::AwayFromPlayer;
-            else if (c == 'X') st.code = MoveRouteCode::Random;
-            else if (c == 'W') {
-                st.code = MoveRouteCode::Wait;
-                st.param = tok.size() > 1 ? atoi(tok.c_str() + 1) : 20;
-            } else continue;
-            route.list.push_back(st);
-        }
-        route.list.push_back({MoveRouteCode::End, 0});
         int target = cmd.param1; // 0=dieses Event, >0 Event-Id
         if (target < 0) target = mEventId;
         if (onSetMoveRoute) onSetMoveRoute(target, route);
@@ -1411,8 +1489,17 @@ void EventSystem::RefreshEventPage(MapEvent& ev) {
     // Seitenwechsel: Bewegung/Grafik anwenden (XP refresh)
     ev.hasMoveRoute = false;
     ev.routeForcing = false;
+    // PAKET 16: Route-Laufzeit-Overrides (Grafik/Transparenz) verfallen mit
+    // dem Seitenwechsel (XP: character.refresh stellt die Seitengrafik wieder
+    // her); Tempo/Haeufigkeit von der neuen Seite uebernehmen.
+    ev.transparent = false;
+    ev.routeGraphic.clear();
+    ev.routeGraphicIndex = 0;
     if (auto* page = ev.GetCurrentPage()) {
         ev.direction = page->direction2D;
+        ev.moveSpeedRt = std::clamp(page->moveSpeed, 1, 6);
+        ev.moveFrequencyRt = std::clamp(page->moveFrequency, 1, 6);
+        ev.through = page->through;
         if (page->moveType == (int)EventMoveType::Custom && !page->customRoute.empty()) {
             StartCustomRoute(ev, page->customRoute, page->routeRepeat, page->routeSkippable);
         }
@@ -1420,28 +1507,12 @@ void EventSystem::RefreshEventPage(MapEvent& ev) {
 }
 
 void EventSystem::StartCustomRoute(MapEvent& ev, const std::string& routeText, bool repeat, bool skippable) {
-    MoveRoute route;
+    // PAKET 16: zentraler XP-Routen-Parser (Tokens s. EventSystem.h) —
+    // deckt die XP-Vollstaendigkeit auch fuer Seiten-Autonomierouten ab.
+    MoveRoute route = EventSystem_ParseMoveRouteText(routeText);
     route.repeat = repeat;
     route.skippable = skippable;
-    std::stringstream ss(routeText);
-    std::string tok;
-    while (ss >> tok) {
-        MoveRouteStep st;
-        char c = (char)std::toupper(tok[0]);
-        if (c == 'U') st.code = MoveRouteCode::MoveUp;
-        else if (c == 'D') st.code = MoveRouteCode::MoveDown;
-        else if (c == 'L') st.code = MoveRouteCode::MoveLeft;
-        else if (c == 'R') st.code = MoveRouteCode::MoveRight;
-        else if (c == 'F') st.code = MoveRouteCode::MoveForward;
-        else if (c == 'T') st.code = MoveRouteCode::TowardPlayer;
-        else if (c == 'A') st.code = MoveRouteCode::AwayFromPlayer;
-        else if (c == 'X') st.code = MoveRouteCode::Random;
-        else if (c == 'W') { st.code = MoveRouteCode::Wait; st.param = tok.size() > 1 ? atoi(tok.c_str() + 1) : 20; }
-        else continue;
-        route.list.push_back(st);
-    }
-    if (route.list.empty()) return;
-    route.list.push_back({MoveRouteCode::End, 0});
+    if (route.list.size() <= 1) return; // nur der End-Marker
     ev.moveRoute = route;
     ev.hasMoveRoute = true;
 }
@@ -1671,7 +1742,13 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
         auto& mr = ev.moveRoute;
         if (mr.waitTimer > 0) { mr.waitTimer -= dt; continue; }
         if (mr.stepIndex < 0 || mr.stepIndex >= (int)mr.list.size()) {
-            if (mr.repeat) { mr.stepIndex = 0; continue; }
+            if (mr.repeat) {
+                mr.stepIndex = 0;
+                // PAKET 16 (Schritt 30): Route-Loop-Pause nach Haeufigkeit —
+                // hoehere Frequenz = kuerzere Pause (XP-Verhalten)
+                mr.waitTimer = 0.08f * (float)(7 - std::clamp(ev.moveFrequencyRt, 1, 6));
+                continue;
+            }
             ev.hasMoveRoute = false;
             ev.routeForcing = false;
             continue;
@@ -1720,6 +1797,23 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
                 }
                 break;
             }
+            case MoveRouteCode::MoveBackward: {
+                // XP 13: entgegen Blickrichtung (ohne Richtungswechsel)
+                switch (ev.direction) {
+                    case DIR_UP:    delta = Vec3(0, 0, cell); break;
+                    case DIR_DOWN:  delta = Vec3(0, 0, -cell); break;
+                    case DIR_LEFT:  delta = Vec3(cell, 0, 0); break;
+                    case DIR_RIGHT: delta = Vec3(-cell, 0, 0); break;
+                    default:        delta = Vec3(0, 0, -cell); break;
+                }
+                dir = ev.direction; // Blick bleibt (kein Auto-Turn unten)
+                break;
+            }
+            case MoveRouteCode::Jump:
+                // XP 14: (dx,dz)-Kachel-Sprung, Blick bleibt unveraendert
+                delta = Vec3((float)step.param, 0, (float)step.param2);
+                dir = ev.direction;
+                break;
             case MoveRouteCode::Wait:
                 mr.waitTimer = step.param > 0 ? step.param / 40.0f : 0.5f;
                 mr.stepIndex++;
@@ -1728,6 +1822,80 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
             case MoveRouteCode::TurnLeft:  ev.direction = DIR_LEFT;  mr.stepIndex++; continue;
             case MoveRouteCode::TurnRight: ev.direction = DIR_RIGHT; mr.stepIndex++; continue;
             case MoveRouteCode::TurnUp:    ev.direction = DIR_UP;    mr.stepIndex++; continue;
+            // ---------------- PAKET 16 (XP-Vervollstaendigung) ----------------
+            case MoveRouteCode::TurnRight90:
+                // 90° im Uhrzeigersinn (von oben): unten->links->oben->rechts
+                ev.direction = ev.direction == DIR_DOWN ? DIR_LEFT :
+                               ev.direction == DIR_LEFT ? DIR_UP :
+                               ev.direction == DIR_UP ? DIR_RIGHT : DIR_DOWN;
+                mr.stepIndex++; continue;
+            case MoveRouteCode::TurnLeft90:
+                ev.direction = ev.direction == DIR_DOWN ? DIR_RIGHT :
+                               ev.direction == DIR_RIGHT ? DIR_UP :
+                               ev.direction == DIR_UP ? DIR_LEFT : DIR_DOWN;
+                mr.stepIndex++; continue;
+            case MoveRouteCode::Turn180: {
+                ev.direction = (ev.direction == DIR_DOWN) ? DIR_UP :
+                               (ev.direction == DIR_UP) ? DIR_DOWN :
+                               (ev.direction == DIR_LEFT) ? DIR_RIGHT : DIR_LEFT;
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::TurnRandom:
+                ev.direction = (std::rand() % 2 == 0)
+                    ? ((std::rand() % 2 == 0) ? DIR_DOWN : DIR_UP)
+                    : ((std::rand() % 2 == 0) ? DIR_LEFT : DIR_RIGHT);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::TurnTowardPlayer: {
+                Vec3 to = playerPos - pos; to.y = 0.0f;
+                if (glm::length(to) > 0.001f)
+                    ev.direction = (std::fabs(to.x) > std::fabs(to.z))
+                        ? (to.x > 0 ? DIR_RIGHT : DIR_LEFT)
+                        : (to.z > 0 ? DIR_DOWN : DIR_UP);
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::TurnAwayPlayer: {
+                Vec3 to = playerPos - pos; to.y = 0.0f;
+                if (glm::length(to) > 0.001f)
+                    ev.direction = (std::fabs(to.x) > std::fabs(to.z))
+                        ? (to.x > 0 ? DIR_LEFT : DIR_RIGHT)
+                        : (to.z > 0 ? DIR_UP : DIR_DOWN);
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::SwitchOn:
+                Game::Get().Switches().Set(step.param, true);
+                RefreshAllPages(); // XP: Game_Switches setzt need_refresh
+                mr.stepIndex++; continue;
+            case MoveRouteCode::SwitchOff:
+                Game::Get().Switches().Set(step.param, false);
+                RefreshAllPages();
+                mr.stepIndex++; continue;
+            case MoveRouteCode::ChangeSpeed:
+                ev.moveSpeedRt = std::clamp(step.param, 1, 6);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::ChangeFrequency:
+                ev.moveFrequencyRt = std::clamp(step.param, 1, 6);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::ThroughOn:  ev.through = true;  mr.stepIndex++; continue;
+            case MoveRouteCode::ThroughOff: ev.through = false; mr.stepIndex++; continue;
+            case MoveRouteCode::TransparentOn:  ev.transparent = true;  mr.stepIndex++; continue;
+            case MoveRouteCode::TransparentOff: ev.transparent = false; mr.stepIndex++; continue;
+            case MoveRouteCode::ChangeGraphic: {
+                // text = "name" oder "name,idx" (Seitengrafik-Override, XP 39)
+                const size_t comma = step.text.find(',');
+                ev.routeGraphic = (comma == std::string::npos)
+                                    ? step.text : step.text.substr(0, comma);
+                if (comma != std::string::npos) {
+                    try { ev.routeGraphicIndex = std::max(1, std::stoi(step.text.substr(comma + 1))); }
+                    catch (...) { ev.routeGraphicIndex = 1; }
+                }
+                mr.stepIndex++; continue;
+            }
+            case MoveRouteCode::PlaySE:
+                if (!step.text.empty()) EventSystem_PlayAudio(step.text, 3, false);
+                mr.stepIndex++; continue;
+            case MoveRouteCode::Script:
+                if (!step.text.empty() && s_scriptRunner) s_scriptRunner(step.text);
+                mr.stepIndex++; continue;
             case MoveRouteCode::End:
                 mr.stepIndex++;
                 continue;
@@ -1746,7 +1914,10 @@ void EventSystem::UpdateMoveRoutes(float dt, const Vec3& playerPos) {
         pos += delta;
         ev.x = (int)std::round(pos.x);
         ev.z = (int)std::round(pos.z);
-        mr.waitTimer = 0.05f; // kleine Schritt-Pause, damit Bewegung sichtbar ist
+        // PAKET 16 (Schritt 29): Schritt-Pause nach Geschwindigkeit —
+        // hoehere Tempo = kuerzere Pause; speed 3 entspricht dem
+        // bisherigen festen 0,05 s (Bestandsverhalten unveraendert).
+        mr.waitTimer = 0.05f * (7.0f / (float)(std::clamp(ev.moveSpeedRt, 1, 6) + 3));
     }
 }
 

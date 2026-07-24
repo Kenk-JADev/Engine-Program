@@ -1014,6 +1014,53 @@ bleibt stehen, bis der Spieler bestaetigt — dann erst EXP/Gold-Mechaik
 abschliessen (SyncBack/onVictory) und Kampfende. Genau wie XP, nur
 rund.
 
+## PAKET 16 — Move-Routen: XP-Vervollstaendigung ✅ ERLEDIGT 2026-07-24
+
+Der Routen-Umfang deckte bisher nur die Hälfte der XP-`RPG::MoveCommand`-
+Codes ab (Gehen/Drehen/Warten); Sprünge, 90°/180°/Zufalls-/Spieler-
+Drehungen, Schalter, Tempo/Häufigkeit, Durchgehbarkeit/Transparenz,
+Grafikwechsel, SE und Script fehlten komplett — und die zwei Parser
+(Befehl 209 + Custom-Seitenroute) waren doppelt gepflegte Kopien.
+
+- [x] **Zentraler Parser:** `EventSystem_ParseMoveRouteText` (freie
+  Funktion, deklariert in EventSystem.h) — EINE Quelle für den Event-
+  Befehl 209 UND die Custom-Seitenroute (`StartCustomRoute`).
+  Rueckwaertskompatible Tokens (siehe docs/EVENTS-XP.md):
+  `U D L R F T A X TD TL TR TU W(n)` + neu `B J(dx,dz) R90 L90 T180 TX
+  TT TA S+id S-id V(n) Q(n) H1 H0 P1 P0 G name[,idx] E name SC <rest>`.
+  `SC` frisst den Zeilenrest (letzter Schritt), `G`/`E` das Folgetoken.
+- [x] **Enum auf echte XP-Codes korrigiert:** `Random` 10→9,
+  `TowardPlayer` 29→10, `AwayFromPlayer` 30→11 (kollidierten sonst mit
+  den neuen `ChangeSpeed`/`ChangeFrequency` 29/30 — Switch-Doppelcase).
+  Neue Stufen 13/14, 20–22, 24–30, 35–39, 42/43; `MoveRouteStep` um
+  `param2` (Sprung-dz) und `text` (Grafik/SE/Script) erweitert.
+- [x] **Laufzeitfelder am MapEvent:** `moveSpeedRt`, `moveFrequencyRt`
+  (beeinflussen jetzt Schrittpausen: Tempo 3 == bisheriges festes
+  0,05 s; Loop-Pause über Frequenz), `through` (Zustandskompat.),
+  `transparent`, `routeGraphic/routeGraphicIndex` (Grafik-Override);
+  Schalter-Schritte wirken auf `Game::Switches()`, SE über den
+  Audio-Hook (kind 3), Script über `s_scriptRunner`.
+- [x] **3D-Renderer konsumiert die Overrides** (Engine.cpp
+  Char-Pass): `routeGraphic/routeGraphicIndex` schlagen die Seitengrafik,
+  `transparent` setzt Alpha = 0 (Sprite UND Quader-Rueckfall).
+- [x] **Editor-Routendialog** (QtEventEditorDialog): 19 neue Schritte,
+  generisches Argumentfeld (Sprung/Schalter-ID/Tempo/Haeufigkeit/
+  Grafik/SE/Script) neben dem Warten-Spin; Serialisierung nicht mehr
+  per fragilem Anzeigetext-Match, sondern kanonisches Volltoken in der
+  `Qt::UserRole` jedes Eintrags (verlustfrei hin und zurück; G/E/SC
+  werden beim Laden korrekt wieder zusammengesetzt).
+
+**Bewusst offen (XP-Rest):** Anime-Flags 31–34 (walk/step-Anime-Override
+im Laufzeit-Renderer), Opacity/Blend 40/41, Async-Script 44/45; `through`
+ist Zustandskompatibilität (Routenfuehrung prüft ohnehin keine
+Kollision). Sprung ist wie bisher ein harter Positions-Sprung ohne
+Parabel-Animation.
+
+**Akzeptanz:** Route „R R L B J(1,0) R90 T180 TX TT W20 S+5 V5 Q2 H1
+H0 P1 P0 G 001-Fighter01,2 E 057-Right02 SC <code>" wird aus Befehl 209
+UND aus der Seiten-Autonomieroute identisch geparst und ausgeführt;
+Editor zeigt jeden Schritt lesbar und schreibt ihn unveraendert zurueck.
+
 ## Arbeitsregeln (für Agenten-Sessions)
 
 **Strategie (Nutzer, 2026-07-23):** RmlUi war eine Uebergangsloesung und

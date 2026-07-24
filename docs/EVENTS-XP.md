@@ -71,6 +71,32 @@ Schalter/Variablen-Änderung.
 | 236 | Wetter | `param1` = Typ, `param2` = Stärke |
 | 241–251 | BGM/BGS/ME/SE | `text` = Datei, `param1` = Sekunden (Fade) |
 
+### Bewegungsroute-Tokens (209 `text` / Seiten-`customRoute`)
+
+Ein Parser für beide Quellen (`EventSystem_ParseMoveRouteText`, PAKET 16),
+Treffer ohne Leerzeichen, Leerzeichen zwischen den Schritten:
+
+| Token | XP-Code | Wirkung |
+|---|---|---|
+| `D L R U` | 1–4 | Schritt unten/links/rechts/oben |
+| `F` / `B` | 12 / 13 | vorwärts / rückwärts (Blick bleibt) |
+| `T` / `A` / `X` | 10 / 11 / 9 | zum/weg vom Spieler / zufällig gehen |
+| `J(dx,dz)` | 14 | Sprung um dx Kacheln rechts, dz unten |
+| `W(n)` | 15 | n Frames warten (40 FPS-Basis) |
+| `TD TL TR TU` | 16–19 | nach unten/links/rechts/oben blicken |
+| `R90` / `L90` / `T180` | 20–22 | 90° rechts/links, 180° drehen |
+| `TX` | 24 | zufällige Richtung blicken |
+| `TT` / `TA` | 25 / 26 | zum/weg vom Spieler blicken |
+| `S+<id>` / `S-<id>` | 27 / 28 | Schalter an/aus |
+| `V(n)` / `Q(n)` | 29 / 30 | Tempo / Häufigkeit 1..6 |
+| `H1/H0` / `P1/P0` | 35–38 | Durchgehbarkeit / Transparenz an/aus |
+| `G name[,idx]` | 39 | Charaktergrafik wechseln |
+| `E name` | 42 | Soundeffekt abspielen |
+| `SC <rest>` | 43 | Script (frisst den Rest der Route — letzter Schritt) |
+
+Offen: Anime-Flags 31–34, Opacity 40 / Blend 41, Script-Varianten 44/45
+(siehe TODO_XP_PARITY.md, PAKET 16).
+
 ### Seite 3 – Kampf / Akteure / System
 | Code | Befehl | Kodierung |
 |---|---|---|

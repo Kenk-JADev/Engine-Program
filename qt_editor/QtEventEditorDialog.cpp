@@ -64,27 +64,98 @@ void setComboToData(QComboBox* combo, int dataValue) {
 }
 
 QStringList RouteStepLabels() {
+    // PAKET 16: XP-Vervollstaendigung (MRC-Codes in Klammern) — Tokens sind
+    // die Serialisierungsform des Engines (EventSystem_ParseMoveRouteText).
     return {QL("Nach unten gehen"), QL("Nach links gehen"), QL("Nach rechts gehen"),
             QL("Nach oben gehen"), QL("Geradeaus gehen"), QL("Zum Spieler gehen"),
             QL("Vom Spieler weg"), QL("Zufällig gehen"),
             QL("Warten (Frames):"),
             QL("Blicke nach unten"), QL("Blicke nach links"),
-            QL("Blicke nach rechts"), QL("Blicke nach oben")};
+            QL("Blicke nach rechts"), QL("Blicke nach oben"),
+            QL("Rückwärts gehen"),
+            QL("Springen (dx,dz):"),
+            QL("90° nach rechts drehen"), QL("90° nach links drehen"),
+            QL("180° drehen"), QL("Zufällig drehen"),
+            QL("Zum Spieler blicken"), QL("Vom Spieler wegblicken"),
+            QL("Schalter AN (ID):"), QL("Schalter AUS (ID):"),
+            QL("Geschwindigkeit ändern (1..6):"),
+            QL("Häufigkeit ändern (1..6):"),
+            QL("Durchgehbar AN"), QL("Durchgehbar AUS"),
+            QL("Transparent AN"), QL("Transparent AUS"),
+            QL("Grafik wechseln (Name[,Index]):"),
+            QL("SE abspielen (Name):"),
+            QL("Script (Rest der Route):")};
 }
 QStringList RouteStepTokens() {
     return {QL("D"), QL("L"), QL("R"), QL("U"), QL("F"), QL("T"), QL("A"), QL("X"),
-            QL("W"), QL("TD"), QL("TL"), QL("TR"), QL("TU")};
+            QL("W"), QL("TD"), QL("TL"), QL("TR"), QL("TU"),
+            QL("B"), QL("J"), QL("R90"), QL("L90"), QL("T180"), QL("TX"),
+            QL("TT"), QL("TA"), QL("S+"), QL("S-"), QL("V"), QL("Q"),
+            QL("H1"), QL("H0"), QL("P1"), QL("P0"), QL("G"), QL("E"), QL("SC")};
 }
 
-QString DescribeRouteStep(const QString& token) {
+// Volltoken (mit evtl. Argument) -> lesbare Beschreibung.
+QString DescribeRouteStep(const QString& fullToken) {
     const QStringList labels = RouteStepLabels();
     const QStringList tokens = RouteStepTokens();
-    for (int i = 0; i < tokens.size(); ++i) {
-        if (tokens[i] == QL("W") && token.startsWith(QLatin1Char('W')))
-            return QL("Warten: %1 Frames").arg(token.mid(1).toInt());
-        if (token == tokens[i]) return labels[i];
+    const QString base = fullToken.section(QLatin1Char(' '), 0, 0);
+    const int exact = tokens.indexOf(base);
+    if (fullToken.startsWith(QLatin1Char('W')) && fullToken.size() > 1
+        && fullToken.mid(1).toInt() > 0)
+        return QL("Warten: %1 Frames").arg(fullToken.mid(1).toInt());
+    if (base.startsWith(QLatin1Char('J')))
+        return QL("Springen: %1").arg(base.mid(1));
+    if (base.startsWith(QL("S+")))
+        return QL("Schalter %1 AN").arg(base.mid(2).toInt());
+    if (base.startsWith(QL("S-")))
+        return QL("Schalter %1 AUS").arg(base.mid(2).toInt());
+    if (base.startsWith(QLatin1Char('V')) && base.size() > 1)
+        return QL("Geschwindigkeit: %1").arg(base.mid(1).toInt());
+    if (base.startsWith(QLatin1Char('Q')) && base.size() > 1)
+        return QL("Häufigkeit: %1").arg(base.mid(1).toInt());
+    if (base == QL("G") && fullToken.size() > 2)
+        return QL("Grafik wechseln: %1").arg(fullToken.section(QLatin1Char(' '), 1));
+    if (base == QL("E") && fullToken.size() > 2)
+        return QL("SE abspielen: %1").arg(fullToken.section(QLatin1Char(' '), 1));
+    if (base == QL("SC") && fullToken.size() > 3)
+        return QL("Script: %1").arg(fullToken.section(QLatin1Char(' '), 1));
+    if (exact >= 0) return labels[exact];
+    return fullToken;
+}
+
+// Basis-Token braucht ein freies Argument-Feld (QLineEdit)?
+bool RouteStepNeedsArg(const QString& baseToken) {
+    static const QStringList argTokens = {
+        QL("J"), QL("S+"), QL("S-"), QL("V"), QL("Q"), QL("G"), QL("E"), QL("SC")};
+    return argTokens.contains(baseToken);
+}
+
+// Aus Basis-Token + Argument das kanonische Volltoken bauen (Serialisierung).
+QString BuildRouteFullToken(const QString& base, const QString& argIn) {
+    QString arg = argIn;
+    if (base == QL("J")) {
+        arg.remove(QLatin1Char('(')).remove(QLatin1Char(')')).remove(QLatin1Char(' '));
+        return QL("J(%1)").arg(arg.isEmpty() ? QL("0,0") : arg);
     }
-    return token;
+    if (base == QL("S+") || base == QL("S-"))
+        return base + QString::number(arg.toInt());
+    if (base == QL("V") || base == QL("Q"))
+        return base + QString::number(arg.toInt());
+    if (base == QL("G") || base == QL("E")) {          // Namen ohne Leerzeichen
+        arg.remove(QLatin1Char(' '));
+        return base + QLatin1Char(' ') + arg;
+    }
+    if (base == QL("SC"))
+        return QL("SC ") + arg;                        // Script frisst Rest
+    return base;
+}
+
+// QListWidget-Eintrag aus Volltoken (Token sicher in UserRole ablegen,
+// damit die Rueck-Serialisierung nicht am Anzeigetext haengt).
+QListWidgetItem* MakeRouteItem(const QString& fullToken) {
+    auto* item = new QListWidgetItem(DescribeRouteStep(fullToken));
+    item->setData(kIndexRole, fullToken);
+    return item;
 }
 
 } // namespace
@@ -97,7 +168,7 @@ bool EditMoveRoute(QWidget* parent, std::string& routeText, bool& repeat, bool& 
     QDialog dlg(parent);
     dlg.setWindowTitle(QL("Bewegungsroute"));
     dlg.setModal(true);
-    dlg.resize(420, 420);
+    dlg.resize(600, 460); // PAKET 16: breiter (Argument-Feld in der Add-Zeile)
     auto* root = new QVBoxLayout(&dlg);
 
     auto* info = new QLabel(QL("Schritte der benutzerdefinierten Bewegungsroute "
@@ -106,38 +177,58 @@ bool EditMoveRoute(QWidget* parent, std::string& routeText, bool& repeat, bool& 
     root->addWidget(info);
 
     auto* list = new QListWidget(&dlg);
-    // Bestehende Route in Schritte zerlegen
+    // Bestehende Route in Schritte zerlegen — PAKET 16: G/E fressen das
+    // naechste Token, SC den ganzen Rest (wie der Engine-Parser).
     {
         const QString text = QString::fromStdString(routeText);
-        const QStringList tokens = text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
-        for (const QString& tok : tokens)
-            list->addItem(DescribeRouteStep(tok));
+        const QStringList raw = text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        for (int i = 0; i < raw.size(); ++i) {
+            const QString up = raw[i].toUpper();
+            QString full = raw[i];
+            if ((up == QL("G") || up == QL("E")) && i + 1 < raw.size())
+                full = raw[i] + QLatin1Char(' ') + raw[++i];
+            else if (up == QL("SC")) {
+                const QString scTok = raw[i];           // vor ++i sichern
+                QStringList rest;
+                while (++i < raw.size()) rest << raw[i]; // SC frisst den Rest
+                full = scTok + QLatin1Char(' ') + rest.join(QLatin1Char(' '));
+            }
+            list->addItem(MakeRouteItem(full));
+        }
     }
     root->addWidget(list, 1);
 
     auto* addRow = new QHBoxLayout();
     auto* stepCombo = new QComboBox(&dlg);
     const QStringList labels = RouteStepLabels();
+    const QStringList tokens = RouteStepTokens();
     for (const QString& l : labels) stepCombo->addItem(l);
     auto* waitSpin = new QSpinBox(&dlg);
     waitSpin->setRange(1, 999);
     waitSpin->setValue(20);
     waitSpin->setEnabled(false);
+    // PAKET 16: generisches Argumentfeld (Sprung/Schalter/Tempo/Grafik/SE/Script)
+    auto* argEdit = new QLineEdit(&dlg);
+    argEdit->setPlaceholderText(QL("Argument (dx,dz / ID / 1..6 / Name)"));
+    argEdit->setEnabled(false);
     auto* addBtn = new QPushButton(QL("Hinzufügen"), &dlg);
+    const int waitIdx = tokens.indexOf(QL("W"));
     QObject::connect(stepCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-                     &dlg, [waitSpin](int idx) { waitSpin->setEnabled(idx == 8); });
+                     &dlg, [waitSpin, argEdit, tokens, waitIdx](int idx) {
+        waitSpin->setEnabled(idx == waitIdx);
+        argEdit->setEnabled(idx >= 0 && RouteStepNeedsArg(tokens.value(idx)));
+    });
     QObject::connect(addBtn, &QPushButton::clicked, &dlg, [&]() {
-        const QStringList tokens = RouteStepTokens();
         const int idx = stepCombo->currentIndex();
-        QString tok = tokens.value(idx, QL("F"));
-        if (tok == QL("W")) tok += QString::number(waitSpin->value());
-        const QString shown = tok == QL("W")
-            ? QL("Warten: %1 Frames").arg(waitSpin->value())
-            : labels.value(idx);
-        list->addItem(shown);
+        const QString base = tokens.value(idx, QL("F"));
+        QString full = base;
+        if (idx == waitIdx) full = base + QString::number(waitSpin->value());
+        else if (RouteStepNeedsArg(base)) full = BuildRouteFullToken(base, argEdit->text());
+        list->addItem(MakeRouteItem(full));
     });
     addRow->addWidget(stepCombo, 1);
     addRow->addWidget(waitSpin);
+    addRow->addWidget(argEdit, 1);
     addRow->addWidget(addBtn);
     root->addLayout(addRow);
 
@@ -184,19 +275,12 @@ bool EditMoveRoute(QWidget* parent, std::string& routeText, bool& repeat, bool& 
 
     if (dlg.exec() != QDialog::Accepted) return false;
 
-    // Liste zurück in Routentext
-    const QStringList tokens = RouteStepTokens();
+    // Liste zurück in Routentext — PAKET 16: das kanonische Volltoken steht
+    // in der UserRole des Eintrags (kein Rueck-Mapping ueber Anzeigetexte).
     QStringList outTokens;
     for (int i = 0; i < list->count(); ++i) {
-        const QString shown = list->item(i)->text();
-        if (shown.startsWith(QL("Warten: "))) {
-            QString num = shown.mid(8);
-            num.chop(7); // " Frames"
-            outTokens << (QL("W") + num.trimmed());
-            continue;
-        }
-        int idx = labels.indexOf(shown);
-        outTokens << (idx >= 0 ? tokens[idx] : QL("F"));
+        const QString full = list->item(i)->data(kIndexRole).toString();
+        if (!full.isEmpty()) outTokens << full;
     }
     routeText = outTokens.join(QLatin1Char(' ')).toStdString();
     repeat = repeatCheck->isChecked();

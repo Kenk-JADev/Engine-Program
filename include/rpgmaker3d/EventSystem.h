@@ -248,19 +248,43 @@ enum class MoveRouteCode {
     MoveRight = 3,
     MoveUp = 4,
     MoveForward = 12,
-    Random = 10,
+    Random = 9,
     Wait = 15,
     TurnDown = 16,
     TurnLeft = 17,
     TurnRight = 18,
     TurnUp = 19,
-    TowardPlayer = 29,
-    AwayFromPlayer = 30
+    // PAKET 16: auf echte XP-Codes korrigiert (Random war 10, Toward/Away
+    // waren 29/30 und kollidierten mit ChangeSpeed/ChangeFrequency):
+    TowardPlayer = 10,
+    AwayFromPlayer = 11,
+    // ---- PAKET 16: XP-Vervollstaendigung (Codes = XP RPG::MoveCommand) ----
+    MoveBackward = 13,      // ein Schritt entgegen der Blickrichtung
+    Jump = 14,              // param = dx, param2 = dz (Kachel-Sprung)
+    TurnRight90 = 20,
+    TurnLeft90 = 21,
+    Turn180 = 22,
+    TurnRandom = 24,        // (23 90° rechts/links laeuft hier mit als Zufall)
+    TurnTowardPlayer = 25,
+    TurnAwayPlayer = 26,
+    SwitchOn = 27,          // param = Schalter-ID
+    SwitchOff = 28,
+    ChangeSpeed = 29,       // param 1..6 (ev.moveSpeedRt)
+    ChangeFrequency = 30,   // param 1..6 (ev.moveFrequencyRt)
+    ThroughOn = 35,         // Laufzeit-Flag ev.through (XP-Zustandskompat.)
+    ThroughOff = 36,
+    TransparentOn = 37,     // 3D-Char-Renderer blendet aus/ ein
+    TransparentOff = 38,
+    ChangeGraphic = 39,     // text = "name" oder "name,idx"
+    PlaySE = 42,            // text = SE-Name (Audio-Hook kind 3)
+    Script = 43             // text = Script-Rest der Route (letzter Schritt)
 };
 
 struct MoveRouteStep {
     MoveRouteCode code = MoveRouteCode::End;
-    int param = 0; // wait frames etc.
+    int param = 0;          // Schalter-ID, Geschwindigkeit, Sprung-dx usw.
+    int param2 = 0;         // Sprung-dz (PAKET 16)
+    std::string text;       // Script-/SE-/Grafik-Argument (PAKET 16)
 };
 
 struct MoveRoute {
@@ -287,6 +311,17 @@ struct MapEvent {
     // Runtime move route (aus Seite oder SetMoveRoute-Befehl)
     MoveRoute moveRoute;
     bool hasMoveRoute = false;
+
+    // ---- PAKET 16: Laufzeitfelder der erweiterten Routen-Schritte ----
+    // (XP RPG::MoveCommand; wirken nur bis Karten-Reload/Seitenwechsel,
+    //  wie in XP)
+    int  moveSpeedRt = 3;       // Schritt 29 (beeinflusst Schrittpausen)
+    int  moveFrequencyRt = 3;   // Schritt 30 (Pause zwischen Route-Loops)
+    bool through = false;       // 35/36 (Zustandskompat.; Kollision prueft
+                                //  die Routenfuehrung ohnehin nicht)
+    bool transparent = false;   // 37/38 (3D-Char-Renderer blendet aus)
+    std::string routeGraphic;   // 39 Grafik-Override (leer = Seitengrafik)
+    int  routeGraphicIndex = 0; // 39 Index-Override (0 = Seitenindex)
 
     bool IsValid() const { return !pages.empty(); }
     const EventPage* GetCurrentPage() const;
@@ -439,6 +474,17 @@ void EventSystem_NotifyMapChanged(int mapId);
 /// Ohne Handler laeuft der bisherige Sofort-Pfad (headless/Tests).
 void EventSystem_SetTransferTransitionHandler(
     std::function<void(int x, int y, int z, int mapId)> fn);
+
+/// PAKET 16: Gemeinsamer Routen-Text-Parser (XP-Bewegungsroute) —
+/// EINE Quelle fuer den Event-Befehl 209 UND die Custom-Seitenroute.
+/// Rueckwaertskompatible Tokens:
+///   U D L R F T A X TD TL TR TU W(n)            (bisherige)
+///   B J(dx,dz) R90 L90 T180 TX TT TA            (Bewegen/Drehen neu)
+///   S+id S-id V(n) Q(n) H1 H0 P1 P0             (Schalter/Tempo/Flags neu)
+///   G name[,idx]   E name   SC <rest>           (Grafik/SE/Script neu)
+/// SC frisst den Rest der Zeile (letzter Schritt). End-Marker wird
+/// angehaengt. repeat/skippable setzt der Aufrufer selbst.
+MoveRoute EventSystem_ParseMoveRouteText(const std::string& routeText);
 
 class EventSystem {
 public:

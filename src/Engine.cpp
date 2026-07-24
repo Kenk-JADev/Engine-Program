@@ -2059,18 +2059,26 @@ void Engine::RenderScene() {
             Vec3 ep = ev.worldPos;
             if (glm::length(ep) < 0.001f) ep = Vec3((float)ev.x, (float)ev.y, (float)ev.z);
             const EventPage* page = ev.GetCurrentPage();
-            const std::string gname = page ? page->graphicName : std::string();
-            const int gindex = page ? page->graphicIndex : 0;
+            // PAKET 16: Move-Route-Overrides schlagen die Seitenwerte —
+            // XP 39 (Grafik wechseln) und XP 37/38 (Transparent an/aus).
+            const std::string gname = !ev.routeGraphic.empty()
+                                        ? ev.routeGraphic
+                                        : (page ? page->graphicName : std::string());
+            const int gindex = !ev.routeGraphic.empty()
+                                 ? ev.routeGraphicIndex
+                                 : (page ? page->graphicIndex : 0);
+            const float evAlpha = ev.transparent ? 0.0f : 1.0f;
             const bool walkAnime = page ? page->walkAnime : true;
             const bool stepAnime = page ? page->stepAnime : false;
             auto sheet = LoadCharacterSheet(gname);
             auto& anim = sEventAnims[ev.id];
             if (sheet) CharacterAnimAdvance(anim, ep, false, walkAnime, stepAnime, mDeltaTime);
             if (!DrawCharacterSprite(*mRenderer, *camera, sheet, ep,
-                                     ev.direction, anim.pattern, gindex, 1.0f,
+                                     ev.direction, anim.pattern, gindex, evAlpha,
                                      Game::Get().Map().IsBushAt(ep))) {
                 float bob = std::sin(mTime * 3.0f + ev.id) * 0.08f;
-                Color col = (ev.id == 1) ? Color(0.95f, 0.75f, 0.2f, 1.0f) : Color(0.4f, 0.7f, 1.0f, 1.0f);
+                Color col = (ev.id == 1) ? Color(0.95f, 0.75f, 0.2f, evAlpha)
+                                         : Color(0.4f, 0.7f, 1.0f, evAlpha);
                 drawCharCube(markerMesh, 0.45f, ep, 0.55f + bob, col,
                              Game::Get().Map().IsBushAt(ep));
             }
