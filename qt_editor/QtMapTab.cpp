@@ -98,9 +98,13 @@ public:
 protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
-        p.fillRect(rect(), QColor(24, 26, 30));
+        // PAKET 40: Hintergrund/Leer-Farben an das App-Theme koppeln
+        // (XP-Classic = helle Arbeitsflaeche) statt hart verdrahteten
+        // Dunkeltoenen; Raster-/Markenfarben folgen der Kontrastlage.
+        const QColor bg = palette().color(QPalette::Base).darker(104);
+        p.fillRect(rect(), bg);
         if (!mEngine || !mEngine->IsInitialized()) {
-            p.setPen(Qt::gray);
+            p.setPen(palette().color(QPalette::Text));
             p.drawText(rect(), Qt::AlignCenter,
                        QL("Keine Karte geladen.\nProjekt öffnen oder Karte anlegen (Map-Dock)."));
             return;
@@ -109,9 +113,12 @@ protected:
         const int w = map.GetWidth();
         const int h = map.GetHeight();
 
+        // Leere Felder: Theme-Untergrund, etwas dunkler als die Flaeche.
+        const QColor emptyCol = bg.darker(115);
+
         // einfache Füllfarben je Tile (stabil gehasht)
-        auto tileColor = [](int id) -> QColor {
-            if (id <= 0) return QColor(32, 34, 38);
+        auto tileColor = [emptyCol](int id) -> QColor {
+            if (id <= 0) return emptyCol;
             const int r = 64 + (id * 73) % 160;
             const int g = 70 + (id * 149) % 150;
             const int b = 72 + (id * 199) % 140;
@@ -131,8 +138,9 @@ protected:
                 }
             }
         }
-        // Raster
-        p.setPen(QColor(255, 255, 255, 28));
+        // Raster (PAKET 40: auf hellem Untergrund dunkel, sonst hell)
+        const bool lightTheme = bg.value() > 140;
+        p.setPen(lightTheme ? QColor(30, 45, 70, 30) : QColor(255, 255, 255, 28));
         for (int x = 0; x <= w; ++x)
             p.drawLine(x * cell, 0, x * cell, h * cell);
         for (int z = 0; z <= h; ++z)

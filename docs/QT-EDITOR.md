@@ -88,6 +88,24 @@ Fertig:
 - [x] **Code**: Suche, Hot-Reload, Ruby-Fehleranzeige
 - [x] **Theme „XP Classic“** (PAKET 35): helle MAKER-Werkzeug-Optik
 - [x] **Radierer-Bugfix** (PAKET 35): Radierer loescht wirklich (siehe unten)
+- [x] **Theme-bewusste Arbeitsflaechen** (PAKET 40): Palette/Karte folgen
+  dem App-Theme statt hart verdrahteter Dunkeltoene (siehe unten)
+
+## Feinschliff (PAKET 40)
+
+Nach dem XP-Classic-Theme (PAKET 35) fielen zwei Flaechen auf, die noch
+hartkodiert dunkel malten — jetzt sind sie theme-bewusst:
+
+- **Tileset-Palette** (`QtTilesetGridWidget`): Hintergrund = `AlternateBase`
+  des Themes (XP-Classic: helle Tafel), Hinweistext aus `Text`-Rolle,
+  Hover = hell auf dunklem / Akzent auf hellem Theme, Auswahlrahmen =
+  Theme-`Highlight` (2 px) mit weissem Innenrand fuer Saetze mit
+  aehnlicher Grundfarbe.
+- **Karten-Canvas** (`QtMapTab`): Hintergrund = leicht dunkleres `Base`,
+  Leer-Felder nochmals abgedunkelt (statt Vollschwarz), Rasterlinien
+  kontrastsicher in beide Richtungen (hell auf dunkel/dunkel auf hell).
+- Radierer-Checkstatus + „Tile: N“-Anzeige waren bereits korrekt
+  verdrahtet (geprueft beim PAKET-35-Audit).
 
 ## Theme & Fehler-Audit (PAKET 35)
 

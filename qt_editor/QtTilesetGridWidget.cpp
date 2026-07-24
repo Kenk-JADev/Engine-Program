@@ -349,10 +349,14 @@ void QtTilesetGridWidget::paintTerrain(QPainter& p, const QRectF& rc, int tileId
 
 void QtTilesetGridWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
-    p.fillRect(rect(), QColor(26, 26, 30));
+    // PAKET 40: Theme-bewusste Flaeche (AlternateBase des App-Themes),
+    // statt hart verdrahtetem Dunkelgrau — die Palette wirkt jetzt im
+    // XP-Classic-Theme wie eine MAKER-Tafel und bleibt zugleich
+    // dark-theme-tauglich, falls das Theme spaeter umgeschaltet wird.
+    p.fillRect(rect(), palette().color(QPalette::AlternateBase));
 
     if (mImage.isNull() || mSrcCols <= 0 || mSrcRows <= 0) {
-        p.setPen(QPen(QColor(150, 150, 150)));
+        p.setPen(QPen(palette().color(QPalette::Text)));
         p.drawText(rect(), Qt::AlignCenter,
                    QStringLiteral("Keine Tileset-Grafik geladen"));
         return;
@@ -395,18 +399,27 @@ void QtTilesetGridWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    // Hover-Hinweis (dezent)
+    // Hover-Hinweis (dezent): helle Linie auf dunklen Themes, Akzent auf
+    // hellen Themes (PAKET 40) — Kontrast in beide Richtungen.
+    const bool lightTheme =
+        palette().color(QPalette::AlternateBase).value() > 140;
+    const QColor hoverCol = lightTheme
+        ? QColor(palette().color(QPalette::Highlight))
+        : QColor(255, 255, 255, 120);
     if (mHover >= 0 && mHover < total) {
         const QPoint dc = cellOf(mHover);
-        p.setPen(QPen(QColor(255, 255, 255, 120), 1));
+        p.setPen(QPen(hoverCol, 1));
         p.setBrush(Qt::NoBrush);
         p.drawRect(QRectF(dc.x() * cell + 0.5, dc.y() * cell + 0.5, cell - 1, cell - 1));
     }
-    // Auswahlrahmen (PickTile)
+    // Auswahlrahmen (PickTile): Theme-Akzent + weisser Innenrand fuer Saetze
+    // mit aehnlicher Grundfarbe (PAKET 40).
     if (mInteraction == PickTile && mSelected >= 0 && mSelected < total) {
         const QPoint dc = cellOf(mSelected);
-        p.setPen(QPen(QColor(240, 190, 40), 2));
+        p.setPen(QPen(QColor(255, 255, 255, 200), 1));
         p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(dc.x() * cell + 2.5, dc.y() * cell + 2.5, cell - 5, cell - 5));
+        p.setPen(QPen(palette().color(QPalette::Highlight), 2));
         p.drawRect(QRectF(dc.x() * cell + 1, dc.y() * cell + 1, cell - 2, cell - 2));
     }
 }
