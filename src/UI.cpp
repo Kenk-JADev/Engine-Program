@@ -6,6 +6,7 @@
 #include "rpgmaker3d/Texture.h"
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/Logger.h"
+#include "rpgmaker3d/Rui.h" // PAKET 31: Message-Box rendert ueber das eigene Framework
 // ImGui-Editor ist entfernt. GameUI-Overlay war historisch ImGui-basiert;
 // ohne RPGMAKER3D_ENABLE_IMGUI sind Draw()-Pfade No-Ops (RmlUi/Logic bleibt).
 #ifdef RPGMAKER3D_ENABLE_IMGUI
@@ -98,47 +99,95 @@ void MessageWindow::Update(float dt) {
     }
 }
 void MessageWindow::Draw() {
-    if (!mVisible) return;
-#ifdef RPGMAKER3D_ENABLE_IMGUI
-    ImGuiIO& io = ImGui::GetIO();
-    float w = io.DisplaySize.x * 0.72f;
-    float h = 160.0f;
-    ImGui::SetNextWindowPos(ImVec2((io.DisplaySize.x - w) * 0.5f, io.DisplaySize.y - h - 28.0f));
-    ImGui::SetNextWindowSize(ImVec2(w, h));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.10f, 0.92f));
-    ImGui::Begin("##MessageBox", nullptr,
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoTitleBar);
-    if (!mSpeakerName.empty()) // PAKET 10: Sprecherzeile (war im RmlUi-Kasten)
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mSpeakerName.c_str());
-    ImGui::TextWrapped("%s", mDisplayed.c_str());
-    ImGui::Dummy(ImVec2(0, 8));
-    // PAKET 30: Eingabe laeuft vollstaendig ueber den NATiven Pfad
-    // (GameUI::UpdateModalInput + Engine-Key-Route -> AdvanceInput).
-    // Die frueheren ImGui::IsKeyPressed/Selectable-Abfragen hier waren
-    // toter Code: kein Backend fuehrt Tasten/Maus in die ImGui-IO — sie
-    // konnten nie feuern (verwirrend beim Debuggen).
-    if (mCharIndex >= mText.size()) {
-        if (mChoices.empty()) {
-            ImGui::TextDisabled("E / Enter / Space  -  weiter");
-        } else {
-            ImGui::Separator();
-            for (size_t i = 0; i < mChoices.size(); ++i) {
-                // Anzeige des nativ gesteuerten Cursors (UpdateModalInput)
-                if ((int)i == mSelectedChoice)
-                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "> %s", mChoices[i].text.c_str());
-                else
-                    ImGui::Text("  %s", mChoices[i].text.c_str());
-            }
-        }
-    } else {
-        ImGui::TextDisabled("...");
+    // PAKET 31: Die Message-Box rendert ueber das EIGENE UI-Framework (RUI,
+    // retained Fenster mit Skin + Openness-Animation). Eingabe bleibt nativ
+    // (Tastatur via UpdateModalInput/AdvanceInput; NEU: Maus-Hover/Click
+    // auf Auswahlzeilen + Flaechen-Click zum Vorspulen).
+    rui::Manager& mgr = rui::Manager::Get();
+    rui::Window* win = mgr.FindWindow("rui.msgbox");
+    if (!mVisible) {
+        if (win && !win->IsClosing()) win->SetClosing(true);
+        return;
     }
-    ImGui::End();
-    ImGui::PopStyleColor();
-#else
-    // Ohne ImGui: Fortschritt laeuft ueber AdvanceInput() (Engine-Input E/Enter/Space).
-    (void)mDisplayed;
+
+    float dispW = 1280.0f, dispH = 720.0f;
+#ifdef RPGMAKER3D_ENABLE_IMGUI
+    dispW = ImGui::GetIO().DisplaySize.x;
+    dispH = ImGui::GetIO().DisplaySize.y;
 #endif
+    const auto& th = rui::Theme::Get();
+    const bool typeDone = mCharIndex >= mText.size();
+    const bool hasChoices = typeDone && !mChoices.empty();
+    const float w = dispW * 0.72f;
+    float h = 160.0f;
+    if (hasChoices) h += 6.0f + th.rowHeight * (float)std::min<size_t>(mChoices.size(), 6);
+    const rui::Rect wRect{(dispW - w) * 0.5f, dispH - h - 28.0f, w, h};
+
+    if (!win) {
+        auto nw = std::make_unique<rui::Window>();
+        nw->id = "rui.msgbox";
+        nw->openness = 0.0f;
+        nw->Open();
+        nw->rect = wRect;
+        win = &mgr.AddWindow(std::move(nw));
+    }
+    win->SetClosing(false);
+    win->focus = true;
+    win->rect = wRect; // bei Fenster-Resize live nachfuehren
+
+    // Inhalt: Widget-Baum pro Frame aufbauen; der ZUSTAND (getippter Text,
+    // Auswahlindex) lebt weiter in MessageWindow — RUI ist die Haut.
+    win->children.clear();
+    const float cx = wRect.x + th.padding;
+    float cy = wRect.y + th.padding;
+    const float cw = wRect.w - 2.0f * th.padding;
+
+    if (!mSpeakerName.empty()) {
+        auto sp = std::make_unique<rui::Label>();
+        sp->text = mSpeakerName;
+        sp->color = th.accent;
+        sp->rect = rui::Rect{cx, cy, cw, th.rowHeight};
+        win->children.push_back(std::move(sp));
+        cy += th.rowHeight + 2.0f;
+    }
+
+    auto txt = std::make_unique<rui::Label>();
+    txt->text = mDisplayed;
+    txt->color = th.text;
+    txt->wrap = true;
+    const float txtH = std::max(th.rowHeight * 3.0f,
+        wRect.y + wRect.h - th.padding - th.rowHeight - (typeDone && mChoices.empty() ? 4.0f : 0.0f) - cy -
+        (hasChoices ? 6.0f + th.rowHeight * (float)std::min<size_t>(mChoices.size(), 6) : 0.0f));
+    txt->rect = rui::Rect{cx, cy, cw, txtH};
+    win->children.push_back(std::move(txt));
+
+    if (hasChoices) {
+        auto lv = std::make_unique<rui::ListView>();
+        lv->rect = rui::Rect{cx, wRect.y + wRect.h - th.padding -
+                             th.rowHeight * (float)std::min<size_t>(mChoices.size(), 6) - 2.0f,
+                             cw, th.rowHeight * (float)std::min<size_t>(mChoices.size(), 6) + 2.0f};
+        for (const auto& ch : mChoices) lv->items.push_back({ch.text, true});
+        lv->selected = std::clamp(mSelectedChoice, 0, (int)mChoices.size() - 1);
+        lv->cursorVisible = true;
+        lv->onPick = [this](int idx) { ConfirmChoice(idx); }; // Maus-Click
+        lv->onHoverItem = [this](int idx) {                    // Maus-Hover
+            if (idx >= 0 && idx < (int)mChoices.size()) mSelectedChoice = idx;
+        };
+        win->children.push_back(std::move(lv));
+    } else {
+        auto hint = std::make_unique<rui::Label>();
+        hint->text = typeDone ? "E / Enter / Space  -  weiter" : "...";
+        hint->color = th.textDisabled;
+        hint->align = 2; // rechtsbuendig
+        hint->rect = rui::Rect{cx, wRect.y + wRect.h - th.padding - th.rowHeight, cw, th.rowHeight};
+        win->children.push_back(std::move(hint));
+        // Flaechen-Click (XP: Text vorspulen / weiterblattern)
+        win->onClick = [this]() {
+            if (!mVisible) return;
+            if (mCharIndex < mText.size()) { mDisplayed = mText; mCharIndex = mText.size(); }
+            else mVisible = false;
+        };
+    }
 }
 
 // --- TitleScreen (XP: Neues Spiel / Weiterspielen / Beenden) ---

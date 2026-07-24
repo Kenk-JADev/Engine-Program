@@ -107,6 +107,12 @@ jeder ImGui-Draw ein NULL-Kontext-Zugriff (historischer Bug).
 (C++-Bindings in `RubyVM::BindUI`). Das ImGui-Overlay ist nur der Renderer
 fuer das Game-Fenster; `UI.hud_visible=` steuert das HUD, F9 toggelt es.
 
+**RUI (PAKET 31, Roadmap: Eigenes UI-Framework mit Script-Windows):**
+Retained-Window-Schicht `rui::` (Panel/Window/Label/ListView/Gauge +
+XP-Openness-Animation, natIVER Maus-Support) mit schmaler
+`DrawTarget`-Adapter-Schnittstelle; die erste Bildschirm-Gruppe
+(Message/Auswahl) rendert bereits darueber. Details: `docs/RUI.md`.
+
 **Ruby-Runtime pro Frame (Playtest/Player):**
 1. `SceneManager.update` (Title/Map/Battle aus Script-Editor)
 2. `$game.update(dt)` (optional, main.rb)

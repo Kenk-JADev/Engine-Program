@@ -25,6 +25,7 @@
 #include "rpgmaker3d/EventSystem.h"
 #include "rpgmaker3d/BattleSystem.h"
 #include "rpgmaker3d/UI.h"
+#include "rpgmaker3d/Rui.h" // PAKET 31: eigenes UI-Framework (Window-Schicht)
 #include "rpgmaker3d/Custom.h" // Game.ini / "alles custom"-Schalter
 #include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (reine Ruby-UI)
 
@@ -1229,6 +1230,16 @@ void Engine::Update(float dt) {
     if (!mPlayMode && GameUI::Get().Title().IsVisible())
         GameUI::Get().UpdateModalInput(*mInput);
 
+    // PAKET 31: RUI-Framework (eigene Window-Schicht) — einmal pro Frame
+    // takten: Oeffnen/Schliessen-Animation + NATIVES Maus-Routing (Hover/
+    // Click) auf die Rui::Widgets. Eingabe kommt ausschliesslich aus
+    // rpg::Input (Tasten UND Maus) - ImGui erhaelt weiterhin nichts.
+    if (mInput) {
+        const Vec2 mpos = mInput->GetMousePosition();
+        rui::Manager::Get().Update(dt, mpos.x, mpos.y,
+                                   mInput->IsMousePressed(MouseButton::Left));
+    }
+
     // Game Logic - läuft im PlayMode (Editor Play-Test UND Player)
     if (mPlayMode) {
         // Modale Eingaben (Choices, Zahleneingabe 103, Namenseingabe 303)
@@ -1620,6 +1631,10 @@ void Engine::Render() {
         GameUI::Get().Draw();
         if (mPlayMode) GameUI::Get().DrawPlayHud(mEditorMode);
     }
+    // PAKET 31: RUI-Fenster (eigene UI-Schicht). Rendert ueber den internen
+    // DrawTarget-Adapter in denselben ImGui-Frame (NUR DrawList, kein IO).
+    // Bei mImGuiReady==false kein no-op-Problem: Manager skippt dann.
+    if (mImGuiReady) rui::Manager::Get().Draw();
     ImGuiEndFrame();
 #endif
 
