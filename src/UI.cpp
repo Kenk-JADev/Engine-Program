@@ -21,6 +21,19 @@
 
 namespace rpg {
 
+// --- PAKET 30: UTF-8-Helfer -------------------------------------------------
+// Byte-Länge eines UTF-8-Codepoints anhand des Lead-Bytes. Der Typewriter
+// in MessageWindow lief bisher BYTEweise (mText[i++]) und zerhackte damit
+// deutsche Umlaute (ue/ae/ss = 2 Bytes) mitten in der Typ-Animation ->
+// sichtbare ?-Glitches. Jetzt werden ganze Codepoints angehaengt.
+static int Utf8SeqLen(unsigned char lead) {
+    if (lead < 0x80) return 1;
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 1; // kaputtes Lead-Byte nicht durchdrehen lassen
+}
+
 // --- MessageWindow ---
 void MessageWindow::Show(const std::string& text) {
     mText = text;
@@ -72,7 +85,12 @@ void MessageWindow::Update(float dt) {
     if (mCharIndex < mText.size()) {
         mTimer += dt;
         while (mTimer >= mCharDelay && mCharIndex < mText.size()) {
-            mDisplayed += mText[mCharIndex++];
+            // PAKET 30: ganzen UTF-8-Codepoint auf einmal anzeigen (nach
+            // Lead-Byte-Laenge) — bisher BYTEweise: deutsche Umlaute wurden
+            // waehrend der Typ-Animation zu invaliden Bytes halbiert.
+            const int len = Utf8SeqLen((unsigned char)mText[mCharIndex]);
+            for (int k = 0; k < len && mCharIndex < mText.size(); ++k)
+                mDisplayed += mText[mCharIndex++];
             mTimer -= mCharDelay;
         }
     } else {
@@ -94,30 +112,26 @@ void MessageWindow::Draw() {
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "%s", mSpeakerName.c_str());
     ImGui::TextWrapped("%s", mDisplayed.c_str());
     ImGui::Dummy(ImVec2(0, 8));
+    // PAKET 30: Eingabe laeuft vollstaendig ueber den NATiven Pfad
+    // (GameUI::UpdateModalInput + Engine-Key-Route -> AdvanceInput).
+    // Die frueheren ImGui::IsKeyPressed/Selectable-Abfragen hier waren
+    // toter Code: kein Backend fuehrt Tasten/Maus in die ImGui-IO — sie
+    // konnten nie feuern (verwirrend beim Debuggen).
     if (mCharIndex >= mText.size()) {
         if (mChoices.empty()) {
             ImGui::TextDisabled("E / Enter / Space  -  weiter");
-            if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::Button("OK", ImVec2(100, 0))) {
-                mVisible = false;
-            }
         } else {
             ImGui::Separator();
-            for (size_t i=0;i<mChoices.size();++i) {
-                if (ImGui::Selectable(mChoices[i].text.c_str(), (int)i==mSelectedChoice)) {
-                    mSelectedChoice = (int)i;
-                    if (onChoice) onChoice(mSelectedChoice);
-                    mVisible = false;
-                }
+            for (size_t i = 0; i < mChoices.size(); ++i) {
+                // Anzeige des nativ gesteuerten Cursors (UpdateModalInput)
+                if ((int)i == mSelectedChoice)
+                    ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.45f, 1.0f), "> %s", mChoices[i].text.c_str());
+                else
+                    ImGui::Text("  %s", mChoices[i].text.c_str());
             }
         }
     } else {
         ImGui::TextDisabled("...");
-        if (ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-            ImGui::IsKeyPressed(ImGuiKey_Space, false) || ImGui::Button("Skip")) {
-            mDisplayed = mText;
-            mCharIndex = mText.size();
-        }
     }
     ImGui::End();
     ImGui::PopStyleColor();
