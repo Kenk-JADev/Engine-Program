@@ -6,7 +6,7 @@
 // (vgl. XP_Scripts/Interpreter 1-7.rb), angepasst auf die 3D-Engine:
 //  - vollstaendiger XP-Befehlssatz (Codes 101..355)
 //  - strukturelle Codes (401..413, 601..603, 655)
-//  - Engine-Erweiterungen fuer 3D (Codes 181..183, 500..507)
+//  - Engine-Erweiterungen fuer 3D (Codes 181..183, 500..509)
 //
 // Kodierung der Befehlsparameter ist in docs/EVENTS-XP.md und im
 // Qt-Editor (QtEventCommandCatalog) dokumentiert - beide Seiten nutzen
@@ -176,6 +176,13 @@ enum class EventCommandCode {
     PlayParticle = 505,
     SetTimeOfDay = 506,
     SetWeather = 507,
+    // PAKET 48 (Etappe 3, Stufe 3): Instanz-Clip-Steuerung (.anim-Manifeste)
+    // direkt aus Events — ohne Umweg ueber Skript (355).
+    //   508: param1 = Objekt-ID (aus Engine.spawn_cube / Actor.new),
+    //        text = Clip-Name, param2 = 0 nur wenn inaktiv / 1 neu starten
+    //   509: param1 = Objekt-ID
+    PlayEntityClip = 508,
+    StopEntityClip = 509,
 
     // ---- Aliase (Abwaertskompatibilitaet im C++-Code) ----
     ChangeSwitch = ControlSwitches,
@@ -405,6 +412,9 @@ public:
     std::function<void(const std::string&, float, float, float, float, float, float)> onShowScreenText;
     std::function<void(const std::string&, float, float, float, float, float, float, float)> onShowWorldText;
     std::function<void()> onClearScreenTexts;
+    // PAKET 48: Clip-Eventbefehle 508/509 (via EventSystem_SetClipRunners)
+    std::function<bool(int entityId, const std::string& clip, bool restart)> onPlayEntityClip;
+    std::function<bool(int entityId)> onStopEntityClip;
     std::function<void(int itemId, int amount)> onChangeItems;
     std::function<void(int actorId, int hp)> onChangeActorHP;
     std::function<void(int troopId, bool canEscape, bool canLose)> onBattleProcessing;
@@ -465,6 +475,12 @@ private:
 void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn);
 // Optional: Tasten-Abfrage fuer "Button Input Processing" / Bedingung "Taste"
 void EventSystem_SetButtonProvider(std::function<int()> fn);
+// Optional: Clip-Bruecke fuer Event-Befehle 508/509 — die Engine injiziert
+// hier die Szenen-Instanzsteuerung (EventSystem kennt Scene nicht direkt).
+// Rueckgabe: true = Clip laeuft / wurde gestoppt, false = fehlgeschlagen.
+void EventSystem_SetClipRunners(
+    std::function<bool(int entityId, const std::string& clip, bool restart)> onPlay,
+    std::function<bool(int entityId)> onStop);
 /// Audio-Bruecke fuer Event-Befehle + Karten-Autoplay:
 /// Die Engine injiziert hier ihre Wiedergabe (die Projekt-Pfadaufloesung
 /// nach Audio/BGM|BGS|ME|SE passiert engine-seitig).

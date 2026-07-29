@@ -443,6 +443,18 @@ std::vector<CommandSpec> BuildCatalog() {
     add(CC::SpawnEntity, QStringLiteral("Objekt spawnen (3D)..."), 3,
         QStringLiteral("Engine-Erweiterung: spawnnt ein Objekt in der Szene (Ruby-Snippet)."),
         {MTxt(QStringLiteral("text"), QStringLiteral("Snippet (z.B. Engine.spawn_cube(0,0,0))"))});
+    add(CC::PlayEntityClip, QStringLiteral("Objekt-Clip abspielen (3D)..."), 3,
+        QStringLiteral("Engine-Erweiterung: startet einen .anim-Clip auf einem Szenen-Objekt "
+                       "(Objekt-ID liefert z.B. Engine.spawn_cube / Actor.new / @id eines Akteurs)."),
+        {A(QStringLiteral("param1"), QStringLiteral("Objekt-ID"), ArgSpec::Type::Int, 1, 1, 999999),
+         Txt(QStringLiteral("text"), QStringLiteral("Clip-Name"), QString(),
+             QStringLiteral("Name aus dem .anim-Manifest, z.B. pulse")),
+         Ch(QStringLiteral("param2"), QStringLiteral("Neustart"),
+            {QStringLiteral("Nur wenn inaktiv"), QStringLiteral("Immer neu starten")}, 1)});
+    add(CC::StopEntityClip, QStringLiteral("Objekt-Clip stoppen (3D)"), 3,
+        QStringLiteral("Engine-Erweiterung: stoppt den laufenden Clip eines Szenen-Objekts "
+                       "(die zuletzt gezeigte Pose bleibt stehen)."),
+        {A(QStringLiteral("param1"), QStringLiteral("Objekt-ID"), ArgSpec::Type::Int, 1, 1, 999999)});
 
     return c;
 }
@@ -1043,6 +1055,11 @@ QString FormatEventCommand(const rpg::EventCommand& cmd, int eventContext) {
             .arg(cmd.param2, 2, 10, QLatin1Char('0'));
     case CC::SpawnEntity:
         return QL("Objekt spawnen (3D)");
+    case CC::PlayEntityClip:
+        return QL("Objekt-Clip: %1 (Objekt %2)")
+            .arg(FirstLine(QString::fromStdString(cmd.text))).arg(cmd.param1);
+    case CC::StopEntityClip:
+        return QL("Objekt-Clip stoppen: Objekt %1").arg(cmd.param1);
     default:
         if (const CommandSpec* spec = FindCommandSpec(cmd.code))
             return spec->label;

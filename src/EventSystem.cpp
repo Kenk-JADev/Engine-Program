@@ -25,12 +25,21 @@ namespace rpg {
 // Optional: Event-Befehl "Script" -> Ruby (von Engine gesetzt)
 static std::function<void(const std::string&)> s_scriptRunner;
 static std::function<int()> s_buttonProvider;
+// PAKET 48: Clip-Bruecke (Befehle 508/509) — von Engine gesetzt
+static std::function<bool(int, const std::string&, bool)> s_clipPlayRunner;
+static std::function<bool(int)> s_clipStopRunner;
 
 void EventSystem_SetScriptRunner(std::function<void(const std::string&)> fn) {
     s_scriptRunner = std::move(fn);
 }
 void EventSystem_SetButtonProvider(std::function<int()> fn) {
     s_buttonProvider = std::move(fn);
+}
+void EventSystem_SetClipRunners(
+    std::function<bool(int, const std::string&, bool)> onPlay,
+    std::function<bool(int)> onStop) {
+    s_clipPlayRunner = std::move(onPlay);
+    s_clipStopRunner = std::move(onStop);
 }
 
 // Audio-Bruecke fuer Event-Befehle + Karten-Autoplay (Engine injiziert in
@@ -1158,6 +1167,22 @@ bool EventInterpreter::ExecuteCommand() {
         // 3D-Szenerie-Befehle: ueber Script-Kanal (Ruby: Engine.spawn etc.)
         if (onScript && !cmd.text.empty()) onScript(cmd.text);
         return true;
+    case CC::PlayEntityClip: {
+        // PAKET 48: Instanz-Clip direkt aus dem Event (kein Skript noetig)
+        bool ok = cmd.param1 > 0 && !cmd.text.empty() && onPlayEntityClip &&
+                  onPlayEntityClip(cmd.param1, cmd.text, cmd.param2 != 0);
+        if (!ok)
+            RPG_LOG_WARN("[Event] Objekt-Clip abspielen fehlgeschlagen (Objekt " +
+                         std::to_string(cmd.param1) + ", Clip \"" + cmd.text + "\")");
+        return true;
+    }
+    case CC::StopEntityClip: {
+        bool ok = cmd.param1 > 0 && onStopEntityClip && onStopEntityClip(cmd.param1);
+        if (!ok)
+            RPG_LOG_WARN("[Event] Objekt-Clip stoppen fehlgeschlagen (Objekt " +
+                         std::to_string(cmd.param1) + ")");
+        return true;
+    }
     default:
         RPG_LOG_WARN("[Event] Unbekannter Befehlscode: " + std::to_string((int)cmd.code));
         return true;
@@ -1438,6 +1463,13 @@ void EventSystem::WireInterpreter(EventInterpreter& interp) {
     };
     interp.onClearScreenTexts = []() {
         GameUI::Get().ClearScreenTexts();
+    };
+    // PAKET 48: Clip-Befehle 508/509 ueber die Engine-Bruecke in die Szene
+    interp.onPlayEntityClip = [](int entityId, const std::string& clip, bool restart) {
+        return s_clipPlayRunner && s_clipPlayRunner(entityId, clip, restart);
+    };
+    interp.onStopEntityClip = [](int entityId) {
+        return s_clipStopRunner && s_clipStopRunner(entityId);
     };
 
     // ---- Provider ----

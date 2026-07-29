@@ -153,6 +153,15 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         }
     });
 
+    // PAKET 48: Event-Befehle 508/509 -> Instanz-Clipsteuerung der Szene
+    EventSystem_SetClipRunners(
+        [this](int entityId, const std::string& clip, bool restart) {
+            return mScene && mScene->StartEntityClip((EntityID)entityId, clip, restart);
+        },
+        [this](int entityId) {
+            return mScene && mScene->StopEntityClip((EntityID)entityId);
+        });
+
     // Tasten-Provider fuer "Button Input Processing" (105) und Bedingung "Taste"
     // XP-Codes: 2=unten, 4=links, 6=rechts, 8=oben,
     //           11=A(Shift), 12=B(Esc), 13=C(Enter/E/Space), 15=L(Q), 16=R(Tab)
@@ -935,6 +944,7 @@ void Engine::Shutdown() {
     BattleSystem::Get().onBattleAnimation = nullptr; // PAKET 12 (haelt this)
     BattleSystem::Get().onVictoryMe = nullptr;       // PAKET 15 (haelt this)
     BattleSystem::Get().isMessageBusy = nullptr;     // PAKET 15
+    EventSystem_SetClipRunners(nullptr, nullptr);    // PAKET 48 (halten this)
 #ifdef RPGMAKER3D_ENABLE_IMGUI
     ShutdownImGui(); // vor Window/GL-Teardown (Backend loescht GL-Ressourcen)
 #endif

@@ -10,7 +10,8 @@ Eine modulare 3D-Game-Engine im Stil von RPG Maker, aber mit modernem Renderer u
 - **Asset-Support**: PNG-Tilesets, OBJ-Modelle (statisch oder als animierte
   **Keyframe-Morph-Serie** per `.anim`-Manifest, PAKET 46; seit PAKET 47 mit
   **Instanz-Pose je Entität** + Skriptsteuerung
-  `Actor#set_model_file/play_clip/stop_clip` –
+  `Actor#set_model_file/play_clip/stop_clip`, seit PAKET 48 auch direkt als
+  **Event-Befehl** (508/509 „Objekt-Clip") im Qt-Event-Editor –
   siehe `docs/XP-3D-CORE.md`), OGG/MP3/WAV-Audio, Shader
 
 > **Hinweis:** Der alte Dear-ImGui-Editor ist **entfernt**. Einziger Editor-Host ist Qt

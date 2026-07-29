@@ -139,6 +139,12 @@ fps    = 8
   a.set_model_file("pillar_pulse.anim"); a.move_to(...)`.
 - **Nebenfix (PAKET 46):** der OBJ-Parser verweigert Facetten mit
   ungueltigen Indexverweisen jetzt sauber (vorher stille UB-Gefahr).
+- **Event-Steuerung (PAKET 48, Stufe 3):** statt Skript-Umweg direkt als
+  Event-Befehl – **508 „Objekt-Clip abspielen“** (Ziel-Objekt-ID,
+  Clip-Name, Neustart-Flag) und **509 „Objekt-Clip stoppen“**, beide im
+  Qt-Event-Katalog (Seite 3) mit eigenem Bearbeitungs-Dialog. Intern laeuft
+  es ueber `EventSystem_SetClipRunners` -> `Scene::StartEntityClip/
+  StopEntityClip`, also exakt dieselbe Instanz-Clipmaschine wie aus Ruby.
 
 ## Verbleibende Grenzen (bewusst, im Code vermerkt)
 
@@ -147,5 +153,5 @@ fps    = 8
 - Pro animierter Entitaet ein eigener dynamischer VBO (RPG-Mengen ok;
   tausende Instanzen sind nicht das Ziel).
 
-Perspektive Stufe 3+: Event-Befehl „Objekt-Clip" direkt (509er-Block) und
-Bewertung von glTF-Skinning (großer Block, eigener Entscheid).
+Ausblick: Bewertung von glTF-Skinning (großer Block, eigener Entscheid) —
+der Event-Befehl „Objekt-Clip" (508/509) ist seit PAKET 48 umgesetzt.

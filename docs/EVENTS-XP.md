@@ -157,6 +157,12 @@ Tastenabfrage (105) und Bedingungstyp 11 funktionieren daher auch mit Pad.
 | 182 | Welt-Text zeigen |
 | 183 | HUD-Texte löschen |
 | 500–507 | Objekt spawnen/bewegen/drehen, Animation, Schaden, Partikel, Tageszeit, Wetter |
+| 508 | Objekt-Clip abspielen (PAKET 48) | `param1` = Objekt-ID (aus `Engine.spawn_cube`/`Actor.new`), `text` = Clip-Name aus dem `.anim`-Manifest, `param2` = 0 nur wenn inaktiv / 1 immer neu starten; Start springt sofort auf den ersten Clip-Frame |
+| 509 | Objekt-Clip stoppen (PAKET 48) | `param1` = Objekt-ID — die zuletzt gezeigte Pose bleibt stehen |
+
+508/509 wirken auf derselben Szenen-Entität wie die Skript-Methoden
+`Actor#play_clip`/`stop_clip` (Instanz-Pose, unabhängig pro Objekt) — nur
+eben bequem als Event-Befehl statt über Skript (355).
 
 Alt-Projekte (`formatVersion < 2` in `events_map<N>.json`) werden automatisch
 konvertiert (104→181, 105→182, 106→183, 205→209, 230→106).
