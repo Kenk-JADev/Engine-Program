@@ -358,11 +358,16 @@ bool Model::LoadAnimManifest(const std::string& path) {
     mClipIndex = -1;
     mClipPlaying = false;
     mClipTime = 0.0f;
+    // PAKET 47: start=1 wird NICHT mehr auf dem Template abgespielt (das
+    // wuerde alle Instanzen synchron morph'en), sondern nur vermerkt — die
+    // Szene stoesst den Clip je Entitaet eigenstaendig an (Stufe 2).
+    mAutostartClip = startClip;
 
     RPG_LOG_INFO("Anim-Manifest geladen: " + path + " (" +
                  std::to_string(mFrames.size()) + " Frames, " +
-                 std::to_string(mClips.size()) + " Clips)");
-    if (startClip >= 0) PlayClip(startClip);
+                 std::to_string(mClips.size()) + " Clips" +
+                 (startClip >= 0 ? ", Autostart: " + GetClip(startClip)->name : "") +
+                 ")");
     return true;
 }
 
@@ -411,30 +416,92 @@ void Model::StopClip() {
 void Model::UpdateAnimation(float dt) {
     if (!mClipPlaying) return;
     const AnimClip* clip = GetClip(mClipIndex);
-    if (!clip || clip->frames.empty() || clip->fps <= 0.0f) {
+    if (!clip) {
         mClipPlaying = false;
         return;
     }
-    const int count = (int)clip->frames.size();
+    int a = 0, b = 0;
+    float t = 0.0f;
+    if (AdvanceClipState(*clip, dt, mClipTime, mClipPlaying, a, b, t))
+        ApplyMorph(a, b, t);
+}
+
+// Reine Clip-Zeitrechnung (PAKET 47): dieselbe Mathematik treibt die
+// Template- (PAKET 46) und die Instanz-Pose (je Entitaet) an.
+bool Model::AdvanceClipState(const AnimClip& clip, float dt,
+                             float& time, bool& playing,
+                             int& outA, int& outB, float& outT) {
+    outA = outB = 0;
+    outT = 0.0f;
+    if (!playing || clip.frames.empty() || clip.fps <= 0.0f) {
+        playing = false;
+        return false;
+    }
+    const int count = (int)clip.frames.size();
     if (count == 1) {
-        ApplyMorph(clip->frames[0], clip->frames[0], 0.0f);
-        if (!clip->loop) mClipPlaying = false;
-        return;
+        outA = outB = clip.frames[0];
+        if (!clip.loop) playing = false;
+        return true;
     }
-    mClipTime += dt;
-    const float stepF = mClipTime * clip->fps;
+    time += dt;
+    const float stepF = time * clip.fps;
     const int last = count - 1;
-    if (clip->loop) {
+    if (clip.loop) {
         const int fi = (int)std::floor(stepF);
-        const float t = stepF - std::floor(stepF);
-        ApplyMorph(clip->frames[fi % count], clip->frames[(fi + 1) % count], t);
-    } else if (stepF >= (float)last) {
-        ApplyMorph(clip->frames[last], clip->frames[last], 0.0f);
-        mClipPlaying = false; // nicht-loopend: am Ende stehen bleiben
-    } else {
-        const int fi = (int)std::floor(stepF);
-        ApplyMorph(clip->frames[fi], clip->frames[fi + 1], stepF - (float)fi);
+        outA = clip.frames[fi % count];
+        outB = clip.frames[(fi + 1) % count];
+        outT = stepF - std::floor(stepF);
+        return true;
     }
+    if (stepF >= (float)last) {
+        outA = outB = clip.frames[last];
+        playing = false; // nicht-loopend: am Ende stehen bleiben
+        return true;
+    }
+    const int fi = (int)std::floor(stepF);
+    outA = clip.frames[fi];
+    outB = clip.frames[fi + 1];
+    outT = stepF - (float)fi;
+    return true;
+}
+
+// Gemeinsames Innenteil von ApplyMorph/MorphToMesh (PAKET 47 herausgeloest)
+namespace {
+void MorphVertsInto(const std::vector<Vertex>& va, const std::vector<Vertex>& vb,
+                    float t, std::vector<Vertex>& dst) {
+    const size_t n = std::min({va.size(), vb.size(), dst.size()});
+    for (size_t i = 0; i < n; ++i) {
+        const Vertex& a = va[i];
+        const Vertex& b = vb[i];
+        Vertex v;
+        v.position = a.position + (b.position - a.position) * t;
+        v.normal = a.normal + (b.normal - a.normal) * t;
+        const float len = std::sqrt(v.normal.x * v.normal.x +
+                                    v.normal.y * v.normal.y +
+                                    v.normal.z * v.normal.z);
+        if (len > 1e-6f) v.normal = v.normal * (1.0f / len);
+        v.uv = a.uv; // UVs aus Frame A (Morph bewegt nur Geometrie)
+        dst[i] = v;
+    }
+}
+} // namespace
+
+bool Model::MorphToMesh(size_t meshIndex, int frameA, int frameB, float t,
+                        Mesh& dst) const {
+    if (mFrames.empty()) return false;
+    frameA = std::clamp(frameA, 0, (int)mFrames.size() - 1);
+    frameB = std::clamp(frameB, 0, (int)mFrames.size() - 1);
+    const auto& fa = mFrames[(size_t)frameA];
+    const auto& fb = mFrames[(size_t)frameB];
+    if (meshIndex >= fa.size() || meshIndex >= fb.size()) return false;
+    const auto& va = fa[meshIndex];
+    const auto& vb = fb[meshIndex];
+    const size_t n = std::min(va.size(), vb.size());
+    if (dst.vertices.size() != n) dst.vertices.resize(n); // Erstbefuellung
+    const float tc = std::clamp(t, 0.0f, 1.0f);
+    MorphVertsInto(va, vb, tc, dst.vertices);
+    dst.UpdateVertices();
+    return true;
 }
 
 void Model::ApplyMorph(int frameA, int frameB, float t) {
@@ -447,20 +514,7 @@ void Model::ApplyMorph(int frameA, int frameB, float t) {
     const size_t meshCount = std::min({fa.size(), fb.size(), mMeshes.size()});
     for (size_t m = 0; m < meshCount; ++m) {
         auto& verts = mMeshes[m].vertices;
-        const size_t n = std::min({verts.size(), fa[m].size(), fb[m].size()});
-        for (size_t i = 0; i < n; ++i) {
-            const Vertex& a = fa[m][i];
-            const Vertex& b = fb[m][i];
-            Vertex v;
-            v.position = a.position + (b.position - a.position) * t;
-            v.normal = a.normal + (b.normal - a.normal) * t;
-            const float len = std::sqrt(v.normal.x * v.normal.x +
-                                        v.normal.y * v.normal.y +
-                                        v.normal.z * v.normal.z);
-            if (len > 1e-6f) v.normal = v.normal * (1.0f / len);
-            v.uv = a.uv; // UVs aus Frame A (Morph bewegt nur Geometrie)
-            verts[i] = v;
-        }
+        MorphVertsInto(fa[m], fb[m], t, verts);
         mMeshes[m].UpdateVertices();
     }
 }

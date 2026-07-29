@@ -106,11 +106,27 @@ public:
     void StopClip();                    // aktuelle Pose bleibt stehen
     int ActiveClip() const { return mClipIndex; }
     bool IsClipPlaying() const { return mClipPlaying; }
-    /// Zeit weitertreiben + Morph anwenden (Aufruf: Scene::Update).
-    /// STUFE-1-GRENZE (ehrlich): die Pose ist pro Model geteilt — mehrere
-    /// Entitaeten mit demselben Model bewegen sich synchron. Instanz-Posen
-    /// (eigene Morph-Puffer je Entitaet) sind Stufe 2.
+    /// Zeit weitertreiben + Morph anwenden (Template-Ebene).
+    /// NUR noch API-Komplettheit (PAKET 46); die Szene tickt seit PAKET 47
+    /// je Entitaet (Instanz-Pose) — die Template-Pose dient nicht mehr als
+    /// Renderquelle, wenn Instanzpuffer existieren.
     void UpdateAnimation(float dt);
+
+    // ---- PAKET 47 (Etappe 3, Stufe 2): Instanz-Verwendung ----
+    /// Manifest-Clip mit start=1 (-1 = keiner). Die Szene stoesst diesen
+    /// Clip je Entitaet selbst an (das Template BLEIBT statisch auf Frame 0).
+    int GetAutostartClip() const { return mAutostartClip; }
+    /// Reine Clip-Zeitrechnung (von jeder Pose losgeloest): time/playing
+    /// werden veraendert; outA/outB/outT liefern die abzuspielende Pose.
+    /// Beim letzten nicht-loopenden Frame endet playing und outA==outB==Endframe.
+    static bool AdvanceClipState(const AnimClip& clip, float dt,
+                                 float& time, bool& playing,
+                                 int& outA, int& outB, float& outT);
+    /// Schreibt die Morph-Pose in ein FREMDES Mesh (Instanzpuffer).
+    /// dst braucht passende Topologie (Scene legt sie aus der Frame-Basis an)
+    /// und uploaded bei Bedarf (dynamicDraw). false bei Frame-/Indexfehlern.
+    bool MorphToMesh(size_t meshIndex, int frameA, int frameB, float t,
+                     Mesh& dst) const;
 
 private:
     /// frameA/frameB mit t (0..1) mischen und hochladen (CPU-Morph,
@@ -125,6 +141,7 @@ private:
     int mClipIndex = -1;
     bool mClipPlaying = false;
     float mClipTime = 0.0f;
+    int mAutostartClip = -1; // PAKET 47: start=1-Mark, Szene nutzt je Entitaet
 };
 
 class MeshFactory {

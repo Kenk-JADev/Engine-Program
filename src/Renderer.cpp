@@ -556,8 +556,9 @@ void Renderer::RenderPointShadows(Scene& scene) {
                 if (!tr || !model || !model->model) continue;
                 Mat4 mat = tr->transform.GetMatrix();
                 mPointShadowShader->SetMat4("uModel", mat);
-                for (int mi = 0; mi < model->model->GetMeshCount(); ++mi) {
-                    model->model->GetMesh(mi).Draw();
+                // PAKET 47: Instanz-Puffer (Morph-Pose je Entitaet) mitwerfen
+                for (size_t mi = 0; mi < model->GetDrawMeshCount(); ++mi) {
+                    model->GetDrawMesh(mi).Draw();
                 }
             }
 

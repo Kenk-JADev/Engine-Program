@@ -1966,8 +1966,9 @@ void Engine::RenderScene() {
             auto* model = mScene->GetComponent<ModelRendererComponent>(id);
             if (model && model->model) {
                 Mat4 mat = transform->transform.GetMatrix();
-                for (int mi = 0; mi < model->model->GetMeshCount(); ++mi) {
-                    mRenderer->DrawMeshDepth(model->model->GetMesh(mi), mat);
+                // PAKET 47: Schatten der Instanz-Pose (Morph) statt des statischen Templates
+                for (size_t mi = 0; mi < model->GetDrawMeshCount(); ++mi) {
+                    mRenderer->DrawMeshDepth(model->GetDrawMesh(mi), mat);
                 }
             } else {
                 // Fallback: Wenn kein Model, aber z.B. nur Transform (Cube erstellt), trotzdem Schatten via kleinem Cube?
@@ -2025,10 +2026,13 @@ void Engine::RenderScene() {
         if (model && model->model) {
             Mat4 matrix = transform->transform.GetMatrix();
             if (material) {
-                if (model->model->GetMeshCount() > 0)
-                    mRenderer->DrawMeshWithMaterial(model->model->GetMesh(0), matrix, material->material);
+                if (model->GetDrawMeshCount() > 0)
+                    mRenderer->DrawMeshWithMaterial(model->GetDrawMesh(0), matrix, material->material);
             } else {
-                mRenderer->DrawModel(*model->model, matrix, model->texture.get());
+                // PAKET 47: DrawMesh-Schleife statt DrawModel - Instanzpuffer
+                // (Morph-Pose je Entitaet) mitzeichnen
+                for (size_t mi = 0; mi < model->GetDrawMeshCount(); ++mi)
+                    mRenderer->DrawMesh(model->GetDrawMesh(mi), matrix, model->texture.get());
             }
         }
 

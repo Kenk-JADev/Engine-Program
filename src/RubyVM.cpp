@@ -15,6 +15,9 @@
 #include "rpgmaker3d/Custom.h" // "alles custom"-Schalter (UI.native_*)
 #include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (Ruby-Klasse Window)
 #include "rpgmaker3d/Rui.h"    // PAKET 32: eigenes UI-Framework (Script-Windows)
+#include "rpgmaker3d/Project.h" // PAKET 47: GetProjectPath (Actor#set_model_file)
+
+#include <filesystem> // PAKET 47: exists() bei Modellpfad-Kandidaten
 
 // Fix ssize_t for MSVC mruby build - must be before mruby headers.
 // mruby expects the POSIX type ssize_t, which MSVC/Windows SDK does not
@@ -4438,6 +4441,90 @@ static mrb_value rb_actor_set_color(mrb_state* mrb, mrb_value self) {
     return self;
 }
 
+// PAKET 47 (Etappe 3, Stufe 2): echte Modelldatei aus Skripten laden -
+// .obj (statisch, wie bisher intern) ODER .anim (Keyframe-Morph-Manifest,
+// PAKET 46). Pfadkandidaten: wie angegeben, <Projekt>/<pfad>,
+// <Projekt>/assets/models/<pfad>, <Projekt>/assets/<pfad>.
+// Rueckgabe true/false (Laden/Finden gescheitert -> Log).
+static mrb_value rb_actor_set_model_file(mrb_state* mrb, mrb_value self) {
+    char* path = nullptr;
+    mrb_get_args(mrb, "z", &path);
+
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (!id || !engine || !path) {
+        return mrb_bool_value(false);
+    }
+
+    const std::string raw(path);
+    const std::string base = engine->GetProject().GetProjectPath();
+    const std::vector<std::string> candidates = {
+        raw,
+        base + "/" + raw,
+        base + "/assets/models/" + raw,
+        base + "/assets/" + raw
+    };
+    std::string full;
+    for (const auto& c : candidates) {
+        if (!c.empty() && std::filesystem::exists(c)) {
+            full = c;
+            break;
+        }
+    }
+    if (full.empty()) {
+        RPG_LOG_WARN(std::string("Actor#set_model_file - nicht gefunden: ") + raw);
+        return mrb_bool_value(false);
+    }
+
+    auto newModel = std::make_shared<Model>();
+    if (!newModel->LoadAnyModelFile(full)) {
+        RPG_LOG_WARN("Actor#set_model_file - Laufzeitfehler: " + full);
+        return mrb_bool_value(false);
+    }
+
+    auto* model = engine->GetScene().GetComponent<ModelRendererComponent>(*id);
+    if (!model) {
+        model = engine->GetScene().AddComponent<ModelRendererComponent>(*id);
+    }
+    model->model = newModel;
+    // Austausch = Instanz-Zustand zuruecksetzen (alte Puffer freigeben)
+    model->instanceMeshes.clear();
+    model->animClip = -1;
+    model->animPlaying = false;
+    model->animTime = 0.0f;
+    return mrb_bool_value(true);
+}
+
+// PAKET 47: Morph-Clip auf DIESER Entitaet abspielen/anhalten (Instanz-Pose)
+static mrb_value rb_actor_play_clip(mrb_state* mrb, mrb_value self) {
+    char* name = nullptr;
+    mrb_bool restart = 1;
+    mrb_get_args(mrb, "z|b", &name, &restart);
+
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (!id || !engine || !name) {
+        return mrb_bool_value(false);
+    }
+
+    return mrb_bool_value(
+        engine->GetScene().StartEntityClip(*id, std::string(name), restart != 0));
+}
+
+static mrb_value rb_actor_stop_clip(mrb_state* mrb, mrb_value self) {
+    (void)mrb;
+    EntityID* id = static_cast<EntityID*>(DATA_PTR(self));
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (!id || !engine) {
+        return mrb_bool_value(false);
+    }
+
+    return mrb_bool_value(engine->GetScene().StopEntityClip(*id));
+}
+
 void RubyVM::BindActor() {
     struct RClass* actorClass =
         mrb_define_class(mMrb, "Actor", mMrb->object_class);
@@ -4522,6 +4609,31 @@ void RubyVM::BindActor() {
         "set_model",
         rb_actor_set_model,
         MRB_ARGS_REQ(1)
+    );
+
+    // PAKET 47 (Etappe 3, Stufe 2): Datei-Modelle + Instanz-Clips
+    mrb_define_method(
+        mMrb,
+        actorClass,
+        "set_model_file",
+        rb_actor_set_model_file,
+        MRB_ARGS_REQ(1)
+    );
+
+    mrb_define_method(
+        mMrb,
+        actorClass,
+        "play_clip",
+        rb_actor_play_clip,
+        MRB_ARGS_REQ(1) | MRB_ARGS_OPT(1)
+    );
+
+    mrb_define_method(
+        mMrb,
+        actorClass,
+        "stop_clip",
+        rb_actor_stop_clip,
+        MRB_ARGS_NONE()
     );
 
     mrb_define_method(

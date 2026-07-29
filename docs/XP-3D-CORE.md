@@ -119,22 +119,33 @@ fps    = 8
   Fehler (fehlende Datei, Topologie-Bruch) verweigern das Manifest mit
   Log-Zeile, NIE Teilladung. Der OBJ-Parser wurde dabei gehaertet:
   Facetten mit ungueltigen Indexverweisen sind jetzt Fehler statt UB.
-- **Laufzeit:** `Scene::Update` tickt alle Modelle mit Manifest
-  (`IsAnimated()`), autonom per `start=1` oder spaeter per API
-  (`PlayClip/StopClip`, C++-Seite fertig). Nicht-loopende Clips bleiben auf
-  dem Endframe stehen; `PlayClip` springt sofort auf Frame 1.
+- **Laufzeit (PAKET 47 korrigiert Stufe 1):** das Model ist die reine
+  **Vorlage** (Frames+Clips, statisch auf Frame 0). `Scene::Update` legt
+  je Entitaet einen eigenen Clip-Stand + eigene dynamische Renderpuffer an
+  (`ModelRendererComponent::animClip/animTime/instanceMeshes`) — Entitaeten
+  mit demselben Model laufen ab jetzt **unabhaengig voneinander**
+  (Autostart per `start=1` je Instanz, nicht mehr am Template).
+  Nicht-loopende Clips bleiben auf dem Endframe stehen; bei Clip-Start
+  springt die Pose sofort auf den ersten Clip-Frame.
+- **Instanz-Steuerung aus Ruby (PAKET 47):**
+  `actor.set_model_file("assets/models/pillar_pulse.anim")` (bisher nur
+  `set_model("cube"/"plane")` — echte Dateien gingen gar nicht aus Skripten;
+  Kandidatenpfade: wie angegeben, `<Projekt>/…`, `assets/models/…`,
+  `assets/…`), `actor.play_clip("pulse"[, neustart])`, `actor.stop_clip`.
+  C++-Seite: `Scene::StartEntityClip/StopEntityClip`.
 - **Demo:** `SampleProject/assets/models/pillar_pulse.anim` (+2 OBJs) –
-  im Editor als Modell importieren, der Loop laeuft sofort (start=1).
+  im Editor als Modell importieren, der Loop laeuft sofort (start=1), pro
+  Entitaet unabhaengig; rein aus Skript: `a = Actor.new("p");
+  a.set_model_file("pillar_pulse.anim"); a.move_to(...)`.
+- **Nebenfix (PAKET 46):** der OBJ-Parser verweigert Facetten mit
+  ungueltigen Indexverweisen jetzt sauber (vorher stille UB-Gefahr).
 
-## Stufe-1-Grenzen (bewusst, dokumentiert im Code)
+## Verbleibende Grenzen (bewusst, im Code vermerkt)
 
-- **Geteilte Pose:** mehrere Entitaeten mit demselben `shared_ptr<Model>`
-  bewegen sich synchron (ein Morph-Puffer pro Model). Instanz-Posen =
-  Stufe 2 (eigene Puffer je Entitaet).
-- Morph ist linear+CPU; UV kommen aus Frame A; Multi-Mesh-OBJs bleiben
-  Einzel-Mesh (Engine-Loader-Regel).
-- Clip-Wechsel aus Events/Ruby folgt mit Stufe 2 zusammen (API existiert
-  bereits: `PlayClip("name")`).
+- Zwischenbilder sind linear auf der CPU (Morph); UV kommen aus Frame A;
+  Multi-Mesh-OBJs bleiben Einzel-Mesh (Engine-Loader-Regel).
+- Pro animierter Entitaet ein eigener dynamischer VBO (RPG-Mengen ok;
+  tausende Instanzen sind nicht das Ziel).
 
-Perspektive Stufe 2+: Instanz-Pose je Entitaet, Clip-Aufruf aus Event/
-Skript, danach Bewertung von glTF-Skinning (großer Block, eigener Entscheid).
+Perspektive Stufe 3+: Event-Befehl „Objekt-Clip" direkt (509er-Block) und
+Bewertung von glTF-Skinning (großer Block, eigener Entscheid).

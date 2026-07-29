@@ -6,10 +6,10 @@
 #include <unordered_map>
 #include "Types.h"
 #include "Material.h"
+#include "Model.h" // PAKET 47: Instanz-Renderpuffer (Mesh) brauchen den vollen Typ
 
 namespace rpg {
 
-class Model;
 class Texture;
 class ParticleEmitter;
 
@@ -53,6 +53,23 @@ public:
     ComponentType GetType() const override { return ComponentType::ModelRenderer; }
     std::shared_ptr<Model> model;
     std::shared_ptr<Texture> texture;
+
+    // ---- PAKET 47 (Etappe 3, Stufe 2): Instanz-Clip-Laufzeit ----
+    // Das Model bleibt die reine Vorlage (Frames+Clips); Clip-Stand und
+    // Morph-Puffer liegen JE ENTITAET — mehrere Entitaeten mit demselben
+    // Model laufen ab Stufe 2 unabhaengig (behebt die Stufe-1-Grenze
+    // "geteilte Pose"). animClip < 0 = keine eigene Pose aktiv.
+    int animClip = -1;
+    bool animPlaying = false;
+    float animTime = 0.0f;
+    /// Eigene Renderpuffer (gleiche Mesh-Zahl wie das Model). Leer =
+    /// zeichnen ueber die geteilten Template-Meshes (statische Modelle,
+    /// keine zusaetzliche GPU-Last).
+    std::vector<Mesh> instanceMeshes;
+
+    bool HasInstanceMeshes() const { return !instanceMeshes.empty(); }
+    size_t GetDrawMeshCount() const;
+    const Mesh& GetDrawMesh(size_t index) const; // guarded wie model-Meshes
 };
 
 class MaterialComponent : public Component {
@@ -110,6 +127,15 @@ public:
     void DestroyEntity(EntityID id);
     const std::string& GetEntityName(EntityID id) const;
     void SetEntityName(EntityID id, const std::string& name) { mNames[id] = name; }
+
+    // ---- PAKET 47 (Etappe 3, Stufe 2): Instanz-Clip-Steuerung ----
+    /// Startet einen Morph-Clip AUF DIESER Entitaet (eigene Pose + Puffer).
+    /// false: kein Model / kein Manifest / Clip unbekannt (Log).
+    bool StartEntityClip(EntityID id, int clipIndex, bool restart = true);
+    bool StartEntityClip(EntityID id, const std::string& clipName,
+                         bool restart = true);
+    /// Haelt die aktuelle Pose an (Instanz-Puffer bleiben bestehen).
+    bool StopEntityClip(EntityID id);
 
     template<typename T>
     T* AddComponent(EntityID id) {
