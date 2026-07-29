@@ -7,7 +7,9 @@ Eine modulare 3D-Game-Engine im Stil von RPG Maker, aber mit modernem Renderer u
 - **Low-Spec-freundlich**: OpenGL 3.3, instanzierbares Rendering, optionale Low-Poly-Modi
 - **Ruby-Scripting**: Eingebettete `mruby`-VM für Spiellogik, Events, Kampfsysteme
 - **Qt-Editor**: Native Fenster, Game View, **Code Workspace (Ruby + C++)**
-- **Asset-Support**: PNG-Tilesets, OBJ/GLTF-Modelle, OGG/MP3/WAV-Audio, Shader
+- **Asset-Support**: PNG-Tilesets, OBJ-Modelle (statisch oder als animierte
+  **Keyframe-Morph-Serie** per `.anim`-Manifest, PAKET 46 –
+  siehe `docs/XP-3D-CORE.md`), OGG/MP3/WAV-Audio, Shader
 
 > **Hinweis:** Der alte Dear-ImGui-Editor ist **entfernt**. Einziger Editor-Host ist Qt
 > (`docs/QT-EDITOR.md`). Der Tab **Code** ersetzt den früheren Game-Scene-/Script-Fokus

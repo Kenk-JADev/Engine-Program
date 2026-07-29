@@ -78,3 +78,63 @@ nächster Routen-Schritt (ein Schritt pro Frame-Takt, wie XP)
 - Anime-Flags 31–34 / Opacity 40 / Blend 41 (Route-Restcodes)
 - Hängen-Diagonalen für den **Spieler** (freie 360°-Bewegung ist bestand)
 - Terrain-Abhängige Schrittsounds
+
+---
+
+# 3D-Modelle mit Keyframe-Morph-Animation (PAKET 46, Etappe 3 Stufe 1)
+
+Bisher waren 3D-Modelle statisch (nur Einzel-OBJ). Das `.anim`-Manifest
+(INI-Stil wie die Game.ini) macht OBJ-Frame-Serien zur laufenden Animation –
+Positions- und Normalen-Lerp auf der CPU, Upload in einen dynamischen VBO
+pro Frame. RPG-taugliche Vertexzahlen vorausgesetzt, ist das bewusst simpel
+(kein Skelett, kein glTF – saubere Stufe mit ehrlicher Grenze unten).
+
+## Manifest-Format
+
+`<ordner>/figur.anim` neben den Frame-OBJs:
+
+```ini
+[frames]                  ; zeilenweise – Reihenfolge = Frame-Index
+f0 = ritter_idle0.obj
+f1 = ritter_idle1.obj
+f2 = ritter_walk0.obj
+f3 = ritter_walk1.obj
+
+[clip:idle]
+frames = 0,1              ; Indexliste (Ping-Pong direkt: 0,1,0)
+fps    = 3                ; Schritte/Sekunde (0.1..120)
+loop   = 1                ; 0 = am letzten Frame stehen bleiben
+start  = 1                ; beim Laden automatisch (immer explizit setzen)
+
+[clip:walk]
+frames = 2,3
+fps    = 8
+```
+
+- **Topologie-Regel:** alle Frames gleiche Vertex-/Indexzahl UND gleiche
+  Vertex-Reihenfolge (Morph paart Index i mit i). So exportieren, wie es
+  Morph-/Shape-Key-Exports in Blender & Co. erzeugen.
+- **Lade-Regeln:** `Model::LoadAnyModelFile` (ResourceManager + Editor-
+  Import) routet per Endung `.anim`; `LoadFromOBJ` bleibt für Einzeldateien.
+  Fehler (fehlende Datei, Topologie-Bruch) verweigern das Manifest mit
+  Log-Zeile, NIE Teilladung. Der OBJ-Parser wurde dabei gehaertet:
+  Facetten mit ungueltigen Indexverweisen sind jetzt Fehler statt UB.
+- **Laufzeit:** `Scene::Update` tickt alle Modelle mit Manifest
+  (`IsAnimated()`), autonom per `start=1` oder spaeter per API
+  (`PlayClip/StopClip`, C++-Seite fertig). Nicht-loopende Clips bleiben auf
+  dem Endframe stehen; `PlayClip` springt sofort auf Frame 1.
+- **Demo:** `SampleProject/assets/models/pillar_pulse.anim` (+2 OBJs) –
+  im Editor als Modell importieren, der Loop laeuft sofort (start=1).
+
+## Stufe-1-Grenzen (bewusst, dokumentiert im Code)
+
+- **Geteilte Pose:** mehrere Entitaeten mit demselben `shared_ptr<Model>`
+  bewegen sich synchron (ein Morph-Puffer pro Model). Instanz-Posen =
+  Stufe 2 (eigene Puffer je Entitaet).
+- Morph ist linear+CPU; UV kommen aus Frame A; Multi-Mesh-OBJs bleiben
+  Einzel-Mesh (Engine-Loader-Regel).
+- Clip-Wechsel aus Events/Ruby folgt mit Stufe 2 zusammen (API existiert
+  bereits: `PlayClip("name")`).
+
+Perspektive Stufe 2+: Instanz-Pose je Entitaet, Clip-Aufruf aus Event/
+Skript, danach Bewertung von glTF-Skinning (großer Block, eigener Entscheid).

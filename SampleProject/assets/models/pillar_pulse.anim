@@ -1,0 +1,11 @@
+; RPG Maker 3D - Keyframe-Morph-Manifest (PAKET 46)
+; Demo: pulsierender Saeulen-Quader (zwei Frames, Ping-Pong-Loop).
+[frames]
+f0 = pillar_pulse0.obj
+f1 = pillar_pulse1.obj
+
+[clip:pulse]
+frames = 0,1
+fps = 2
+loop = 1
+start = 1

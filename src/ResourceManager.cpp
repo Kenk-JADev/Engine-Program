@@ -32,7 +32,9 @@ std::shared_ptr<Model> ResourceManager::GetModel(const std::string& path) {
     }
 
     auto model = std::make_shared<Model>();
-    if (!model->LoadFromOBJ(path)) {
+    // PAKET 46: .anim-Manifeste (Keyframe-Morph) automatisch routen,
+    // .obj laedt wie gehabt (LoadAnyModelFile entscheidet per Endung).
+    if (!model->LoadAnyModelFile(path)) {
         // Fallback cube
         auto mesh = MeshFactory::CreateCube(1.0f);
         // Cube bleibt eigenständig – hier einfach ein leeres Model zurückgeben

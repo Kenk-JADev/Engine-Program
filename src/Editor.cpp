@@ -1269,7 +1269,8 @@ void Editor::DrawProjectPanel() {
                     transform->transform.position = Vec3(0, 0.5f, 0);
                     auto* model = mEngine.GetScene().AddComponent<ModelRendererComponent>(id);
                     model->model = std::make_shared<Model>();
-                    model->model->LoadFromOBJ(path.string());
+                    // PAKET 46: auch .anim-Manifeste (Keyframe-Morph) importieren
+                    model->model->LoadAnyModelFile(path.string());
                     mSelectedEntity = static_cast<int>(id);
                 }
             }

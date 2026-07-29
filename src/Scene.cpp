@@ -1,4 +1,5 @@
 #include "rpgmaker3d/Scene.h"
+#include "rpgmaker3d/Model.h" // PAKET 46: UpdateAnimation/IsAnimated vollstaendig
 #include <algorithm>
 
 namespace rpg {
@@ -33,8 +34,15 @@ const std::string& Scene::GetEntityName(EntityID id) const {
 }
 
 void Scene::Update(float dt) {
-    (void)dt;
-    // Script components würden hier aktualisiert werden.
+    // PAKET 46 (Etappe 3, Stufe 1): Morph-Animation der Szenen-Modelle
+    // weiterfuehren. Modelle ohne Manifest sind No-Ops (IsAnimated()==false);
+    // die geteilte Pose pro Model ist die dokumentierte Stufe-1-Grenze.
+    for (EntityID id : mEntities) {
+        if (auto* mr = GetComponent<ModelRendererComponent>(id)) {
+            if (mr->model && mr->model->IsAnimated())
+                mr->model->UpdateAnimation(dt);
+        }
+    }
 }
 
 void Scene::Clear() {
