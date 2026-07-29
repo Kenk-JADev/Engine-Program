@@ -19,6 +19,8 @@ void CustomConfig::Reset() {
     nativeBattleStatus = true;
     nativeMessage = true; // PAKET 42
     xpSceneMode = false; // XP-Szenen-Framework ist Opt-in
+    bgmVolume = bgsVolume = seVolume = meVolume = 100; // PAKET 43
+    fullscreen = false; // PAKET 43: Fenster-Start ist Standard
 }
 
 void CustomConfig::LoadFromProject(const std::string& projectPath) {
@@ -45,6 +47,17 @@ void CustomConfig::LoadFromProject(const std::string& projectPath) {
         if (v == "0" || v == "false" || v == "no" || v == "off") return false;
         return fallback;
     };
+    // PAKET 43: Prozentwerte 0..100 robust lesen (Mistext/Muell = Fallback,
+    // kein Absturz). std::stoi wirft bei Leer-/Sonderzeichen - daher try/catch.
+    auto parsePercent = [&](std::string v, int fallback) {
+        trim(v);
+        try {
+            const int n = std::stoi(v);
+            return std::clamp(n, 0, 100);
+        } catch (...) {
+            return fallback;
+        }
+    };
 
     std::string line;
     while (std::getline(f, line)) {
@@ -67,6 +80,12 @@ void CustomConfig::LoadFromProject(const std::string& projectPath) {
         else if (key == "nativebattlestatus") nativeBattleStatus = parseBool(value, nativeBattleStatus);
         else if (key == "nativemessage")     nativeMessage = parseBool(value, nativeMessage); // PAKET 42
         else if (key == "xpscenemode")        xpSceneMode = parseBool(value, xpSceneMode);
+        // PAKET 43: Laufzeit-Optionen (Mixer-Startwerte + Vollbild)
+        else if (key == "bgmvolume")  bgmVolume = parsePercent(value, bgmVolume);
+        else if (key == "bgsvolume")  bgsVolume = parsePercent(value, bgsVolume);
+        else if (key == "sevolume")   seVolume  = parsePercent(value, seVolume);
+        else if (key == "mevolume")   meVolume  = parsePercent(value, meVolume);
+        else if (key == "fullscreen") fullscreen = parseBool(value, fullscreen);
     }
 
     RPG_LOG_INFO("[Custom] Game.ini gelesen: Title=" + std::to_string(nativeTitle) +
@@ -75,7 +94,12 @@ void CustomConfig::LoadFromProject(const std::string& projectPath) {
                  " BattleMenu=" + std::to_string(nativeBattleMenu) +
                  " BattleStatus=" + std::to_string(nativeBattleStatus) +
                  " Message=" + std::to_string(nativeMessage) +
-                 " XpSceneMode=" + std::to_string(xpSceneMode));
+                 " XpSceneMode=" + std::to_string(xpSceneMode) +
+                 " BgmVol=" + std::to_string(bgmVolume) +
+                 " BgsVol=" + std::to_string(bgsVolume) +
+                 " SeVol=" + std::to_string(seVolume) +
+                 " MeVol=" + std::to_string(meVolume) +
+                 " Fullscreen=" + std::to_string(fullscreen));
 }
 
 } // namespace rpg

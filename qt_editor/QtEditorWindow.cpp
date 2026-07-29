@@ -51,6 +51,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QProcess>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
@@ -145,25 +146,89 @@ bool ensureParentDir(const QString& filePath) {
 /// Rekursives Kopieren eines Verzeichnisses. Auf der Projektwurzel-Ebene
 /// (topLevel=true) werden saves/ (Spielstaende des Entwicklers gehoeren
 /// nicht in eine Auslieferung) und .git/ ausgelassen.
+/// PAKET 43: Zentrale Ausschlussliste des Exports (bisher inline). Gilt nur
+/// auf Projektebene (topLevel): Entwickler-Savegames (saves/), Versions-
+/// verwaltung (.git/), Laufzeit-Logs und Temp-Dateien gehoeren NICHT in die
+/// Auslieferung. Zaehl- und Kopiervorgang nutzen beide diese Funktion,
+/// damit Fortschritts-Maximum und Ist nie auseinanderlaufen.
+bool exportEntryExcluded(const QFileInfo& e, bool topLevel) {
+    if (!topLevel) return false;
+    const QString n = e.fileName();
+    if (e.isDir()) {
+        return n.compare(QStringLiteral("saves"), Qt::CaseInsensitive) == 0 ||
+               n == QStringLiteral(".git");
+    }
+    return n.compare(QStringLiteral("engine.log"), Qt::CaseInsensitive) == 0 ||
+           n.endsWith(QStringLiteral(".tmp"), Qt::CaseInsensitive);
+}
+
+/// Vorab-Pass: Anzahl der zu kopierenden Dateien (gleiche Ausschluesse),
+/// damit der Fortschrittsdialog ein echtes Maximum hat.
+int countProjectFiles(const QString& srcPath, bool topLevel) {
+    const QDir src(srcPath);
+    const QFileInfoList entries = src.entryInfoList(
+        QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
+    int count = 0;
+    for (const QFileInfo& e : entries) {
+        if (exportEntryExcluded(e, topLevel)) continue;
+        count += e.isDir() ? countProjectFiles(e.absoluteFilePath(), false) : 1;
+    }
+    return count;
+}
+
+/// Rekursives Kopieren mit Fortschritt + Abbruch (PAKET 43). progress darf
+/// nullptr sein; aborted bricht die Rekursion sauber ab (bereits kopierte
+/// Dateien bleiben stehen - der Aufrufer meldet das als unvollstaendig).
 void copyProjectRecursive(const QString& srcPath, const QString& dstPath,
-                          int& copied, int& failed, bool topLevel) {
+                          int& copied, int& failed, bool topLevel,
+                          QProgressDialog* progress, bool& aborted) {
     const QDir src(srcPath);
     const QFileInfoList entries = src.entryInfoList(
         QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     for (const QFileInfo& e : entries) {
-        if (topLevel && e.isDir() &&
-            (e.fileName().compare(QStringLiteral("saves"), Qt::CaseInsensitive) == 0 ||
-             e.fileName() == QStringLiteral(".git")))
-            continue;
+        if (aborted) return;
+        if (exportEntryExcluded(e, topLevel)) continue;
         const QString to = dstPath + QStringLiteral("/") + e.fileName();
         if (e.isDir()) {
-            copyProjectRecursive(e.absoluteFilePath(), to, copied, failed, false);
+            copyProjectRecursive(e.absoluteFilePath(), to, copied, failed, false,
+                                 progress, aborted);
         } else {
+            if (progress) {
+                progress->setLabelText(e.fileName());
+                if (progress->wasCanceled()) { aborted = true; return; }
+            }
             if (!ensureParentDir(to)) { ++failed; continue; }
             QFile::remove(to); // QFile::copy ueberschreibt nicht
             if (QFile::copy(e.absoluteFilePath(), to)) ++copied; else ++failed;
+            if (progress) {
+                progress->setValue(progress->value() + 1);
+                if (progress->wasCanceled()) { aborted = true; return; }
+            }
         }
     }
+}
+
+/// PAKET 43: Game.ini sicherstellen. Projekte ohne Game.ini laufen mit den
+/// eingebauten Standards (CustomConfig) - in der Auslieferung legen wir dann
+/// ein kommentiertes Geruest bei, damit Kaeufer/Tester die Schalter und
+/// Laufzeit-Optionen (Lautstaerke/Vollbild) sehen, ohne die README zu
+/// brauchen. Bestehende Dateien werden nie angeruehrt.
+void writeExportGameIniScaffold(const QString& gameDir) {
+    const QString path = gameDir + QStringLiteral("/Game.ini");
+    if (QFileInfo::exists(path)) return;
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) return;
+    f.write(QStringLiteral(
+        "; RPG Maker 3D ---- Spiel-Optionen (beim Export angelegt) -------------\n"
+        "; Alle Schalter sind optional; fehlende Werte = eingebauter Standard.\n"
+        "[RPG Maker 3D]\n"
+        "BgmVolume=100        ; 0..100 Prozent Musik\n"
+        "BgsVolume=100        ; 0..100 Prozent Hintergrundgeraeusche\n"
+        "SeVolume=100         ; 0..100 Prozent Soundeffekte\n"
+        "MeVolume=100         ; 0..100 Prozent Fanfaren (Music Effects)\n"
+        "Fullscreen=0         ; 1 = im Vollbild starten (Alt+Enter schaltet um)\n"
+        "; Oberflaechen-Schalter (NativeTitle/Hud/GameMenu/BattleMenu/\n"
+        "; BattleStatus/Message, jeweils 1 oder 0): siehe Engine-README.\n").toUtf8());
 }
 
 /// Ordnersicherer Spielname (Windows-Verbote: \/:*?"<>| ; keine Leerzeichen
@@ -1078,11 +1143,16 @@ void QtEditorWindow::actionPlaytestPlayer() {
 // ---------------------------------------------------------------------------
 // „Spiel exportieren" (PAKET 8): fertige Auslieferung bauen
 //   <Ziel>/<Spielname>/Game.exe   = Player-exe (umbenannt, XP-Anmutung)
-//   <Ziel>/<Spielname>/Game/      = Projektordner (ohne saves/ und .git/)
+//   <Ziel>/<Spielname>/Game/      = Projektordner (ohne saves/, .git/,
+//                                   engine.log + *.tmp, s. exportEntryExcluded;
+//                                   fehlende Game.ini wird als kommentiertes
+//                                   Geruest ergaenzt, PAKET 43)
 //   <Ziel>/<Spielname>/*.dll      = neben der Player-exe liegende DLLs
 //                                   (Qt6-DLLs ausgenommen – die braucht nur
 //                                   der Editor)
 //   <Ziel>/<Spielname>/LIESMICH.txt = Start- + vc_redist-Hinweis
+// PAKET 43: Fortschrittsdialog mit Abbruch (grosse Projekte blockierten
+// vorher die UI ohne Rueckmeldung).
 // Die Game.exe findet „./Game/project.json" automatisch (player_main.cpp
 // ParseProjectPath – kein Kommandozeilen-Argument noetig, XP-Gefuehl).
 // ---------------------------------------------------------------------------
@@ -1148,9 +1218,39 @@ void QtEditorWindow::actionExportGame() {
 
     int copied = 0, failed = 0;
 
-    // 1) Projektordner -> <ziel>/<name>/Game/ (Top-Level ohne saves/ + .git/)
-    copyProjectRecursive(QString::fromStdString(projectPath),
-                         outDir + QStringLiteral("/Game"), copied, failed, true);
+    // PAKET 43: Fortschrittsdialog (echtes Maximum via Vorab-Zaehlung,
+    // identische Ausschlussliste -> Zaehler und Kopie laufen nie auseinander).
+    const QString srcProj = QString::fromStdString(projectPath);
+    const QString dstGame = outDir + QStringLiteral("/Game");
+    const int totalFiles = countProjectFiles(srcProj, true);
+    QProgressDialog progress(
+        QStringLiteral("Exportiere nach %1 …").arg(dstGame),
+        QStringLiteral("Abbrechen"), 0, totalFiles, this);
+    progress.setWindowTitle(QStringLiteral("Spiel exportieren"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(600); // kleine Projekte ohne Dialog-Flackern
+    progress.setValue(0);
+    bool aborted = false;
+
+    // 1) Projektordner -> <ziel>/<name>/Game/ (Ausschluesse: exportEntryExcluded)
+    copyProjectRecursive(srcProj, dstGame, copied, failed, true, &progress, aborted);
+    progress.setLabelText(QStringLiteral("Player und LIESMICH …"));
+
+    if (aborted) {
+        log(QStringLiteral("Export ABGEBROCHEN: %1 Dateien kopiert, Ziel %2 ist unvollständig.")
+                .arg(copied).arg(outDir));
+        progress.close();
+        QMessageBox::information(this, QStringLiteral("Spiel exportieren"),
+            QStringLiteral("Der Export wurde abgebrochen.\n\n"
+                           "Der Ordner %1 enthält einen unvollständigen Stand –\n"
+                           "beim nächsten Export wird er aktualisiert/überschrieben.")
+                .arg(outDir));
+        return;
+    }
+
+    // 1b) PAKET 43: Projekte ohne Game.ini bekommen ein kommentiertes
+    //     Optionen-Geruest mit in die Auslieferung.
+    writeExportGameIniScaffold(dstGame);
 
     // 2) Player-exe -> <ziel>/<name>/Game.exe
     const QFileInfo exeInfo(exe);
@@ -1178,6 +1278,7 @@ void QtEditorWindow::actionExportGame() {
 
     // 4) LIESMICH (Start + vc_redist-Hinweis)
     writeExportReadme(outDir);
+    progress.setValue(totalFiles); // Balken zu Ende fuehren, Dialog schliesst sich
 
     if (failed == 0) {
         log(QStringLiteral("Spiel exportiert: %1 (%2 Dateien kopiert).")
@@ -1281,6 +1382,15 @@ static void ensureGameIniTemplate(const QString& projectPath) {
             "NativeMessage=1      ; 0 = Standard-Dialoge (Text/Auswahl/Zahl/Name)\n"
             "                         per Ruby-Hooks Game.on_ui_* (Skript-System,\n"
             "                         Referenz: scripts/18_System_Message.rb)\n"
+            "\n"
+            "; Laufzeit-Optionen (Startwerte; Optionsmenues per Ruby regelbar:\n"
+            ";   Audio.bgm_volume= / Audio.bgs_volume= / Audio.se_volume= /\n"
+            ";   Audio.me_volume=   jeweils 0.0..1.0, Graphics.fullscreen=)\n"
+            "BgmVolume=100        ; 0..100 Prozent Musik\n"
+            "BgsVolume=100        ; 0..100 Prozent Hintergrundgeraeusche\n"
+            "SeVolume=100         ; 0..100 Prozent Soundeffekte\n"
+            "MeVolume=100         ; 0..100 Prozent Fanfaren (Music Effects)\n"
+            "Fullscreen=0         ; 1 = Player startet im Vollbild (Alt+Enter geht immer)\n"
             "\n"
             "; Fenster-Look: eigene Windowskin als PNG nach Graphics/System/\n"
             ";   legen (windowskin.png), wird automatisch benutzt; per Skript\n"

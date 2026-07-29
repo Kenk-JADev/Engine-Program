@@ -769,6 +769,85 @@ static mrb_value rb_audio_set_se_volume(mrb_state* mrb, mrb_value self) {
     return mrb_nil_value();
 }
 
+// PAKET 43 (Laufzeit-Optionen): fehlende Mixer-Setter (BGS/ME) + Getter.
+// Die Getter liefern 0.0..1.0 und ermoeglichen Optionsmenues aus Ruby,
+// die den aktuellen Stand anzeigen (Startwerte kommen aus Game.ini
+// BgmVolume/BgsVolume/SeVolume/MeVolume, siehe CustomConfig).
+static mrb_value rb_audio_set_bgs_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_float volume;
+    mrb_get_args(mrb, "f", &volume);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().SetBGSVolume(volume);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_set_me_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    mrb_float volume;
+    mrb_get_args(mrb, "f", &volume);
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (engine) {
+        engine->GetAudio().SetMEVolume(volume);
+    }
+
+    return mrb_nil_value();
+}
+
+static mrb_value rb_audio_get_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) {
+        return mrb_float_value(mrb, 0.0f);
+    }
+    return mrb_float_value(mrb, engine->GetAudio().GetMasterVolume());
+}
+
+static mrb_value rb_audio_get_bgm_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) {
+        return mrb_float_value(mrb, 0.0f);
+    }
+    return mrb_float_value(mrb, engine->GetAudio().GetBGMVolume());
+}
+
+static mrb_value rb_audio_get_bgs_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) {
+        return mrb_float_value(mrb, 0.0f);
+    }
+    return mrb_float_value(mrb, engine->GetAudio().GetBGSVolume());
+}
+
+static mrb_value rb_audio_get_se_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) {
+        return mrb_float_value(mrb, 0.0f);
+    }
+    return mrb_float_value(mrb, engine->GetAudio().GetSEVolume());
+}
+
+static mrb_value rb_audio_get_me_volume(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (!engine) {
+        return mrb_float_value(mrb, 0.0f);
+    }
+    return mrb_float_value(mrb, engine->GetAudio().GetMEVolume());
+}
+
 void RubyVM::BindAudio() {
     struct RClass* audioModule = mrb_define_module(mMrb, "Audio");
 
@@ -850,6 +929,63 @@ void RubyVM::BindAudio() {
         "se_volume=",
         rb_audio_set_se_volume,
         MRB_ARGS_REQ(1)
+    );
+
+    // PAKET 43: BGS/ME-Setter + Getter fuer alle Mixer-Gruppen (Optionsmenues)
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "bgs_volume=",
+        rb_audio_set_bgs_volume,
+        MRB_ARGS_REQ(1)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "me_volume=",
+        rb_audio_set_me_volume,
+        MRB_ARGS_REQ(1)
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "volume",
+        rb_audio_get_volume,
+        MRB_ARGS_NONE()
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "bgm_volume",
+        rb_audio_get_bgm_volume,
+        MRB_ARGS_NONE()
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "bgs_volume",
+        rb_audio_get_bgs_volume,
+        MRB_ARGS_NONE()
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "se_volume",
+        rb_audio_get_se_volume,
+        MRB_ARGS_NONE()
+    );
+
+    mrb_define_module_function(
+        mMrb,
+        audioModule,
+        "me_volume",
+        rb_audio_get_me_volume,
+        MRB_ARGS_NONE()
     );
 
     // Aliases for compatibility

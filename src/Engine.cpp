@@ -606,8 +606,23 @@ void Engine::LoadCustomConfigForProject() {
     const std::string base = mProject ? mProject->GetProjectPath() : std::string();
     CustomConfig::Get().LoadFromProject(base);
     RgssUI::Get().SetProjectBase(base); // Windowskin-Aufloesung der Ruby-UI
+    const CustomConfig& cfg = CustomConfig::Get();
     // HUD-Startwert aus der Projekt-Config (F9 kann es jederzeit umlegen)
-    GameUI::Get().SetHudVisible(CustomConfig::Get().nativeHud);
+    GameUI::Get().SetHudVisible(cfg.nativeHud);
+    // PAKET 43: Mixer-Startwerte (0..100 -> 0.0..1.0) an den AudioManager.
+    // Zur Laufzeit regelbar via Ruby Audio.bgm_volume= usw.; Game.ini liefert
+    // bei jedem Spielstart erneut den Ausgangswert.
+    if (mAudio) {
+        mAudio->SetBGMVolume(cfg.bgmVolume / 100.0f);
+        mAudio->SetBGSVolume(cfg.bgsVolume / 100.0f);
+        mAudio->SetSEVolume(cfg.seVolume / 100.0f);
+        mAudio->SetMEVolume(cfg.meVolume / 100.0f);
+    }
+    // PAKET 43: Vollbild-Startwert NUR im Player - das eingebettete Editor-
+    // Fenster darf nie zwangsumgeschaltet werden. Alt+Enter bleibt jederzeit
+    // moeglich (Engine::Update Runtime-Keys).
+    if (!mEditorMode && mWindow && mWindow->IsFullscreen() != cfg.fullscreen)
+        mWindow->SetFullscreen(cfg.fullscreen);
 }
 
 void Engine::StartTitleMode() {

@@ -10,6 +10,7 @@
 
 #include "rpgmaker3d/RubyVM.h"
 #include "rpgmaker3d/Engine.h"
+#include "rpgmaker3d/Window.h" // PAKET 43: GetWindow().SetFullscreen (Graphics.fullscreen=)
 #include "rpgmaker3d/Input.h"
 #include "rpgmaker3d/AudioManager.h"
 #include "rpgmaker3d/Logger.h"
@@ -1389,6 +1390,27 @@ static mrb_value rb_graphics_height(mrb_state* mrb, mrb_value self) {
     (void)mrb; (void)self;
     return RPG_MRB_INT_VALUE(mrb, 480);
 }
+// PAKET 43 (Laufzeit-Optionen): Vollbild aus Ruby — fuer eigene Options-
+// menues neben Audio.bgm_volume usw. Startwert kommt aus Game.ini
+// (Fullscreen=0/1, nur Player). Im eingebetteten Editor ist der Setter
+// absichtlich ein No-Op: das Qt-Fenster gehoert dem Editor.
+static mrb_value rb_graphics_fullscreen_get(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    const bool on = engine && !engine->IsEditorMode()
+                        ? engine->GetWindow().IsFullscreen() : false;
+    return mrb_bool_value(on);
+}
+static mrb_value rb_graphics_fullscreen_set(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_bool on = 0;
+    mrb_get_args(mrb, "b", &on);
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+    if (engine && !engine->IsEditorMode()) {
+        engine->GetWindow().SetFullscreen(on != 0);
+    }
+    return mrb_bool_value(on != 0);
+}
 
 // ---------------------------------------------------------------------------
 // Input (XP-Befehlssatz: press?/trigger?/repeat?/dir4/dir8 + Konstanten)
@@ -2375,6 +2397,9 @@ void RubyVM::BindRgssGraphics() {
     mrb_define_module_function(mMrb, gfx, "frame_count=", rb_graphics_frame_count_set, MRB_ARGS_REQ(1));
     mrb_define_module_function(mMrb, gfx, "width", rb_graphics_width, MRB_ARGS_NONE());
     mrb_define_module_function(mMrb, gfx, "height", rb_graphics_height, MRB_ARGS_NONE());
+    // PAKET 43: Vollbild-Schalter fuer Ruby-Optionsmenues (Editor: No-Op)
+    mrb_define_module_function(mMrb, gfx, "fullscreen", rb_graphics_fullscreen_get, MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, gfx, "fullscreen=", rb_graphics_fullscreen_set, MRB_ARGS_REQ(1));
 
     // Input (XP-Satz zusätzlich zu key_down?/key_pressed?)
     struct RClass* input = mrb_module_get(mMrb, "Input");

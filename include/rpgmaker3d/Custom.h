@@ -22,6 +22,14 @@
 //                          pro Frame $scene.__engine_frame (Scene_Base aus dem
 //                          RGSS-Prelude) — Opt-in, Default bleibt nativ.
 //
+// PAKET 43 — Laufzeit-Optionen (Startwerte; zur Laufzeit per Ruby regelbar):
+//   BgmVolume=100        ; 0..100 Prozent Musik  (Ruby: Audio.bgm_volume=)
+//   BgsVolume=100        ; 0..100 Prozent Hintergrundgeraeusche
+//   SeVolume=100         ; 0..100 Prozent Effekte (Ruby: Audio.se_volume=)
+//   MeVolume=100         ; 0..100 Prozent Music-Effekte (Fanfaren)
+//   Fullscreen=0         ; 1 = Player startet im Vollbild (Editor unberuehrt;
+//                          Ruby: Graphics.fullscreen=, Alt+Enter geht immer)
+//
 // Die gleichen Flags sind zur Laufzeit aus Ruby schreibbar:
 //   UI.native_battle_menu = false   usw. (siehe README "Alles custom")
 
@@ -42,6 +50,18 @@ public:
     /// XP-Szenen-Framework (Opt-in, PAKET 6/h): pro Frame $scene.__engine_frame
     /// (Scene_Base-Tick: start -> update -> terminate). Default AUS.
     bool xpSceneMode = false;
+
+    // ---- PAKET 43: Laufzeit-Optionen (Startwerte aus Game.ini) ----
+    // Mixer-Gruppen in Prozent 0..100; Engine skaliert auf 0.0..1.0.
+    // Zur Laufzeit regelbar: Audio.bgm_volume= / Audio.bgs_volume= /
+    // Audio.se_volume= / Audio.me_volume= (Ruby, src/RubyVM.cpp).
+    int bgmVolume = 100;
+    int bgsVolume = 100;
+    int seVolume = 100;
+    int meVolume = 100;
+    /// Vollbild-Startwert — greift NUR im Player (Engine::IsEditorMode()==false);
+    /// das eingebettete Editor-Fenster wird nie zwangsumgeschaltet.
+    bool fullscreen = false;
 
     /// Alles auf Standard (eingebaute Oberflaechen aktiv)
     void Reset();

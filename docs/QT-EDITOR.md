@@ -107,6 +107,31 @@ hartkodiert dunkel malten — jetzt sind sie theme-bewusst:
 - Radierer-Checkstatus + „Tile: N“-Anzeige waren bereits korrekt
   verdrahtet (geprueft beim PAKET-35-Audit).
 
+## Export & Projekt-Vorlage (PAKET 43)
+
+„Spiel exportieren …“ (PAKET 8) wurde auslieferungsreif geschliffen:
+
+- **Fortschrittsdialog mit Abbruch** (`QProgressDialog`, fenster-modal,
+  erscheint erst ab ~0,6 s): Vorab-Zaehlpass `countProjectFiles` liefert
+  das Maximum; `copyProjectRecursive` meldet jede Datei. Abbruch laesst
+  den Teilstand stehen und meldet ihn als unvollstaendig.
+- **Zentrale Ausschlussliste** `exportEntryExcluded` (eine Quelle fuer
+  Zaehlen + Kopieren — Maximum und Ist laufen nie auseinander):
+  `saves/`, `.git/`, `engine.log`, `*.tmp` (jeweils nur Projektebene).
+- **Game.ini-Geruest** (`writeExportGameIniScaffold`): Projekte ohne
+  `Game.ini` bekommen eine kommentierte Datei mit den Laufzeit-Optionen
+  (`BgmVolume/BgsVolume/SeVolume/MeVolume`, `Fullscreen`) in die
+  Auslieferung; bestehende Dateien bleiben unberuehrt.
+- Die **Projekt-Vorlage** (`Game.ini` beim Anlegen, `actionNewProject`)
+  enthaelt dieselben Optionen, und das mitgelieferte SampleProject hat
+  jetzt ebenfalls eine voll kommentierte `Game.ini`.
+- Engine-Seite dazu: `CustomConfig` liest die neuen Schluessel, die
+  Engine wendet Mixer + Vollbild-Startwert an (Vollbild nur im Player),
+  und Ruby bekommt `Audio.bgs_volume=`/`me_volume=`, Getter fuer alle
+  Gruppen (`Audio.bgm_volume` … `Audio.me_volume`, Master: `Audio.volume`)
+  sowie `Graphics.fullscreen`/`fullscreen=` — damit lassen sich
+  Optionsmenues komplett als Skript bauen (siehe README „Alles custom“).
+
 ## Theme & Fehler-Audit (PAKET 35)
 
 ### Theme „XP Classic“

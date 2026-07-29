@@ -194,6 +194,30 @@ Wichtig dabei:
   (Aufrufkette, Datei/Zeile) im Log.
 - Fenstertitel des Players = **Spieltitel** aus der Datenbank (System-Tab).
 
+### Fertiges Spiel veröffentlichen („Spiel exportieren…“, Datei-Menü)
+
+Der Editor baut die **fertige Auslieferung in einem Rutsch**
+
+```
+<Ziel>/<Spielname>/Game.exe      – Player-exe (umbenannt, XP-Anmutung)
+<Ziel>/<Spielname>/*.dll         – SDL2 & Co (Qt-DLLs ausgenommen)
+<Ziel>/<Spielname>/Game/         – gesamter Projektordner
+<Ziel>/<Spielname>/LIESMICH.txt  – Start- + vc_redist-Hinweis
+```
+
+Die `Game.exe` findet ihr Projekt (`./Game/project.json`) **ohne
+Kommandozeile** – Spieler doppelklicken einfach. Nicht mitgenommen werden
+(PAKET 43, zentrale Ausschlussliste `exportEntryExcluded`):
+`saves/` (eigene Entwickler-Spielstände), `.git/`, `engine.log` und
+`*.tmp`. Weiteres seit PAKET 43:
+
+- **Fortschrittsdialog mit Abbruch** – das Maximum kommt aus einer
+  Vorab-Zählung mit identischer Ausschlussliste; große Projekte zeigen
+  also einen echten Balken statt eingefrorener Oberfläche.
+- **Game.ini-Gerüst**: Enthält das Projekt keine `Game.ini` (läuft dann
+  mit eingebauten Standards), bekommt die Auslieferung eine kommentierte
+  Datei mit den Laufzeit-Optionen (`BgmVolume`…, `Fullscreen`) dazu.
+
 ### Fehlersuche: Player/Editor startet nicht (Windows)
 
 Wird die exe bzw. `RPGMaker3D_Player.exe` auf einem fremden Rechner
@@ -414,11 +438,26 @@ NativeBattleMenu=1   ; 0 = kein eingebautes Kampfmenü (Battle-API nutzen)
 NativeBattleStatus=1 ; 0 = keine Gegner-/Gruppenzeile oben im Kampf
 NativeMessage=1      ; 0 = Standard-Dialoge (Text/Auswahl/Zahl/Name) per
                          Ruby-Hooks Game.on_ui_* (Skript-System, PAKET 42)
+
+; Laufzeit-Optionen (PAKET 43 – Startwerte, 0..100 Prozent):
+BgmVolume=100        ; Musik        (Ruby zur Laufzeit: Audio.bgm_volume=)
+BgsVolume=100        ; Umgebungsklang (Audio.bgs_volume=)
+SeVolume=100         ; Soundeffekte (Audio.se_volume=)
+MeVolume=100         ; Fanfaren/MEs (Audio.me_volume=)
+Fullscreen=0         ; 1 = Player startet im Vollbild (Editor bleibt Fenster;
+                         Alt+Enter schaltet jederzeit um, Ruby: Graphics.fullscreen=)
 ```
 
 Wird bei jedem Spielstart/Playtest neu gelesen (ändern ohne Engine-Neustart).
-Alle sechs Schalter gibt es auch als Ruby-Setter, z. B.
-`UI.native_battle_menu = false` (plus `...?`-Getter).
+Alle sechs Oberflächen-Schalter gibt es auch als Ruby-Setter, z. B.
+`UI.native_battle_menu = false` (plus `...?`-Getter). Die
+Lautstärke-Gruppen haben zusätzlich **Getter**
+(`Audio.bgm_volume` … `Audio.me_volume`, jeweils `0.0..1.0` – und
+`Audio.volume`/`Audio.volume=` für den Master), damit eigene
+**Optionsmenüs** (z. B. als RUI-Fenster) den aktuellen Stand anzeigen und
+regeln können; `Graphics.fullscreen` liefert den aktuellen Vollbildzustand.
+Im eingebetteten Editor-Playtest bleibt der Vollbild-Schalter absichtlich
+ohne Wirkung — das Qt-Fenster gehört dem Editor.
 
 ### 2. Ruby-APIs für eigene Oberflächen
 

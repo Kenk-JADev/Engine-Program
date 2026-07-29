@@ -85,6 +85,12 @@ public:
     void SetBGSVolume(float volume);
     void SetSEVolume(float volume);
     void SetMEVolume(float volume);
+    // PAKET 43 (Laufzeit-Optionen): Getter fuer Optionsmenues aus Ruby
+    // (Audio.bgm_volume usw.) — spiegeln die Mixer-Gruppen 0.0..1.0.
+    float GetBGMVolume() const { return mBGMVolume; }
+    float GetBGSVolume() const { return mBGSVolume; }
+    float GetSEVolume()  const { return mSEVolume; }
+    float GetMEVolume()  const { return mMEVolume; }
 
     // Fade controls
     void FadeOutBGM(float durationSec);
