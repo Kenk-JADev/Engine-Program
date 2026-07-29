@@ -218,6 +218,28 @@ Kommandozeile** – Spieler doppelklicken einfach. Nicht mitgenommen werden
   mit eingebauten Standards), bekommt die Auslieferung eine kommentierte
   Datei mit den Laufzeit-Optionen (`BgmVolume`…, `Fullscreen`) dazu.
 
+### Controller (Gamepad) – PAKET 44
+
+Jeder SDL-kompatible Controller (Xbox/PlayStation/Switch-Pro & Co.) läuft
+**ohne Einrichtung** — anstecken genügt (Hotplug), Tastatur und Pad wirken
+parallel. Das Pad meldet sich als die vorhandenen Tasten, daher greifen
+Menüs, Nachrichten, Bewegung, RUI-Fokuslisten und Skripte
+(`Input.key_down?`, XP-`Input.press?`) automatisch:
+
+| Pad | Tasten-Äquivalent | Wirkung |
+|---|---|---|
+| Steuerkreuz / linker Stick | Pfeiltasten | Bewegung, Cursor (dominante Achse, 40 %-Deadzone) |
+| A (unten) | Enter | Bestätigen / Text weiter / Interagieren |
+| B (rechts) / Start | Escape | Zurück / Spielmenü |
+| X / Schulter links | Q | XP-Taste **L** |
+| Y / Schulter rechts | Tab | XP-Taste **R** |
+
+Für eigene UIs gibt es `Input.gamepad_connected?` (Ruby), um z. B.
+Tastatur- gegen Pad-Hinweise zu tauschen.
+**Bekannte Grenze:** der rechte Stick ist noch frei (Kamera-Steuerung
+folgt bei Bedarf); ein Tasten-Rebinding-Menü ist mit
+`Input.key_down?`/`gamepad_connected?` bereits skriptseitig baubar.
+
 ### Fehlersuche: Player/Editor startet nicht (Windows)
 
 Wird die exe bzw. `RPGMaker3D_Player.exe` auf einem fremden Rechner

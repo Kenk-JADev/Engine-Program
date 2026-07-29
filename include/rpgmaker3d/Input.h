@@ -3,6 +3,8 @@
 #include <array>
 #include "Types.h"
 
+struct _SDL_GameController; // SDL-Vorwaertsdeklaration (PAKET 44: Gamepad-Polling)
+
 namespace rpg {
 
 enum class Key {
@@ -43,9 +45,27 @@ public:
     void OnMouseMoved(float x, float y);
     void OnMouseWheel(float delta);
 
+    // ---- PAKET 44: Gamepad (SDL_GameController) ----
+    // Das Pad ergaenzt die Tastatur PARALLEL: Abfragen liefern
+    // (Tastatur || Pad). Gepollt wird am Anfang von Update() - kein
+    // zusaetzlicher Aufruf noetig, Hotplug wird dort erkannt.
+    bool IsGamepadConnected() const { return mGamepad != nullptr; }
+
 private:
+    void PollGamepad();
+    void TryOpenGamepad();
+    void CloseGamepad();
+
+    // Tastatur-Rohzustand (Events via OnKeyChanged) ...
     std::array<bool, static_cast<size_t>(Key::Count)> mCurrentKeys{};
+    // ... kombinierter Zustand (Tastatur || Pad) des LETZTEN Frames
     std::array<bool, static_cast<size_t>(Key::Count)> mPreviousKeys{};
+    // PAKET 44: Pad-Anteil (letzter Poll) + der kombinierte Stand
+    std::array<bool, static_cast<size_t>(Key::Count)> mPadKeys{};
+    std::array<bool, static_cast<size_t>(Key::Count)> mCombined{};
+    _SDL_GameController* mGamepad = nullptr;
+    int mGamepadScanCooldown = 0; // Frames bis zur naechsten Pad-Suche
+
     std::array<bool, static_cast<size_t>(MouseButton::Count)> mCurrentMouse{};
     std::array<bool, static_cast<size_t>(MouseButton::Count)> mPreviousMouse{};
     Vec2 mMousePosition{0.0f};

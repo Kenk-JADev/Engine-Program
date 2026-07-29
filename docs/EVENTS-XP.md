@@ -146,6 +146,9 @@ Offen: Anime-Flags 31–34, Opacity 40 / Blend 41, Script-Varianten 44/45
 
 **XP-Tastencodes:** `2/4/6/8` = unten/links/rechts/oben, `11` = A (Umschalt),
 `12` = B (Esc), `13` = C (Eingabe/E/Leertaste), `15` = L (Q), `16` = R (Tab).
+**Gamepad (PAKET 44):** angeschlossene Controller wirken auf dieselben
+Tasten (Stick/Kreuz → Richtung, A → C, B/Start → B, X → L, Y → R) —
+Tastenabfrage (105) und Bedingungstyp 11 funktionieren daher auch mit Pad.
 
 ### Engine-Erweiterungen (3D)
 | Code | Befehl |

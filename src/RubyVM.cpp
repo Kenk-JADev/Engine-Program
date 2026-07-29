@@ -576,6 +576,22 @@ static mrb_value rb_input_key_pressed(mrb_state* mrb, mrb_value self) {
     return mrb_bool_value(engine->GetInput().IsKeyPressed(KeyFromSymbol(mrb, keySymbol)));
 }
 
+// PAKET 44 (Gamepad): ob ein Controller angeschlossen ist - eigene UIs
+// koennen damit Tastatur-/Pad-Hinweise umschalten. Das Pad selbst wirkt
+// bereits ueber die normalen Tasten (A -> Enter, B -> Escape, Stick ->
+// Pfeile), key_down?/key_pressed? gelten also automatisch auch furs Pad.
+static mrb_value rb_input_gamepad_connected(mrb_state* mrb, mrb_value self) {
+    (void)self;
+
+    Engine* engine = static_cast<Engine*>(mrb->ud);
+
+    if (!engine) {
+        return mrb_bool_value(false);
+    }
+
+    return mrb_bool_value(engine->GetInput().IsGamepadConnected());
+}
+
 void RubyVM::BindInput() {
     struct RClass* inputModule = mrb_define_module(mMrb, "Input");
 
@@ -602,6 +618,15 @@ void RubyVM::BindInput() {
         "key_pressed?",
         rb_input_key_pressed,
         MRB_ARGS_REQ(1)
+    );
+
+    // PAKET 44: Controller angeschlossen? (Pad wirkt ueber die Tasten mit)
+    mrb_define_module_function(
+        mMrb,
+        inputModule,
+        "gamepad_connected?",
+        rb_input_gamepad_connected,
+        MRB_ARGS_NONE()
     );
 }
 
