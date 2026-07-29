@@ -410,40 +410,15 @@ bool Engine::InitializeInternal(const std::string& title, int width, int height,
         }
     }
 
-    // Tileset + Map Setup
+    // Tileset + Map Setup — datengetrieben aus der Projekt-Datenbank
+    // (MapInfo.tilesetId der Startkarte -> Tilesets.json tilesetName).
+    // Der frueher fest verdrahtete "tileset_demo.png"-Pfad trotzt jedem
+    // Projekt mit eigenem Tileset-Grafiknamen die falsche/keine Textur auf.
     mMap->AddLayer("Ground");
-    auto tileset = std::make_shared<Tileset>();
-    // Versuche mehrere Pfade
-    bool tilesetLoaded = false;
-    std::vector<std::string> tryPaths = {
-        mProject->GetAssetPath("textures/tileset_demo.png"),
-        "./SampleProject/assets/textures/tileset_demo.png",
-        "assets/textures/tileset_demo.png",
-        "./assets/textures/tileset_demo.png"
-    };
-    for (auto& p : tryPaths) {
-        if (Platform::FileExists(p)) {
-            tileset->Load(p, 32, 32);
-            tilesetLoaded = true;
-            RPG_LOG_INFO("Tileset loaded: " + p);
-            break;
-        }
-    }
-    if (!tilesetLoaded) {
-        tileset->Load("assets/textures/tileset_demo.png", 32, 32); // wird checker fallback
-    }
-    mMap->SetTileset(tileset);
-    // XP-Tileset-Flags aus der Datenbank ans Runtime-Tileset koppeln
-    // (Durchgaengigkeit, 4-Richtung, Prioritaet, Busch, Tresen, Terrain-Tag).
-    // Standard-Map benutzt Tileset 1, Cache-Fallback: erster Eintrag.
     try {
-        const auto& sets = Database::Get().Tilesets();
-        const rpg::TilesetData* chosen = nullptr;
-        for (const auto& ts : sets) { if (ts.id == 1) { chosen = &ts; break; } }
-        if (!chosen && !sets.empty()) chosen = &sets.front();
-        if (chosen) tileset->SetTilesetData(*chosen);
+        ApplyTilesetForMap(Database::Get().System().startMapId);
     } catch (const std::exception& e) {
-        RPG_LOG_ERROR(std::string("Tileset-Flags anwenden fehlgeschlagen: ") + e.what());
+        RPG_LOG_ERROR(std::string("Tileset-Setup fehlgeschlagen: ") + e.what());
     }
 
     // Bind GameMap for collision checks
@@ -1643,6 +1618,12 @@ void Engine::Update(float dt) {
         mBattlerDying.clear(); // PAKET 15: laufende Todes-Fades weg
     }
 
+    // Audio: Fade-In/Out, 3D-Listener und Aufräumen fertiger Sounds pro
+    // Frame treiben. Ohne diesen Tick bleiben mit FadeOut gestoppte Sounds
+    // (z. B. Titel-BGM in EndTitleMode) ewig haengen (fadeTimer laeuft nie)
+    // und mSounds waechst mit jedem SE unkontrolliert.
+    if (mAudio) mAudio->Update(dt);
+
     // UI - GameUI läuft im Player IMMER, im Editor nur im PlayMode
     GameUI::Get().Update(dt);
 
@@ -2344,10 +2325,12 @@ void Engine::SaveScene(const std::string& path) const {
     }
     file << "  ]\n}\n";
 
-    // Also save binary map for runtime map path
-    if (mProject) {
-        mMap->Save(mProject->GetMapPath(1));
-    }
+    // HINWEIS: Hier wird bewusst KEINE maps/mapN.map geschrieben. Frueher
+    // landete die gerade geladene Karte hart auf GetMapPath(1) — jeder
+    // Playtest-Start (Backup-Szene!) und jedes "Szene speichern unter"
+    // ueberschrieb damit still die Startkarte, auch wenn im Editor eine
+    // andere Karte (z. B. ID 2) offen war. Binaere Karten speichern die
+    // Aufrufer selbst mit der korrekten ID (QtMapEditorDock / Save-Projekt).
     RPG_LOG_INFO("Scene saved to: " + path);
 }
 
@@ -2355,8 +2338,90 @@ void Engine::SaveScene(const std::string& path) const {
 // PAKET 25: Runtime-Karte laden, fehlende Datei -> spielbare Standardkarte
 // (statt leerer 0-Layer-Welt, in der weder Boden noch Kollision existiert)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Datengetriebenes Karten-Tileset (MapInfo.tilesetId -> Tilesets.json
+// tilesetName). Loest die Grafik in der XP-Ordnerstruktur
+// (<Projekt>/Graphics/Tilesets/<name>) und im Asset-Baum
+// (<Projekt>/assets/textures/<name>) auf; ohne Treffer greift die historische
+// Demo-Textur bzw. das Checker-Fallback von Tileset::Load. Die XP-Flags
+// (Durchgaengigkeit, Bush, Terrain-Tags, Prioritaeten) kommen aus demselben
+// TilesetData-Eintrag — Kollision und Optik bleiben so konsistent.
+// ---------------------------------------------------------------------------
+void Engine::ApplyTilesetForMap(int mapId) {
+    if (!mMap) return;
+    const std::string base = mProject ? mProject->GetProjectPath() : std::string();
+
+    // 1) tilesetId der Karte aus den MapInfos (Karteneigenschaften)
+    int tilesetId = 1;
+    for (const auto& mi : Database::Get().MapInfos()) {
+        if (mi.id == mapId) { tilesetId = mi.tilesetId; break; }
+    }
+
+    // 2) Passenden TilesetData-Eintrag waehlen (Fallback: erster Eintrag)
+    const rpg::TilesetData* chosen = nullptr;
+    try {
+        const auto& sets = Database::Get().Tilesets();
+        for (const auto& ts : sets) { if (ts.id == tilesetId) { chosen = &ts; break; } }
+        if (!chosen && !sets.empty()) chosen = &sets.front();
+    } catch (const std::exception& e) {
+        RPG_LOG_ERROR(std::string("Tileset-Datenbankzugriff fehlgeschlagen: ") + e.what());
+    }
+
+    // 3) Textur-Pfad aufloesen
+    auto pick = [&](const std::string& p) -> std::string {
+        return (!p.empty() && Platform::FileExists(p)) ? p : std::string();
+    };
+    const std::string rootG = base.empty() ? "Graphics/Tilesets/" : base + "/Graphics/Tilesets/";
+    const std::string rootA = base.empty() ? "assets/textures/" : base + "/assets/textures/";
+    std::string path;
+    if (chosen && !chosen->tilesetName.empty()) {
+        const std::string& tn = chosen->tilesetName;
+        std::vector<std::string> cands = { rootG + tn, rootA + tn };
+        if (tn.find('.') == std::string::npos) {
+            for (const char* ext : {".png", ".jpg", ".jpeg", ".bmp"}) {
+                cands.push_back(rootG + tn + ext);
+                cands.push_back(rootA + tn + ext);
+            }
+        }
+        for (const auto& c : cands) {
+            path = pick(c);
+            if (!path.empty()) break;
+        }
+    }
+    if (path.empty()) {
+        // Historischer Demo-Fallback (Engine-Assets / SampleProject)
+        const std::vector<std::string> demoCands = {
+            rootA + "tileset_demo.png",
+            "./SampleProject/assets/textures/tileset_demo.png",
+            "assets/textures/tileset_demo.png",
+            "./assets/textures/tileset_demo.png"
+        };
+        for (const auto& p : demoCands) {
+            path = pick(p);
+            if (!path.empty()) break;
+        }
+    }
+
+    // 4) Tileset (Textur + Flags) setzen - gleiche Instanz behalten, damit
+    //    bestehende GameMap-Bindings/Referenzen stabil bleiben.
+    std::shared_ptr<Tileset> tileset = mMap->GetTileset();
+    if (!tileset) tileset = std::make_shared<Tileset>();
+    if (!path.empty()) {
+        tileset->Load(path, 32, 32);
+        RPG_LOG_INFO("Tileset loaded: " + path);
+    } else {
+        tileset->Load("assets/textures/tileset_demo.png", 32, 32); // checker fallback
+    }
+    if (chosen) tileset->SetTilesetData(*chosen);
+    mMap->SetTileset(tileset); // markiert die Karte dirty (Geometry-Rebuild)
+}
+
 bool Engine::LoadRuntimeMap(int mapId) {
     if (!mMap) return false;
+    // Karteneigenes Tileset nachziehen (Textur + Kollisions-Flags), damit
+    // Kartenwechsel mit anderem Tileset korrekt aussehen UND sich korrekt
+    // spielen (vorher blieb immer das Start-Tileset aktiv).
+    ApplyTilesetForMap(mapId);
     if (mProject) {
         const std::string p = mProject->GetMapPath(mapId);
         if (std::filesystem::exists(p) && mMap->Load(p)) return true;

@@ -124,6 +124,12 @@ public:
     // Groesse aus den Datenbank-MapInfos) erzeugt. Rueckgabe: true = Datei.
     bool LoadRuntimeMap(int mapId);
 
+    /// Tileset der KARTE aus der Datenbank anwenden (MapInfo.tilesetId ->
+    /// Tilesets.json tilesetName): Textur (Graphics/Tilesets/, assets/textures/,
+    /// Demo-Fallback) + XP-Flags (Passability/Bush/Terrain) ans Runtime-Tileset
+    /// koppeln. Wird beim Engine-Start und bei jedem Kartenwechsel aufgerufen.
+    void ApplyTilesetForMap(int mapId);
+
     void SetActiveCamera(EntityID cameraEntity) {
         mActiveCameraEntity = cameraEntity;
     }

@@ -935,6 +935,7 @@ bool Database::Load(const std::string& projectPath) {
         }
     }
     // System.json
+    bool sysJsonLoaded = false;
     {
         std::string sysPath = dbDir + "/System.json";
         if (std::filesystem::exists(sysPath)) {
@@ -1052,7 +1053,38 @@ bool Database::Load(const std::string& projectPath) {
                 }
             }
             anyLoaded = true;
+            sysJsonLoaded = true;
             RPG_LOG_INFO("Loaded System.json from " + sysPath);
+        }
+    }
+
+    // Fallback: Projekte ohne database/System.json (z. B. frisch aus dem
+    // Editor oder per Hand angelegt) liefern ihre Startwerte ueber die
+    // project.json im Projektordner (startMapId/startX/startY). Ohne diesen
+    // Rueckfall wurden die dort vom Nutzer gesetzten Startwerte zur Laufzeit
+    // still ignoriert (Runtime liest ausschliesslich Database::System()).
+    if (!sysJsonLoaded) {
+        const std::string projPath = projectPath + "/project.json";
+        if (std::filesystem::exists(projPath)) {
+            const std::string content = ReadFileToString(projPath);
+            int v = 0;
+            if (JsonUtils::TryParseInt(content, "startMapId", 0, v) && v > 0)
+                mSystem.startMapId = v;
+            if (JsonUtils::TryParseInt(content, "startX", 0, v))
+                mSystem.startX = v;
+            if (JsonUtils::TryParseInt(content, "startY", 0, v))
+                mSystem.startY = v;
+            // Spieltitel: project.json hat nur "name" (Projektname) - als
+            // Fenstertitel besser als der generische Default, wenn kein
+            // eigener gameTitle gepflegt ist.
+            if (mSystem.gameTitle == "RPG Maker 3D Game") {
+                std::string name;
+                if (JsonUtils::TryParseString(content, "gameTitle", 0, name) ||
+                    JsonUtils::TryParseString(content, "name", 0, name)) {
+                    if (!name.empty()) mSystem.gameTitle = name;
+                }
+            }
+            RPG_LOG_INFO("Startwerte aus project.json uebernommen (keine database/System.json)");
         }
     }
 
