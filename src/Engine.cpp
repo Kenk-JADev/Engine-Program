@@ -1586,6 +1586,17 @@ void Engine::Update(float dt) {
             mBattlerDying.clear(); // PAKET 15: laufende Todes-Fades weg
         }
         if (mRubyVM) mRubyVM->Update(dt);
+
+        // SADS Kap. 8 (RubyBehaviour): Entities mit ScriptComponent erhalten
+        // ihre Logik aus einer Ruby-Klasse (start einmalig, update(dt) pro
+        // Frame). Laueft nur im PlayMode; ohne Ruby de facto ein No-op.
+        if (mRubyVM && mScene) {
+            for (EntityID id : mScene->GetEntities()) {
+                auto* sc = mScene->GetComponent<ScriptComponent>(id);
+                if (sc && !sc->className.empty())
+                    mRubyVM->CallBehaviourUpdate((int)id, sc->className, dt);
+            }
+        }
     }
 
     // Game Over (XP): Anzeige bestaetigt (oder Playtest manuell gestoppt) ->
@@ -1616,6 +1627,15 @@ void Engine::Update(float dt) {
         mBattlerPicNames.clear(); // Gegner-Grafiken weg
         mBattlerPicIds.clear();
         mBattlerDying.clear(); // PAKET 15: laufende Todes-Fades weg
+    }
+
+    // 3D-Audio: Listener an die aktive Kamera koppeln (SADS Kap. 13 —
+    // 3D/Spatial Audio). Erst damit wirken Entfernung/Richtung bei
+    // positionierten Sounds (BGS mit Fade, Event-SE).
+    if (mAudio && mRenderer) {
+        const Camera& cam = mRenderer->GetCamera();
+        mAudio->SetListenerPosition(cam.GetPosition());
+        mAudio->SetListenerOrientation(cam.GetForward(), cam.GetUp());
     }
 
     // Audio: Fade-In/Out, 3D-Listener und Aufräumen fertiger Sounds pro
@@ -2029,7 +2049,10 @@ void Engine::RenderScene() {
 
         auto* light = mScene->GetComponent<LightComponent>(id);
         if (light) {
-            Mesh lightMesh = MeshFactory::CreateCube(0.2f);
+            // Gecacht (statt pro Frame neu + BuildGPU/Delete — teures
+            // glGen/glDelete pro Frame und Entity): statische Meshes, beim
+            // ersten Aufruf gebaut (GL-Kontext ist hier bereits current).
+            static const Mesh lightMesh = MeshFactory::CreateCube(0.2f);
             Mat4 matrix = glm::translate(Mat4(1.0f), transform->transform.position);
             mRenderer->DrawMesh(lightMesh, matrix, nullptr, light->color);
         }
@@ -2060,7 +2083,8 @@ void Engine::RenderScene() {
                 matrix = transform->transform.GetMatrix();
                 matrix = glm::scale(matrix, Vec3(sprite->size.x, sprite->size.y, 1.0f));
             }
-            Mesh quad = MeshFactory::CreateQuad(1.0f, 1.0f);
+            // Ebenfalls gecacht (s. Licht-Marker oben) — ein Quad fuer alle.
+            static const Mesh quad = MeshFactory::CreateQuad(1.0f, 1.0f);
             mRenderer->DrawMesh(quad, matrix, sprite->texture.get(), sprite->color);
         }
     }
@@ -2073,8 +2097,12 @@ void Engine::RenderScene() {
             mRenderer->DrawBoundingBox(Vec3(-0.5f), Vec3(0.5f), matrix, Color(1.0f, 0.8f, 0.0f, 1.0f));
             // Achsen-Gizmo (kleine Wuerfel an den Enden der Achsen)
             const Vec3 o = transform->transform.position;
+            // Gizmo-Meshes gecacht (vorher pro Frame + Achse neu erzeugt —
+            // siehe Licht-Marker). Statisch, beim ersten Aufruf gebaut.
+            static const Mesh tipMesh = MeshFactory::CreateCube(0.12f);
+            static const Mesh barMesh = MeshFactory::CreateCube(1.0f);
             auto drawAxis = [&](const Vec3& end, const Color& col) {
-                Mesh tip = MeshFactory::CreateCube(0.12f);
+                const Mesh& tip = tipMesh;
                 Mat4 m = glm::translate(Mat4(1.0f), end);
                 mRenderer->DrawMesh(tip, m, nullptr, col);
                 // Linie als gestreckter duenner Wuerfel
@@ -2089,8 +2117,7 @@ void Engine::RenderScene() {
                 else if (std::fabs(d.y) > std::fabs(d.z)) sc = Vec3(0.04f, len, 0.04f);
                 else sc = Vec3(0.04f, 0.04f, len);
                 line = glm::scale(line, sc);
-                Mesh bar = MeshFactory::CreateCube(1.0f);
-                mRenderer->DrawMesh(bar, line, nullptr, col);
+                mRenderer->DrawMesh(barMesh, line, nullptr, col);
             };
             drawAxis(o + Vec3(1.5f, 0, 0), Color(1.0f, 0.2f, 0.2f, 1.0f)); // X
             drawAxis(o + Vec3(0, 1.5f, 0), Color(0.2f, 1.0f, 0.3f, 1.0f)); // Y
@@ -2317,6 +2344,11 @@ void Engine::SaveScene(const std::string& path) const {
                  << ", \"near\": " << cam->nearPlane
                  << ", \"far\": " << cam->farPlane
                  << ", \"main\": " << (cam->isMain ? "true" : "false") << "}";
+        }
+        // SADS Kap. 8: RubyBehaviour (ScriptComponent) mitspeichern
+        if (auto* sc = mScene->GetComponent<ScriptComponent>(id)) {
+            file << ",\n      \"script\": {\"className\": \"" << EscapeJSON(sc->className)
+                 << "\", \"path\": \"" << EscapeJSON(sc->scriptPath) << "\"}";
         }
 
         file << "\n    }";
@@ -2673,6 +2705,25 @@ bool Engine::LoadScene(const std::string& path) {
             cam->farPlane = parseNumber(obj, "far", camPos, 1000.0f);
             cam->isMain = parseBool(obj, "main", camPos, true);
             if (cam->isMain) mActiveCameraEntity = id;
+        }
+
+        // SADS Kap. 8: RubyBehaviour persistieren (ScriptComponent)
+        size_t scriptPos = findKey(obj, "script", 0);
+        if (scriptPos != std::string::npos) {
+            auto* sc = mScene->AddComponent<ScriptComponent>(id);
+            auto parseString = [&](const std::string& text, const std::string& key,
+                                   size_t from, std::string& out) {
+                size_t p = findKey(text, key, from);
+                if (p == std::string::npos) return;
+                size_t c = text.find(':', p);
+                if (c == std::string::npos) return;
+                size_t q1 = text.find('"', c);
+                size_t q2 = (q1 == std::string::npos) ? q1 : text.find('"', q1 + 1);
+                if (q2 == std::string::npos) return;
+                out = text.substr(q1 + 1, q2 - q1 - 1);
+            };
+            parseString(obj, "className", scriptPos, sc->className);
+            parseString(obj, "path", scriptPos, sc->scriptPath);
         }
 
         pos = objStart + obj.size();

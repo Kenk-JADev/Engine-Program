@@ -68,6 +68,12 @@ public:
     /// uebergebenen Ruby-Callback mit dem eingegebenen Namen auf.
     void CallNameInputResult(const std::string& name);
 
+    /// SADS Kap. 8 (RubyBehaviour): Entities mit ScriptComponent bekommen
+    /// ihre Logik aus einer Ruby-Klasse. Ruft BehaviourRegistry.update(
+    /// entityId, className, dt) auf (Instanz wird Ruby-seitig gecacht,
+    /// start laeuft einmalig). false = Ruby/Registry/Klasse nicht da.
+    bool CallBehaviourUpdate(int entityId, const std::string& className, float dt);
+
     mrb_state* GetState() { return mMrb; }
 
     // Letzter Ruby-Fehler (leer wenn ok)
@@ -86,6 +92,9 @@ private:
     void BindUI();
     void BindRui();        // PAKET 32: eigenes UI-Framework (Script-Windows)
     void BindRgssWindow(); // RGSS: Ruby-Klasse Window (reine Ruby-UI)
+    void BindEntity();     // SADS Kap. 8: Entity.* (Position/Rotation/Name)
+    void BindPhysics();    // SADS Kap. 11: Physics.raycast (PickEntity-Bridge)
+    void LoadBehaviourPrelude(); // RubyBehaviour-Registry + Basisklasse
     // RGSS-Vollset (RPG Maker XP-Paritaet) - in src/RubyRgss.cpp:
     void BindRgssObjects();   // Rect/Color/Tone/Font/Table/Bitmap/Viewport
     void BindRgssDrawables(); // Sprite/Plane/Tilemap (+Autotiles-Proxy)
@@ -99,6 +108,8 @@ private:
     mrb_state* mMrb = nullptr;
     Engine* mEngine = nullptr;
     std::string mLastError;
+    // SADS Kap. 9: FixedUpdate-Akkumulator (XP-Logiktakt 40 Hz)
+    float mFixedAccum = 0.0f;
 };
 
 } // namespace rpg

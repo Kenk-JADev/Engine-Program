@@ -492,7 +492,10 @@ void ScriptManager::ReloadFromDisk() {
         // Sort by name to ensure load order 00_, 01_, etc.
         std::sort(mScripts.begin(), mScripts.end(), [](auto& a, auto& b){ return a->name < b->name; });
 
-        // plugins/ optional
+        // plugins/ optional (SADS Kap. 17): Ruby-only Plugins, alphabetische
+        // Ladereihenfolge (Prefix-Konvention 01_, 02_ …), Metadaten aus dem
+        // Kommentarkopf fuer Editor-Liste/Log.
+        mPluginInfos.clear();
         try {
             std::string plugDir = mScriptsDirectory + "/plugins";
             if (std::filesystem::exists(plugDir)) {
@@ -507,7 +510,35 @@ void ScriptManager::ReloadFromDisk() {
                     script->content = ss.str();
                     script->isCore = false;
                     mScripts.push_back(script);
-                    RPG_LOG_INFO("Loaded plugin: " + script->name);
+
+                    // Metadaten-Konvention: # @name/@version/@author/@desc
+                    PluginInfo pi;
+                    pi.file = script->name;
+                    pi.name = entry.path().filename().string();
+                    std::stringstream ms(script->content);
+                    std::string line;
+                    auto tag = [](const std::string& l, const char* key,
+                                  std::string& out) {
+                        const std::string k = std::string("# ") + key;
+                        if (l.rfind(k, 0) == 0) {
+                            out = l.substr(k.size());
+                            const size_t s = out.find_first_not_of(" \t");
+                            const size_t e = out.find_last_not_of(" \t\r");
+                            out = (s == std::string::npos)
+                                ? std::string() : out.substr(s, e - s + 1);
+                        }
+                    };
+                    while (std::getline(ms, line)) {
+                        if (line.rfind("# @name", 0) == 0) tag(line, "@name", pi.name);
+                        else if (line.rfind("# @version", 0) == 0) tag(line, "@version", pi.version);
+                        else if (line.rfind("# @author", 0) == 0) tag(line, "@author", pi.author);
+                        else if (line.rfind("# @desc", 0) == 0) tag(line, "@desc", pi.desc);
+                        else if (!line.empty() && line[0] != '#') break; // Kopf ende
+                    }
+                    mPluginInfos.push_back(pi);
+                    RPG_LOG_INFO("Loaded plugin: " + script->name +
+                                 (pi.version.empty() ? "" : " (v" + pi.version + ")") +
+                                 " [" + pi.name + "]");
                 }
                 std::sort(mScripts.begin(), mScripts.end(), [](auto& a, auto& b){ return a->name < b->name; });
             }
@@ -549,6 +580,13 @@ void ScriptManager::ExecuteAllScripts() {
     // damit tote Ruby-Objekte aus vorigen Durchlaeufen eingesammelt werden
     // (verhindert NoMemoryError bei vielen Playtest-Durchlaeufen).
     if (mRubyVM) mRubyVM->CollectGarbage();
+
+    // RubyBehaviour-Instanzen verwerfen (SADS Kap. 8): ein frischer Skript-
+    // Durchlauf (Playtest-Neustart) startet Behaviours neu mit start().
+    if (mRubyVM)
+        mRubyVM->ExecuteString(
+            "BehaviourRegistry.reset if defined?(BehaviourRegistry)",
+            "<behaviour-reset>");
 
     for (auto& script : mScripts) {
         RPG_LOG_INFO("Execute script: " + script->name);

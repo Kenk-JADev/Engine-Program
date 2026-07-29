@@ -961,6 +961,22 @@ bool Game::Load(int slot) {
         if (!f) return false;
         std::stringstream ss; ss << f.rdbuf();
         std::string c = ss.str();
+        // SADS Kap. 22 (offene Dateiformate): Savegame-Version pruefen, wie
+        // die formatVersion der Event-Dateien. Groessere Version = mit einer
+        // neueren Engine gespeichert -> warnen, aber tolerant weiterladen
+        // (unbekannte Felder werden ohnehin ignoriert).
+        {
+            auto vp = c.find("\"version\"");
+            if (vp != std::string::npos) {
+                auto col = c.find(':', vp);
+                try {
+                    const int v = std::stoi(c.substr(col + 1));
+                    if (v > 2)
+                        RPG_LOG_WARN("Savegame-Version " + std::to_string(v) +
+                                     " ist neuer als unterstuetzt (2) - wird tolerant geladen: " + path);
+                } catch (...) {}
+            }
+        }
         auto findNumIn = [&](const std::string& hay, const char* key, float def) -> float {
             auto p = hay.find(std::string("\"") + key + "\"");
             if (p == std::string::npos) return def;

@@ -95,6 +95,26 @@ Punkte einbaust — sie steuern alles andere:
 
 ## 3. Quick-Wins (hoher Nutzen, kleiner Eingriff) — in dieser Reihenfolge
 
+> **Umsetzungsstand 2026-07-29:** Alle acht Punkte sind **implementiert**
+> (Commits auf `arena/019fadb3-engine-program`):
+> ✅ 1. 3D-Listener an Kamera (`Engine::Update`, `src/Engine.cpp`)
+> ✅ 2. `ScriptComponent`=RubyBehaviour aktiv (`BehaviourRegistry`-Prelude,
+>    `Engine::Update`-Tick, `Entity.attach_behaviour`, scene.json-Persistenz,
+>    Beispiel `scripts/21_Behaviour_Example.rb`)
+> ✅ 3. `late_update` + `fixed_update` (40-Hz-Akkumulator, XP-Takt) in
+>    `RubyVM::Update`
+> ✅ 4. Plugin-Metadaten `# @name/@version/@author/@desc` +
+>    `ScriptManager::GetPluginInfos()` (Laufzeit-Fehlerisolierung pro Datei
+>    existierte bereits — Lauf bleibt nach defektem Plugin weiter)
+> ✅ 5. Per-Frame-Mesh-Erzeugung abgelöst (Licht/Sprite/Gizmo → statische
+>    Caches in `RenderScene`)
+> ✅ 6. `Physics.raycast` Binding auf `Raycast::PickEntity` (AABB-Schnitt
+>    existierte — das Binding fehlte nur)
+> ✅ 7. `tools/generate_api_docs.py` → `docs/API.md` (38 Module/Klassen,
+>    ~580 Funktionen — regenerieren nach jeder Binding-Änderung!)
+> ✅ 8. Savegame-Version (`"version": 2` existierte bereits — neu: Warnung
+>    beim Laden neuerer Versionen, tolerant).
+
 1. **3D-Audio-Listener an Kamera koppeln** (`Engine::Update`, ~4 Zeilen):
    `mAudio->SetListenerPosition(cam.GetPosition()); mAudio->SetListenerOrientation(cam.GetForward(), cam.GetUp());`
    — macht den gestrigen Audio-Fix erst räumlich „aktiv" und die

@@ -16,6 +16,7 @@
 #include "rpgmaker3d/RgssUI.h" // RGSS-Fenstersystem (Ruby-Klasse Window)
 #include "rpgmaker3d/Rui.h"    // PAKET 32: eigenes UI-Framework (Script-Windows)
 #include "rpgmaker3d/Project.h" // PAKET 47: GetProjectPath (Actor#set_model_file)
+#include "rpgmaker3d/Raycast.h" // SADS Kap. 11: Physics.raycast -> PickEntity
 
 #include <filesystem> // PAKET 47: exists() bei Modellpfad-Kandidaten
 
@@ -109,6 +110,9 @@ bool RubyVM::Initialize(Engine* engine) {
     BindRgssGraphics();  // RGSS-XP: Graphics/Input(XP)/Audio(XP)
     BindRgssWindowEx();  // RGSS-XP: Window-Vollset
     LoadRgssPrelude();   // RGSS-XP: RPG::*-Datenklassen, RPG::Cache, ...
+    BindEntity();        // SADS Kap. 8: Entity.* (Transform-Zugriff per ID)
+    BindPhysics();       // SADS Kap. 11: Physics.raycast
+    LoadBehaviourPrelude(); // SADS Kap. 8: BehaviourRegistry + Behaviour
 
     RPG_LOG_INFO("Ruby VM initialized");
     return true;
@@ -268,6 +272,55 @@ bool RubyVM::Update(float deltaTime) {
                     return false;
                 }
             }
+        }
+    }
+
+    // 1b) SADS Kap. 9: Szenen-Lifecycle LateUpdate + FixedUpdate. Eine Szene
+    //     definiert die Methoden nur, wenn sie sie braucht (respond_to?-Guard,
+    //     keine Pflicht). FixedUpdate laeuft im XP-Logiktakt (40 Hz) ueber
+    //     einen Akkumulator — framerate-unabhaengig, gebremst (max 5 Steps,
+    //     Rest wird verworfen, damit keine Spirale des Todes entsteht).
+    {
+        mrb_value curScene = mrb_nil_value();
+        mrb_sym smSym = mrb_intern_lit(mMrb, "SceneManager");
+        if (mrb_const_defined(mMrb, mrb_obj_value(mMrb->object_class), smSym)) {
+            mrb_value sceneMgr = mrb_const_get(mMrb, mrb_obj_value(mMrb->object_class), smSym);
+            if (!mrb_nil_p(sceneMgr)) {
+                curScene = mrb_funcall(mMrb, sceneMgr, "current_scene", 0);
+                if (mMrb->exc) {
+                    CaptureException("SceneManager.current_scene");
+                    return false;
+                }
+            }
+        }
+        if (!mrb_nil_p(curScene)) {
+            if (mrb_respond_to(mMrb, curScene, mrb_intern_lit(mMrb, "late_update"))) {
+                mrb_funcall(mMrb, curScene, "late_update", 0);
+                if (mMrb->exc) {
+                    CaptureException("scene.late_update");
+                    return false;
+                }
+            }
+            static constexpr float kFixedStepSec = 1.0f / 40.0f; // XP-Takt
+            mFixedAccum += deltaTime;
+            int steps = 0;
+            while (mFixedAccum >= kFixedStepSec && steps < 5) {
+                mFixedAccum -= kFixedStepSec;
+                ++steps;
+                if (mrb_respond_to(mMrb, curScene, mrb_intern_lit(mMrb, "fixed_update"))) {
+                    mrb_funcall(mMrb, curScene, "fixed_update", 0);
+                    if (mMrb->exc) {
+                        CaptureException("scene.fixed_update");
+                        return false;
+                    }
+                } else {
+                    break; // Szene ohne fixed_update: Akku ist abgebaut
+                }
+            }
+            // Sicherheitsnetz bei langem Halt (Debugger-Pause o. a.)
+            if (mFixedAccum > 1.0f) mFixedAccum = 0.0f;
+        } else {
+            mFixedAccum = 0.0f;
         }
     }
 
@@ -1237,6 +1290,301 @@ static mrb_value rb_camera_set_rotation(mrb_state* mrb, mrb_value self) {
     }
 
     return mrb_nil_value();
+}
+
+// ============================================================================
+// SADS Kap. 8: Entity-Bindings — Grundlage fuer RubyBehaviour (ScriptComponent)
+// Kompakte, read/write-sichere Sicht auf die ECS-Welt: Existenz, Name, Suche,
+// Transform (Position/Rotation/Scale). Kein Direktzugriff auf C++-Objekte
+// (SADS Kap. 21): alles laeuft ueber Entity-IDs und Value-Arrays.
+// ============================================================================
+namespace {
+
+TransformComponent* FindEntityTransform(Engine* e, mrb_int id) {
+    if (!e) return nullptr;
+    return e->GetScene().GetComponent<TransformComponent>((EntityID)id);
+}
+
+mrb_value Vec3ToAry(mrb_state* mrb, const Vec3& v) {
+    mrb_value a = mrb_ary_new_capa(mrb, 3);
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, v.x));
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, v.y));
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, v.z));
+    return a;
+}
+
+mrb_value rb_entity_exists(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    return mrb_bool_value(FindEntityTransform(static_cast<Engine*>(mrb->ud), id) != nullptr);
+}
+
+mrb_value rb_entity_name(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!FindEntityTransform(e, id)) return mrb_nil_value();
+    return mrb_str_new_cstr(mrb, e->GetScene().GetEntityName((EntityID)id).c_str());
+}
+
+mrb_value rb_entity_find_by_name(mrb_state* mrb, mrb_value self) {
+    (void)self; char* name = nullptr; mrb_get_args(mrb, "z", &name);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e || !name) return mrb_nil_value();
+    for (EntityID id : e->GetScene().GetEntities()) {
+        if (e->GetScene().GetEntityName(id) == name)
+            return mrb_int_value(mrb, (mrb_int)id);
+    }
+    return mrb_nil_value();
+}
+
+mrb_value rb_entity_all_ids(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e) return mrb_nil_value();
+    mrb_value a = mrb_ary_new(mrb);
+    for (EntityID id : e->GetScene().GetEntities())
+        mrb_ary_push(mrb, a, mrb_int_value(mrb, (mrb_int)id));
+    return a;
+}
+
+mrb_value rb_entity_position(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id);
+    if (!tr) return mrb_nil_value();
+    return Vec3ToAry(mrb, tr->transform.position);
+}
+
+mrb_value rb_entity_set_position(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_float x = 0, y = 0, z = 0;
+    mrb_get_args(mrb, "ifff", &id, &x, &y, &z);
+    if (auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id))
+        tr->transform.position = Vec3((float)x, (float)y, (float)z);
+    return mrb_nil_value();
+}
+
+mrb_value rb_entity_rotation(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id);
+    if (!tr) return mrb_nil_value();
+    return Vec3ToAry(mrb, tr->transform.rotation);
+}
+
+mrb_value rb_entity_set_rotation(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_float x = 0, y = 0, z = 0;
+    mrb_get_args(mrb, "ifff", &id, &x, &y, &z);
+    if (auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id))
+        tr->transform.rotation = Vec3((float)x, (float)y, (float)z);
+    return mrb_nil_value();
+}
+
+mrb_value rb_entity_scale(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id);
+    if (!tr) return mrb_nil_value();
+    return Vec3ToAry(mrb, tr->transform.scale);
+}
+
+mrb_value rb_entity_set_scale(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_float x = 0, y = 0, z = 0;
+    mrb_get_args(mrb, "ifff", &id, &x, &y, &z);
+    if (auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id))
+        tr->transform.scale = Vec3((float)x, (float)y, (float)z);
+    return mrb_nil_value();
+}
+
+mrb_value rb_entity_move(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_float dx = 0, dy = 0, dz = 0;
+    mrb_get_args(mrb, "ifff", &id, &dx, &dy, &dz);
+    if (auto* tr = FindEntityTransform(static_cast<Engine*>(mrb->ud), id))
+        tr->transform.position += Vec3((float)dx, (float)dy, (float)dz);
+    return mrb_nil_value();
+}
+
+mrb_value rb_entity_start_clip(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; char* clip = nullptr; mrb_bool restart = true;
+    mrb_get_args(mrb, "iz|b", &id, &clip, &restart);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e || !clip) return mrb_bool_value(false);
+    return mrb_bool_value(
+        e->GetScene().StartEntityClip((EntityID)id, clip, restart != 0));
+}
+
+mrb_value rb_entity_stop_clip(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e) return mrb_bool_value(false);
+    return mrb_bool_value(e->GetScene().StopEntityClip((EntityID)id));
+}
+
+// RubyBehaviour zur Laufzeit anhaengen/loesen (ScriptComponent)
+mrb_value rb_entity_attach_behaviour(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; char* cls = nullptr;
+    mrb_get_args(mrb, "iz", &id, &cls);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e || !cls || !*cls) return mrb_bool_value(false);
+    // Nur auf existierende Entities (Transform als Existenz-Nachweis)
+    if (!e->GetScene().GetComponent<TransformComponent>((EntityID)id))
+        return mrb_bool_value(false);
+    auto* sc = e->GetScene().AddComponent<ScriptComponent>((EntityID)id);
+    if (!sc) return mrb_bool_value(false);
+    sc->className = cls;
+    // Registry-Instanz verwerfen, damit start() der neuen Klasse laeuft
+    // (On-Demand-Reset: naechster Tick legt die Instanz frisch an)
+    mrb_sym regSym = mrb_intern_lit(mrb, "BehaviourRegistry");
+    if (mrb_const_defined(mrb, mrb_obj_value(mrb->object_class), regSym)) {
+        mrb_value reg = mrb_const_get(mrb, mrb_obj_value(mrb->object_class), regSym);
+        mrb_value eid = mrb_int_value(mrb, id);
+        mrb_funcall_argv(mrb, reg, mrb_intern_lit(mrb, "drop"), 1, &eid);
+        if (mrb->exc) mrb->exc = nullptr; // drop ist optional / defensiv
+    }
+    return mrb_bool_value(true);
+}
+
+mrb_value rb_entity_detach_behaviour(mrb_state* mrb, mrb_value self) {
+    (void)self; mrb_int id = 0; mrb_get_args(mrb, "i", &id);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e) return mrb_bool_value(false);
+    auto* sc = e->GetScene().GetComponent<ScriptComponent>((EntityID)id);
+    if (!sc) return mrb_bool_value(false);
+    sc->className.clear(); // kein RemoveComponent in Scene -> leer = inaktiv
+    mrb_sym regSym = mrb_intern_lit(mrb, "BehaviourRegistry");
+    if (mrb_const_defined(mrb, mrb_obj_value(mrb->object_class), regSym)) {
+        mrb_value reg = mrb_const_get(mrb, mrb_obj_value(mrb->object_class), regSym);
+        mrb_value eid = mrb_int_value(mrb, id);
+        mrb_funcall_argv(mrb, reg, mrb_intern_lit(mrb, "drop"), 1, &eid);
+        if (mrb->exc) mrb->exc = nullptr;
+    }
+    return mrb_bool_value(true);
+}
+
+// ============================================================================
+// SADS Kap. 11: Physics-Binding — schlanker Ray (Raycast::PickEntity), die
+// XP-Kollision bleibt Tile-basiert (kein RigidBody-Overkill fuer ein Tile-RPG)
+// ============================================================================
+mrb_value rb_physics_raycast(mrb_state* mrb, mrb_value self) {
+    (void)self;
+    mrb_float ox = 0, oy = 0, oz = 0, dx = 0, dy = 0, dz = -1, maxDist = 1000.0;
+    mrb_get_args(mrb, "ffffff|f", &ox, &oy, &oz, &dx, &dy, &dz, &maxDist);
+    Engine* e = static_cast<Engine*>(mrb->ud);
+    if (!e) return mrb_nil_value();
+    Ray ray;
+    ray.origin = Vec3((float)ox, (float)oy, (float)oz);
+    ray.direction = Vec3((float)dx, (float)dy, (float)dz);
+    if (glm::length(ray.direction) < 1.0e-6f) return mrb_nil_value();
+    ray.direction = glm::normalize(ray.direction);
+    RaycastHit h = Raycast::PickEntity(ray, e->GetScene(), (float)maxDist);
+    if (!h.hit) return mrb_nil_value();
+    // Rueckgabe: [entityId, hitX, hitY, hitZ, distance] — nil ohne Treffer
+    mrb_value a = mrb_ary_new_capa(mrb, 5);
+    mrb_ary_push(mrb, a, mrb_int_value(mrb, (mrb_int)h.entity));
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, h.point.x));
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, h.point.y));
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, h.point.z));
+    mrb_ary_push(mrb, a, mrb_float_value(mrb, h.distance));
+    return a;
+}
+
+} // namespace
+
+void RubyVM::BindEntity() {
+    struct RClass* entityMod = mrb_define_module(mMrb, "Entity");
+    mrb_define_module_function(mMrb, entityMod, "exists?",        rb_entity_exists,        MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "name",           rb_entity_name,          MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "find_by_name",   rb_entity_find_by_name,  MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "all_ids",        rb_entity_all_ids,       MRB_ARGS_NONE());
+    mrb_define_module_function(mMrb, entityMod, "position",       rb_entity_position,      MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "set_position",   rb_entity_set_position,  MRB_ARGS_REQ(4));
+    mrb_define_module_function(mMrb, entityMod, "rotation",       rb_entity_rotation,      MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "set_rotation",   rb_entity_set_rotation,  MRB_ARGS_REQ(4));
+    mrb_define_module_function(mMrb, entityMod, "scale",          rb_entity_scale,         MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "set_scale",      rb_entity_set_scale,     MRB_ARGS_REQ(4));
+    mrb_define_module_function(mMrb, entityMod, "move",           rb_entity_move,          MRB_ARGS_REQ(4));
+    mrb_define_module_function(mMrb, entityMod, "start_clip",     rb_entity_start_clip,    MRB_ARGS_REQ(2) | MRB_ARGS_OPT(1));
+    mrb_define_module_function(mMrb, entityMod, "stop_clip",      rb_entity_stop_clip,     MRB_ARGS_REQ(1));
+    mrb_define_module_function(mMrb, entityMod, "attach_behaviour", rb_entity_attach_behaviour, MRB_ARGS_REQ(2));
+    mrb_define_module_function(mMrb, entityMod, "detach_behaviour", rb_entity_detach_behaviour, MRB_ARGS_REQ(1));
+}
+
+void RubyVM::BindPhysics() {
+    struct RClass* physicsMod = mrb_define_module(mMrb, "Physics");
+    mrb_define_module_function(mMrb, physicsMod, "raycast", rb_physics_raycast,
+                               MRB_ARGS_REQ(6) | MRB_ARGS_OPT(1));
+}
+
+// ----------------------------------------------------------------------------
+// SADS Kap. 8: RubyBehaviour — Prelude (Registry + Basisklasse). Laeuft nach
+// den Bindings, VOR den Projekt-Skripten: Projekte definieren nur noch
+//   class Spinner < Behaviour
+//     def update(dt); rotate(0, dt*90, 0); end
+//   end
+// und weisen die Klasse an einer Entity (ScriptComponent.className) zu.
+// ----------------------------------------------------------------------------
+void RubyVM::LoadBehaviourPrelude() {
+    static const char* kPrelude = R"RUBY(
+module BehaviourRegistry
+  @instances = {}
+  def self.reset
+    @instances = {}
+  end
+  # Eine einzelne Entity-Instanz verwerfen (attach/detach_behaviour)
+  def self.drop(entity_id)
+    @instances.delete(entity_id)
+  end
+  # Wird pro Frame je Entity mit ScriptComponent aus der Engine gerufen
+  def self.update(entity_id, class_name, dt)
+    obj = @instances[entity_id]
+    if obj.nil?
+      klass = begin; Object.const_get(class_name); rescue; nil; end
+      return if klass.nil?
+      obj = klass.new
+      obj.instance_variable_set(:@entity_id, entity_id)
+      @instances[entity_id] = obj
+      obj.send(:start) if obj.respond_to?(:start)
+    end
+    obj.send(:update, dt) if obj.respond_to?(:update)
+  rescue => e
+    Engine.log("Behaviour #{class_name} (Entity #{entity_id}): #{e}")
+    @instances.delete(entity_id) # naechstes Frame frisch versuchen
+  end
+end
+
+class Behaviour
+  attr_reader :entity_id
+  def start; end
+  def update(dt); end
+  def entity_position; Entity.position(@entity_id); end
+  def set_entity_position(x, y, z); Entity.set_position(@entity_id, x, y, z); end
+  def entity_rotation; Entity.rotation(@entity_id); end
+  def set_entity_rotation(x, y, z); Entity.set_rotation(@entity_id, x, y, z); end
+  def move(dx, dy, dz); Entity.move(@entity_id, dx, dy, dz); end
+  def rotate(dx, dy, dz)
+    r = Entity.rotation(@entity_id)
+    Entity.set_rotation(@entity_id, r[0] + dx, r[1] + dy, r[2] + dz) if r
+  end
+  def start_clip(name, restart = true); Entity.start_clip(@entity_id, name, restart); end
+  def stop_clip; Entity.stop_clip(@entity_id); end
+end
+)RUBY";
+    if (!ExecuteString(kPrelude, "<behaviour-prelude>"))
+        RPG_LOG_ERROR(std::string("Behaviour-Prelude: ") + mLastError);
+}
+
+bool RubyVM::CallBehaviourUpdate(int entityId, const std::string& className, float dt) {
+    if (!mMrb || className.empty()) return false;
+    mrb_sym regSym = mrb_intern_lit(mMrb, "BehaviourRegistry");
+    if (!mrb_const_defined(mMrb, mrb_obj_value(mMrb->object_class), regSym))
+        return false;
+    mrb_value reg = mrb_const_get(mMrb, mrb_obj_value(mMrb->object_class), regSym);
+    mrb_value argv[3] = {
+        mrb_int_value(mMrb, (mrb_int)entityId),
+        mrb_str_new_cstr(mMrb, className.c_str()),
+        mrb_float_value(mMrb, dt)
+    };
+    mrb_funcall_argv(mMrb, reg, mrb_intern_lit(mMrb, "update"), 3, argv);
+    if (mMrb->exc) {
+        CaptureException("BehaviourRegistry.update");
+        return false;
+    }
+    return true;
 }
 
 void RubyVM::BindCamera() {
@@ -4714,6 +5062,14 @@ void RubyVM::BindGame() {}
 void RubyVM::BindUI() {}
 void RubyVM::BindRui() {}
 void RubyVM::BindRgssWindow() {}
+void RubyVM::BindEntity() {}
+void RubyVM::BindPhysics() {}
+void RubyVM::LoadBehaviourPrelude() {}
+
+bool RubyVM::CallBehaviourUpdate(int entityId, const std::string& className, float dt) {
+    (void)entityId; (void)className; (void)dt;
+    return false;
+}
 
 } // namespace rpg
 

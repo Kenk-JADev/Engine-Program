@@ -50,10 +50,28 @@ public:
     /// "<datei>:<zeile>: <meldung>". true = alle Skripte ok.
     bool ValidateAllScripts(std::vector<std::string>& errors);
 
+    // ---- SADS Kap. 17: Plugin-Metadaten (Ruby-only Plugins) -------------
+    // Konvention im Kommentarkopf einer plugins/*.rb-Datei:
+    //   # @name    Mein Plugin
+    //   # @version 1.0
+    //   # @author  Max
+    //   # @desc    Was das Plugin tut (eine Zeile)
+    // Fehlende Felder bleiben leer; der Dateiname ist der Fallback-Name.
+    struct PluginInfo {
+        std::string file;     // "plugins/foo.rb"
+        std::string name;     // @name oder Dateiname
+        std::string version;
+        std::string author;
+        std::string desc;
+    };
+    /// Liste aller geladenen Plugins mit Metadaten (fuer Editor-Liste/Log).
+    const std::vector<PluginInfo>& GetPluginInfos() const { return mPluginInfos; }
+
     std::string GetScriptsDirectory() const;
 
 private:
     std::vector<std::shared_ptr<Script>> mScripts;
+    std::vector<PluginInfo> mPluginInfos;
     std::string mScriptsDirectory;
     RubyVM* mRubyVM = nullptr;
     bool mAllScriptsExecuted = false; // ExecuteAllScriptsOnce-Guard
