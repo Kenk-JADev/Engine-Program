@@ -528,8 +528,24 @@ static Key KeyFromSymbol(mrb_state* mrb, mrb_sym keySymbol) {
         key = Key::F2;
     } else if (keyName == "f3") {
         key = Key::F3;
+    } else if (keyName == "f4") { // PAKET 45: F-Reihe vervollstaendigt (f4, f6..f12)
+        key = Key::F4;
     } else if (keyName == "f5") {
         key = Key::F5;
+    } else if (keyName == "f6") {
+        key = Key::F6;
+    } else if (keyName == "f7") {
+        key = Key::F7;
+    } else if (keyName == "f8") {
+        key = Key::F8;
+    } else if (keyName == "f9") {
+        key = Key::F9;
+    } else if (keyName == "f10") {
+        key = Key::F10;
+    } else if (keyName == "f11") {
+        key = Key::F11;
+    } else if (keyName == "f12") {
+        key = Key::F12;
     } else if (keyName == "up") {
         key = Key::Up;
     } else if (keyName == "down") {
@@ -3072,6 +3088,7 @@ struct RuiHandleMaps {
     struct RClass* label = nullptr;
     struct RClass* gauge = nullptr;
     struct RClass* list = nullptr;
+    struct RClass* picture = nullptr; // PAKET 45
 };
 RuiHandleMaps g_rui;
 
@@ -3434,6 +3451,53 @@ mrb_value rb_rui_win_add_gauge(mrb_state* mrb, mrb_value self) {
     return RuiMakeHandle(mrb, g_rui.gauge, win->id, cid);
 }
 
+// PAKET 45: Bild-Widget aus Skripten (Faces/Icons in Custom-Dialogen,
+// z. B. 18_System_Message.rb). pfad wird wie bei Bildern aufgeloest
+// (Projekt-Resolver + Engine-Fallbacks, GameUI::LoadWidgetTexture).
+// w/h 0 = Bildgroesse; Rueckgabe nil wenn das Bild fehlt (Skript kann
+// dann ohne Face weiterbauen). Ausschnitt/Tint per set_source/set_tint.
+mrb_value rb_rui_win_add_picture(mrb_state* mrb, mrb_value self) {
+    char* cid = nullptr; char* path = nullptr;
+    mrb_float x = 0, y = 0, w = 0, h = 0;
+    mrb_get_args(mrb, "zz|ffff", &cid, &path, &x, &y, &w, &h);
+    rui::Window* win = RuiResolveWin(mrb, self);
+    if (!win || !cid || !*cid) return mrb_nil_value();
+    int iw = 0, ih = 0;
+    const unsigned int tex =
+        GameUI::Get().LoadWidgetTexture(path ? path : "", iw, ih);
+    if (tex == 0) return mrb_nil_value();
+    auto pic = std::make_unique<rui::Picture>();
+    pic->id = cid;
+    pic->texture = (void*)(intptr_t)tex;
+    pic->imgW = iw; pic->imgH = ih;
+    pic->keepAspect = true;
+    const float dw = (w > 0.0) ? (float)w : (float)iw;
+    const float dh = (h > 0.0) ? (float)h : (float)ih;
+    const auto& th = rui::Theme::Get();
+    pic->rect = rui::Rect{win->rect.x + th.padding + (float)x,
+                          win->rect.y + th.padding + (float)y, dw, dh};
+    win->children.push_back(std::move(pic));
+    return RuiMakeHandle(mrb, g_rui.picture, win->id, cid);
+}
+
+// ---------- Rui::Picture-Methoden (PAKET 45) ----------
+mrb_value rb_rui_picture_set_source(mrb_state* mrb, mrb_value self) {
+    // set_source(x, y, w, h) — Teilbild in Pixeln (z. B. Facesheet 4x2)
+    mrb_float x = 0, y = 0, w = 0, h = 0;
+    mrb_get_args(mrb, "ffff", &x, &y, &w, &h);
+    if (auto* p = dynamic_cast<rui::Picture*>(RuiResolveWidget(mrb, self)))
+        p->src = rui::Rect{(float)x, (float)y, (float)w, (float)h};
+    return mrb_nil_value();
+}
+mrb_value rb_rui_picture_set_tint(mrb_state* mrb, mrb_value self) {
+    // set_tint(r, g, b, a=1.0) — 0.0..1.0 (Konsistenz mit Gauge.set_color)
+    mrb_float r = 1, g = 1, b = 1, a = 1;
+    mrb_get_args(mrb, "f|fff", &r, &g, &b, &a);
+    if (auto* p = dynamic_cast<rui::Picture*>(RuiResolveWidget(mrb, self)))
+        p->tint = rui::Color4((float)r, (float)g, (float)b, (float)a);
+    return mrb_nil_value();
+}
+
 mrb_value rb_rui_win_add_list(mrb_state* mrb, mrb_value self) {
     char* cid = nullptr; mrb_value items; mrb_float x = 0, y = 0, w = 100, h = 100;
     mrb_get_args(mrb, "zo|ffff", &cid, &items, &x, &y, &w, &h);
@@ -3615,6 +3679,7 @@ void RubyVM::BindRui() {
     g_rui.label = mrb_define_class_under(mMrb, mod, "Label", mMrb->object_class);
     g_rui.gauge = mrb_define_class_under(mMrb, mod, "Gauge", mMrb->object_class);
     g_rui.list = mrb_define_class_under(mMrb, mod, "ListView", mMrb->object_class);
+    g_rui.picture = mrb_define_class_under(mMrb, mod, "Picture", mMrb->object_class); // PAKET 45
 
     // Modul-Funktionen
     mrb_define_module_function(mMrb, mod, "window", rb_rui_window_create, MRB_ARGS_REQ(5));
@@ -3654,6 +3719,7 @@ void RubyVM::BindRui() {
     mrb_define_method(mMrb, W, "add_label", rb_rui_win_add_label, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(4));
     mrb_define_method(mMrb, W, "add_gauge", rb_rui_win_add_gauge, MRB_ARGS_REQ(5) | MRB_ARGS_OPT(3));
     mrb_define_method(mMrb, W, "add_list", rb_rui_win_add_list, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(4));
+    mrb_define_method(mMrb, W, "add_picture", rb_rui_win_add_picture, MRB_ARGS_REQ(2) | MRB_ARGS_OPT(4)); // PAKET 45
     mrb_define_method(mMrb, W, "remove_widget", rb_rui_win_remove_widget, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, W, "destroy", rb_rui_win_destroy, MRB_ARGS_NONE());
 
@@ -3670,6 +3736,11 @@ void RubyVM::BindRui() {
     mrb_define_method(mMrb, G, "maximum", rb_rui_gauge_maximum, MRB_ARGS_NONE());
     mrb_define_method(mMrb, G, "maximum=", rb_rui_gauge_maximum_set, MRB_ARGS_REQ(1));
     mrb_define_method(mMrb, G, "set_color", rb_rui_gauge_color_set, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(3));
+
+    // Rui::Picture (PAKET 45)
+    auto P = g_rui.picture;
+    mrb_define_method(mMrb, P, "set_source", rb_rui_picture_set_source, MRB_ARGS_REQ(4));
+    mrb_define_method(mMrb, P, "set_tint", rb_rui_picture_set_tint, MRB_ARGS_REQ(1) | MRB_ARGS_OPT(3));
 
     // Rui::ListView
     auto V = g_rui.list;

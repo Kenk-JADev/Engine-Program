@@ -476,10 +476,16 @@ Alle sechs Oberflächen-Schalter gibt es auch als Ruby-Setter, z. B.
 Lautstärke-Gruppen haben zusätzlich **Getter**
 (`Audio.bgm_volume` … `Audio.me_volume`, jeweils `0.0..1.0` – und
 `Audio.volume`/`Audio.volume=` für den Master), damit eigene
-**Optionsmenüs** (z. B. als RUI-Fenster) den aktuellen Stand anzeigen und
-regeln können; `Graphics.fullscreen` liefert den aktuellen Vollbildzustand.
-Im eingebetteten Editor-Playtest bleibt der Vollbild-Schalter absichtlich
-ohne Wirkung — das Qt-Fenster gehört dem Editor.
+damit eigene **Optionsmenüs** (z. B. als RUI-Fenster) den aktuellen Stand
+anzeigen und regeln können; `Graphics.fullscreen` liefert den aktuellen
+Vollbildzustand. Im eingebetteten Editor-Playtest bleibt der
+Vollbild-Schalter absichtlich ohne Wirkung — das Qt-Fenster gehört dem
+Editor. **Referenz-Optionsmenü** (PAKET 45): `scripts/20_System_Options.rb`
+— aktiviert wird es in `00_Config.rb` (`SYSTEM_OPTIONS = true`), Taste
+**F6** zeigt Lautstärke-Regler + Vollbild-Schalter (Pad-Hinweise via
+`Input.gamepad_connected?`). Ebenfalls PAKET 45: `Rui::Window#add_picture`
+(Faces/Icons in Skript-Dialogen, siehe `docs/SCRIPT-RUI.md`) und die
+Tastennamen `f4`/`f6`–`f12` für `Input.key_down?/key_pressed?`.
 
 ### 2. Ruby-APIs für eigene Oberflächen
 

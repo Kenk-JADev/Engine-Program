@@ -2422,6 +2422,38 @@ bool GameUI::LoadPictureTexture(ScreenPicture& pic) {
     return pic.loaded;
 }
 
+// ---------------------------------------------------------------------------
+// PAKET 45: Widget-Texturen aus Ruby (Rui::Window#add_picture). Eigener
+// Cache-Namensraum ("widget|"), damit Hue-Keys des Screen-Picture-Caches
+// nie kollidieren. Kein Existenz-Zwang: fehlende Dateien liefern 0.
+// ---------------------------------------------------------------------------
+unsigned int GameUI::LoadWidgetTexture(const std::string& filename,
+                                       int& outW, int& outH) {
+    outW = outH = 0;
+    if (filename.empty()) return 0;
+    const std::string path = ResolvePicturePath(filename);
+    if (!std::filesystem::exists(path)) {
+        RPG_LOG_WARN("add_picture: Bild nicht gefunden: " + filename);
+        return 0;
+    }
+    const std::string key = "widget|" + path;
+    std::shared_ptr<Texture> tex;
+    auto it = s_PictureCache.find(key);
+    if (it != s_PictureCache.end()) {
+        tex = it->second;
+    } else {
+        tex = std::make_shared<Texture>();
+        if (!tex->LoadFromFile(path) || tex->GetID() == 0) {
+            RPG_LOG_WARN("add_picture: Bild nicht ladbar: " + path);
+            return 0;
+        }
+        s_PictureCache[key] = tex; // shared_ptr haelt die GL-Textur am Leben
+    }
+    outW = tex->GetWidth();
+    outH = tex->GetHeight();
+    return tex->GetID();
+}
+
 int GameUI::ShowPicture(const std::string& filename, Vec2 screenPos, float scale, float opacity, float duration, const std::string& name, int hue) {
     return ShowPicture(filename, name, screenPos, scale, opacity, duration, hue);
 }

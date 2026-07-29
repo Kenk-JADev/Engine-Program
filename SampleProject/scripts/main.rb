@@ -14,6 +14,9 @@ class Game
     # PAKET 42: Ruby-System-Dialoge (18_System_Message.rb) pro Frame pumpen
     # (Typewriter/Zahleneingabe; Auswahl/Name laufen ueber die Rui-Fokusliste)
     SystemMessage.update if Object.const_defined?(:SystemMessage)
+    # PAKET 45: Skript-Optionsmenue (F6, 20_System_Options.rb; intern per
+    # SYSTEM_OPTIONS-Flag abgesichert)
+    SystemOptions.update if Object.const_defined?(:SystemOptions)
     # Ruby-Party-Menue (Esc) laeuft nur, wenn das native Engine-Menue
     # deaktiviert ist (doppeltes Menue verhindern, PAKET 26).
     if Object.const_defined?(:PartyMenu) &&

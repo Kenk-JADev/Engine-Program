@@ -462,6 +462,12 @@ private:
     void UpdatePictures(float dt);
     void DrawPictures();
     bool LoadPictureTexture(ScreenPicture& pic);
+    /// PAKET 45 (Script-Bildwidget Rui::Window#add_picture): laedt (gecachet)
+    /// eine Textur in Widget-Qualitaet. Rueckgabe 0 = nicht gefunden — Skripte
+    /// sollen fehlende Bilder selbst erkennen (kein Checkerboard-Ersatz, im
+    /// Gegensatz zum Screen-Picture-Pfad). Pfadloesung wie bei Bildern:
+    /// Projekt-Resolver, dann Engine-Fallbacks.
+    unsigned int LoadWidgetTexture(const std::string& filename, int& outW, int& outH);
 
     GameUI() = default;
     MessageWindow mMessage;

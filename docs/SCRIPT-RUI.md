@@ -48,6 +48,10 @@ fuer Boss-kaempfe und blasse Nacht-Farben bei Aussenkarten.
     (`kind: "hp"` gruen / `"mp"` blau, danach frei einfaerbbar)
   - `add_list(id, items, x=0, y=0, w=100, h=100)` → `Rui::ListView`
     (`items`: Array von `"Text"` oder `["Text", enabled_bool]`)
+  - `add_picture(id, pfad, x=0, y=0, w=0, h=0)` → `Rui::Picture` | `nil`
+    (**PAKET 45** — Face-/Icon-Widget; `pfad` wird wie bei Bildern
+    aufgeloest: `Graphics/Pictures/…` + Engine-Fallbacks. `w/h = 0` =
+    Bildgroesse, `nil` = Datei fehlt → Skript kann dann ohne Bild weiterbauen)
   - `remove_widget(id)`
 - `destroy` — sofort entfernen (ohne Animation)
 
@@ -56,6 +60,12 @@ fuer Boss-kaempfe und blasse Nacht-Farben bei Aussenkarten.
 
 ## `Rui::Gauge`
 `current`, `current=`, `maximum`, `maximum=`, `set_color(r, g, b, a)`
+
+## `Rui::Picture` (PAKET 45)
+- `set_source(x, y, w, h)` — Teilbild in Pixeln, z. B. Facesheet 4x2:
+  `pic.set_source((idx % 4) * fw, (idx / 4) * fh, fw, fh)`
+- `set_tint(r, g=1, b=1, a=1)` — 0.0..1.0 (Konsistenz mit `Gauge.set_color`);
+  `a` dimmt (z. B. 0.5 fuer verstorbene Akteure)
 
 ## `Rui::ListView`
 - `selected`, `selected=`, `items=` (Array-Format wie `add_list`)
